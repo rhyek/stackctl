@@ -43,7 +43,7 @@ The documentation is one set of Markdown pages in `docs/`, read three ways:
 | ----------------- | ---------------------------------------------------------------------------------- |
 | `docs/guide/`     | Getting started, why, services, the terminal UI, environment and modes, one-off commands, logs, tests and CI. How to do things. |
 | `docs/config/`    | One page per part of `stackctl.config.ts`: the file itself, services, environment, logs, infra, reverse proxy, URLs and origins. |
-| `docs/reference/` | The CLI, the control API (endpoints and payloads), the Node API.                   |
+| `docs/reference/` | The CLI, the control API (endpoints and payloads), the SDK.                        |
 | `docs/ai/`        | `overview.md`: how stackctl serves coding agents. `playbook.md`: recipes written for the agent, the page the skill names. |
 
 `docs/index.md` is the site's home page. `docs/architecture/` is contributor internals and
@@ -67,7 +67,7 @@ file on invocation, which defeats the progressive disclosure a skill exists to p
 ### Keep the docs in lockstep
 
 Whenever a change affects how stackctl is configured, invoked, or driven — `defineConfig`
-options, the service schema, tokens, CLI flags, the control API, the Node API — update the docs
+options, the service schema, tokens, CLI flags, the control API, the SDK — update the docs
 in the same change, not later. Grep `docs/guide`, `docs/config`, `docs/reference`, `docs/ai`,
 the README and `assets/skill.md` for the affected names and reconcile every hit.
 

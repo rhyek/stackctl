@@ -105,7 +105,7 @@ when stackctl starts. Restart stackctl to pick those up.
 
 - [`stackctl exec` and `stackctl run`](./commands.md) run one command with a service's
   environment.
-- [`resolveEnv()`](../reference/node-api.md#resolveenv) returns it to a script.
+- [`resolveEnv()`](../reference/sdk.md#resolveenv) returns it to a script.
 - [`stackctl show-config`](../reference/cli.md#stackctl-show-config) lists, under `envFiles`,
   the files a mode looks for. Check there when a variable is missing.
 

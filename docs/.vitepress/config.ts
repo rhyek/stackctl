@@ -63,7 +63,7 @@ export default defineConfig({
         items: [
           { text: 'CLI', link: '/reference/cli' },
           { text: 'Control API', link: '/reference/control-api' },
-          { text: 'Node API', link: '/reference/node-api' },
+          { text: 'SDK', link: '/reference/sdk' },
         ],
       },
       {

@@ -1,10 +1,12 @@
 ---
-description: The functions stackctl exports for scripts - defineConfig, startStack, stackEnvironment, exec, run, resolveEnv and logging - with their options and return values.
+description: stackctl's SDK, the functions it exports for your own scripts and test suites - defineConfig, startStack, stackEnvironment, exec, run, resolveEnv and logging - with their options and return values.
 ---
 
-# Node API
+# SDK
 
-Everything is a named export of `stackctl`:
+stackctl's SDK is what it exports for your own code: a test suite's global setup, a seed or
+migration script, a launcher. It does from a script what the CLI does from a shell, with the
+same workspace, modes and environment. Everything is a named export of `stackctl`:
 
 ```ts
 import { defineConfig, exec, logging, resolveEnv, run, startStack } from 'stackctl';

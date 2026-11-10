@@ -243,7 +243,7 @@ A second Ctrl+C, or a second quit, during a shutdown skips the wait and kills at
 
 ## The client
 
-In Node, the same API is a typed client. [`startStack()`](./node-api.md#startstack) returns
+In Node, the same API is a typed client. [`startStack()`](./sdk.md#startstack) returns
 one as `stack.control`, and an [infra callback](../config/infra.md#driving-the-session) gets
 one as `control`.
 

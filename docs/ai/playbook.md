@@ -130,8 +130,8 @@ stackctl --mode test exec api -- node --test   # in the test mode's environment
 ```
 
 See [One-off commands](../guide/commands.md). From a script, use
-[`exec()`, `run()`](../reference/node-api.md#exec-and-run) or
-[`resolveEnv()`](../reference/node-api.md#resolveenv).
+[`exec()`, `run()`](../reference/sdk.md#exec-and-run) or
+[`resolveEnv()`](../reference/sdk.md#resolveenv).
 
 ## Infra
 

@@ -33,7 +33,7 @@ features:
     link: /config/config-file
   - icon: 🖥️
     title: A terminal UI you'll keep open
-    details: One combined, filterable log, with each service's state and memory in the footer. Restart, stop or run a script with a key or a click.
+    details: "One combined, filterable log, with each service's state and memory in the footer. Drive it with the keyboard or the mouse: click a service, a key hint or a script, and drag to copy."
     link: /guide/terminal-ui
   - icon: 🐳
     title: Infra included
@@ -51,6 +51,10 @@ features:
     title: The same stack in tests and CI
     details: startStack() hands an e2e suite a healthy stack that ends with it. stackctl start --detach does the same for a CI job.
     link: /guide/testing
+  - icon: 📦
+    title: An SDK for scripts and tests
+    details: startStack(), exec(), run() and resolveEnv() give your own scripts and test suites what the CLI gives a shell, typed and with the same environment.
+    link: /reference/sdk
   - icon: 🤖
     title: Built for coding agents
     details: A headless mode, a localhost control API, an installable skill and llms.txt let an agent run your project the way you do.

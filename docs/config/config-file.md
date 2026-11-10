@@ -179,6 +179,6 @@ then your own names and types, and `startStack()`'s `origins` is keyed by them.
 
 ## `--workspace-dir`
 
-The `--workspace-dir <dir>` flag (and `workspaceDir` in the [Node API](../reference/node-api.md))
+The `--workspace-dir <dir>` flag (and `workspaceDir` in the [SDK](../reference/sdk.md))
 names the directory holding the config, to run stackctl against a workspace from outside it.
 It is not the config's `workspaceDir` option above.
