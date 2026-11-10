@@ -22,20 +22,31 @@ test('headless with every service: the lines in order; SIGINT quits with exit 0'
   await session.waitForOutput(/\[web\s*\] web listening on 21082/);
   await session.waitForOutput(/\[worker\s*\] worker listening on \d+/);
 
-  const order = positions(session.stdout, [
-    /\[stackctl\] \[INFO\] mode development \(default\)/,
-    /\[api\s*\] started/,
-    /\[web\s*\] waiting for api\.\.\./,
-    /\[api\s*\] api listening on 21081/,
-    /\[web\s*\] api ready, starting\.\.\./,
-    /\[web\s*\] started/,
-    /\[web\s*\] web listening on 21082/,
-  ]);
-  expect(
-    order.every((at) => at >= 0),
-    session.stdout,
-  ).toBe(true);
-  expect(order).toEqual([...order].sort((a, b) => a - b));
+  // Two chains, each in order. Between them nothing is: web says it waits as soon as it is launched,
+  // while api is started once the session's first `.env` read is done, which can come either side.
+  const chains = [
+    [
+      /\[stackctl\] \[INFO\] mode development \(default\)/,
+      /\[api\s*\] started/,
+      /\[api\s*\] api listening on 21081/,
+    ],
+    [
+      /\[stackctl\] \[INFO\] mode development \(default\)/,
+      /\[web\s*\] waiting for api\.\.\./,
+      /\[api\s*\] api listening on 21081/,
+      /\[web\s*\] api ready, starting\.\.\./,
+      /\[web\s*\] started/,
+      /\[web\s*\] web listening on 21082/,
+    ],
+  ];
+  for (const chain of chains) {
+    const order = positions(session.stdout, chain);
+    expect(
+      order.every((at) => at >= 0),
+      session.stdout,
+    ).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  }
   expect(session.stdout).toMatch(/\[worker\s*\] started/);
 
   session.child.kill('SIGINT');
