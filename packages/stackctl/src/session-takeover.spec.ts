@@ -301,7 +301,10 @@ describe.runIf(unix)('the orphan sweep', () => {
 
   test("kills that child once the recording session's pid is dead", async () => {
     const dir = tmpDir();
-    const child = detached('sleep 30', dir);
+    // `sleep` itself, not through `sh -c`: Debian's and Ubuntu's `/bin/sh` (dash) stays as its
+    // parent, which would make the group two processes there and one on macOS.
+    const child = spawn('sleep', ['30'], { cwd: dir, detached: true, stdio: 'ignore' });
+    children.push(child);
     const messages: string[] = [];
     const record = { port: 1, pid: reapedPid(), children: [{ pid: child.pid!, cwd: dir }] };
     const exited = once(child, 'exit');
