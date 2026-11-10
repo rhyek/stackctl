@@ -1,0 +1,7 @@
+{
+  // @example/isomorphic is consumed as TypeScript *source*, like @example/db: its package.json
+  // `exports` point straight at `src`. The backend runs it through Node's native type stripping
+  // and the frontend through Vite, so there is no build and nothing to emit.
+  "extends": "../../tsconfig.common.json",
+  "include": ["src"]
+}

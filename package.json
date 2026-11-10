@@ -1,0 +1,44 @@
+{
+  "name": "stackctl-workspace",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "build": "pnpm --filter stackctl build && pnpm docs:package",
+    "lint": "oxlint --disable-nested-config && oxfmt --check --disable-nested-config",
+    "focus": "pnpm --filter stackctl focus",
+    "palette": "pnpm --filter stackctl palette",
+    "test:types": "vitest --typecheck.only --run",
+    "format": "oxfmt --disable-nested-config",
+    "prepare": "simple-git-hooks",
+    "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "typecheck": "tsc -p packages/stackctl/tsconfig.json --noEmit",
+    "docs:dev": "vitepress dev docs --port 21070 --strictPort",
+    "docs:build": "vitepress build docs",
+    "docs:package": "vitepress build docs && node scripts/package-docs.ts",
+    "docs:preview": "vitepress preview docs --port 21070 --strictPort"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm lint-staged"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/picomatch": "^4.0.3",
+    "@types/react": "^19.3.0",
+    "lint-staged": "^17.6.0",
+    "oxfmt": "^0.74.0",
+    "oxlint": "^1.89.0",
+    "oxlint-tsgolint": "^7.0.2005",
+    "simple-git-hooks": "^2.14.0",
+    "typescript": "^7.0.2",
+    "vitepress": "1.6.4",
+    "vitepress-plugin-llms": "1.14.0",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "@rhyek/oxc-config": "workspace:*"
+  }
+}

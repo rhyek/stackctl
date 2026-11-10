@@ -1,0 +1,161 @@
+name: release
+
+# Every merge to `main` runs this, and it releases only when the top `## X.Y.Z` heading in
+# CHANGELOG.md is a version that isn't out yet. A merge that adds no new heading (a docs fix,
+# a refactor) does nothing. A release is two halves, the npm package and the GitHub release
+# with its `vX.Y.Z` tag, and each is done only if it's missing, so re-running a failed release
+# finishes it.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    # A manual run from another branch must not release it.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      dist_tag: ${{ steps.version.outputs.dist_tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      on_npm: ${{ steps.state.outputs.on_npm }}
+      on_github: ${{ steps.state.outputs.on_github }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.tool-versions'
+
+      - name: Read the version from CHANGELOG.md
+        id: version
+        run: node scripts/changelog.ts version >> "$GITHUB_OUTPUT"
+
+      - name: Check what's already released
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if [ "$(npm view "stackctl@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "on_npm=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "on_npm=false" >> "$GITHUB_OUTPUT"
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "on_github=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "on_github=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  ci:
+    needs: detect
+    if: needs.detect.outputs.on_npm == 'false' || needs.detect.outputs.on_github == 'false'
+    permissions:
+      contents: read
+    # `./`, not zizmor's `$/`: actionlint rejects `$/`, and `./` is the documented form.
+    uses: ./.github/workflows/ci.yaml # zizmor: ignore[self-repository]
+
+  publish:
+    needs: [detect, ci]
+    runs-on: ubuntu-latest
+    # npm's trusted publisher for stackctl is bound to this environment.
+    environment: release
+    permissions:
+      contents: write # create the GitHub release and its tag
+      id-token: write # npm trusted publishing (OIDC)
+    env:
+      SKIP_SIMPLE_GIT_HOOKS: 1
+      VERSION: ${{ needs.detect.outputs.version }}
+      TAG: ${{ needs.detect.outputs.tag }}
+      DIST_TAG: ${{ needs.detect.outputs.dist_tag }}
+      PRERELEASE: ${{ needs.detect.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.15.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.tool-versions'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Set the package version from CHANGELOG.md
+        working-directory: packages/stackctl
+        run: npm version "$VERSION" --no-git-tag-version
+
+      # Compiles the CLI, builds the docs site and copies its llms.txt and Markdown pages into
+      # packages/stackctl/docs/, which the installed agent skill reads.
+      - run: pnpm build
+
+      # The published source maps must name the package's own sources, never a path on the build
+      # machine (scripts/check-source-maps.ts).
+      - run: node scripts/check-source-maps.ts
+
+      - name: Copy LICENSE into the package
+        run: cp LICENSE packages/stackctl/LICENSE
+
+      # The canonical README lives at the repo root; npm shows the one inside the package. Its
+      # links are absolute (https://stackctl.dev). Its images load from `main`, where a
+      # re-recorded demo GIF replaces the old file, so the copy pins them to the release's tag:
+      # each version's npm page keeps the GIF it was published with.
+      - name: Copy README into the package, its images pinned to the tag
+        run: |
+          cp README.md packages/stackctl/README.md
+          sed -i "s#raw.githubusercontent.com/$GITHUB_REPOSITORY/main/#raw.githubusercontent.com/$GITHUB_REPOSITORY/$TAG/#g" \
+            packages/stackctl/README.md
+          if grep -q "raw.githubusercontent.com/$GITHUB_REPOSITORY/main/" packages/stackctl/README.md; then
+            echo "::error::an image in the packaged README still loads from main"
+            exit 1
+          fi
+
+      # Tokenless publish via npm Trusted Publishing (OIDC): no NPM_TOKEN secret. Needs
+      # npm >= 11.5.1 and the trusted publisher configured on npmjs.com (see RELEASING.md).
+      # Provenance is generated automatically.
+      - name: Upgrade npm (OIDC trusted publishing needs >= 11.5.1)
+        if: needs.detect.outputs.on_npm == 'false'
+        # Pin to the 11.x line rather than @latest: newer npm majors (12+) require a newer
+        # Node than the one pinned in .tool-versions, so `npm@latest` fails with EBADENGINE
+        # on the runner. Every 11.x runs on Node >=22.9 and is already >= 11.5.1.
+        # zizmor: ignore[adhoc-packages] npm itself, which no lockfile here can pin.
+        run: npm install -g npm@11
+
+      - name: Publish to npm
+        if: needs.detect.outputs.on_npm == 'false'
+        working-directory: packages/stackctl
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
+
+      # After the npm publish, so a failed publish leaves no release behind and a re-run
+      # retries it.
+      - name: Create the GitHub release
+        if: needs.detect.outputs.on_github == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/changelog.ts notes > "$RUNNER_TEMP/release-notes.md"
+          flags=()
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --target "$GITHUB_SHA" \
+            "${flags[@]}"

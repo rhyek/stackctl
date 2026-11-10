@@ -1,0 +1,25 @@
+{
+  "name": "@example/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "migrate": "node src/migrate.ts",
+    "seed": "node src/seed.ts"
+  },
+  "dependencies": {
+    "@example/isomorphic": "workspace:*",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}

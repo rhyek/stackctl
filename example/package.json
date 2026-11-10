@@ -1,0 +1,15 @@
+{
+  "name": "stackctl-example",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "description": "Example monorepo showcasing stackctl: an Express + Postgres backend and a TanStack Start frontend, run together with one command.",
+  "scripts": {
+    "dev": "stackctl"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "stackctl": "link:../packages/stackctl",
+    "typescript": "^7.0.2"
+  }
+}

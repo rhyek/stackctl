@@ -1,0 +1,65 @@
+name: ci
+
+# Runs on every pull request, where the `check` job is a required status check for merging
+# into `main` (.github/rulesets/main.json), and again from release.yaml before a release is
+# published, so the merged result is tested too.
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SKIP_SIMPLE_GIT_HOOKS: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The changelog check compares against the release tags.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.15.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.tool-versions'
+
+      # Fails a top CHANGELOG.md section that can't be released: empty, edited after its
+      # release, or not newer than the latest release.
+      - run: node scripts/changelog.ts check
+
+      - run: pnpm install --frozen-lockfile
+
+      # The root lint covers `example/` too, and its type-aware rules read the example's types.
+      - run: pnpm --dir example install --frozen-lockfile
+
+      - run: pnpm lint
+
+      # Build before test: some tests import the package's compiled `dist/`. The build also
+      # builds the docs site, which fails on a dead link, and packages its llms.txt.
+      - run: pnpm build
+
+      # The source maps name the package's own sources, so a build change that would publish the
+      # runner's paths fails here, before a release.
+      - run: node scripts/check-source-maps.ts
+
+      - run: pnpm test
+
+      # The real CLI on a pseudo-terminal (python3's stdlib `pty`, which the runner has). It
+      # compiles its own copy of the CLI, so it needs nothing from the build above.
+      - run: pnpm test:e2e
+
+      # Type-level assertions (`*.test-d.ts`) are only enforced under --typecheck.
+      - run: pnpm test:types

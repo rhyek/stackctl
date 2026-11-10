@@ -1,0 +1,31 @@
+node_modules/
+dist/
+.DS_Store
+
+# Personal env overrides. The example's other .env files are committed on purpose —
+# they're synthetic demo content — but the `.local` tier never should be.
+.env*.local
+docs/superpowers/
+.superpowers/
+
+# npm pack output
+*.tgz
+
+# LICENSE is copied into the package at release time (see release.yaml)
+packages/stackctl/LICENSE
+
+# README is copied into the package at release time (see release.yaml)
+packages/stackctl/README.md
+
+# The docs an agent reads are generated into the package from the site build
+# (scripts/package-docs.ts)
+packages/stackctl/docs/
+
+# VitePress build output and cache
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+# left behind when a VitePress build is interrupted
+docs/.vitepress/config.ts.timestamp-*
+
+# Claude Code's settings for one machine
+.claude/settings.local.json

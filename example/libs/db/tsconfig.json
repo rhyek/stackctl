@@ -1,0 +1,14 @@
+{
+  // @example/db is consumed as TypeScript *source* — its package.json `exports` point straight at
+  // `src` (no emit), so the backend transpiles it on the fly via Node's native TS support. It
+  // extends the shared node baseline so the lib type-checks identically standalone and when its
+  // source is re-checked inside the backend's program.
+  "extends": "../../tsconfig.common.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // The files here import each other by their real `.ts` name, which is what Node's native
+    // type-stripping needs at runtime (there's no emit to rewrite the extension).
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src"]
+}

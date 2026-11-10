@@ -1,0 +1,5 @@
+packages:
+  # The application services stackctl runs.
+  - 'apps/*'
+  # The source-only libraries they import.
+  - 'libs/*'

@@ -1,0 +1,72 @@
+{
+  "name": "stackctl",
+  "version": "0.0.0",
+  "description": "A terminal UI and CLI for a monorepo's services, infrastructure, tests and CI during development.",
+  "homepage": "https://stackctl.dev",
+  "author": "Carlos González (https://github.com/rhyek)",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rhyek/stackctl.git",
+    "directory": "packages/stackctl"
+  },
+  "keywords": [
+    "monorepo",
+    "dev",
+    "cli",
+    "orchestration",
+    "dependencies",
+    "tui",
+    "ink"
+  ],
+  "engines": {
+    "node": ">=26.12.1"
+  },
+  "bin": {
+    "stackctl": "dist/cli.js",
+    "sctl": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "assets",
+    "docs",
+    "postinstall.js"
+  ],
+  "scripts": {
+    "postinstall": "node ./postinstall.js",
+    "focus": "node scripts/focus-preview.ts",
+    "palette": "node scripts/palette-preview.ts",
+    "build": "rm -rf dist && tsc -p ./tsconfig.build.json && chmod +x dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@alcalzone/ansi-tokenize": "0.3.1",
+    "@clack/prompts": "^1.8.1",
+    "@dotenvx/primitives": "^3.3.1",
+    "chalk": "^6.0.1",
+    "colord": "^2.11.0",
+    "commander": "^15.0.0",
+    "execa": "^10.2.1",
+    "ink": "8.0.0",
+    "ink-spinner": "^5.0.0",
+    "jsonc-parser": "^3.3.1",
+    "picomatch": "^4.0.7",
+    "pino": "^10.4.0",
+    "react": "^19.3.1",
+    "selfsigned": "^5.5.0",
+    "slice-ansi": "^9.0.1",
+    "string-width": "^8.3.0",
+    "wrap-ansi": "^10.0.2",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.4.0"
+  }
+}

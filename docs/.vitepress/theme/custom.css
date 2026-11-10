@@ -1,0 +1,20 @@
+/*
+ * The accent is the green of a running service's dot in the terminal UI, in place of the default
+ * theme's indigo. Inline code takes the text color, so a page full of option names isn't tinted.
+ * The home page's "stackctl" keeps the default theme's indigo.
+ */
+:root {
+  --vp-c-brand-1: #15803d;
+  --vp-c-brand-2: #16a34a;
+  --vp-c-brand-3: #15803d;
+  --vp-c-brand-soft: rgba(22, 163, 74, 0.14);
+  --vp-code-color: var(--vp-c-text-1);
+  --vp-home-hero-name-color: var(--vp-c-indigo-1);
+}
+
+.dark {
+  --vp-c-brand-1: #4ade80;
+  --vp-c-brand-2: #22c55e;
+  --vp-c-brand-3: #15803d;
+  --vp-c-brand-soft: rgba(74, 222, 128, 0.14);
+}

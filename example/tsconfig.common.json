@@ -1,0 +1,18 @@
+{
+  // Shared TypeScript baseline for the example's Node-side code: the root config (which
+  // type-checks stackctl.config.ts), the `backend` service, and the `db` and `isomorphic`
+  // libraries. Each extends this and adds only what's specific to it, such as its ambient
+  // `types`. The `frontend` has a distinct bundler/DOM config and intentionally does NOT extend
+  // this. Nothing is emitted: Node runs the TypeScript directly.
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "esnext",
+    "lib": ["esnext"],
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  }
+}

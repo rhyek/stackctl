@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.common.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // The workspace libraries' source is type-checked as part of this program, and their files
+    // import each other by their real `.ts` name (see libs/db/tsconfig.json).
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src"]
+}

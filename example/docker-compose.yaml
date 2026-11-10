@@ -1,0 +1,56 @@
+# The example's infrastructure — a Postgres and a mail catcher — run by stackctl's `infra` (see
+# stackctl.config.ts):
+#
+#   pnpm stackctl infra up             # start it and wait until it's ready
+#   pnpm stackctl infra docker-compose ps
+#
+# Every ${VAR} comes from the mode's .env file (.env.development, or .env.test under
+# `--mode test`), which stackctl hands to Compose — so each mode gets its own port, and its own
+# Compose project (`example-development`, `example-test`).
+services:
+  db:
+    image: postgres:18.6
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - '${DB_PORT}:5432'
+    volumes:
+      # From Postgres 18 the image keeps its data in a version-specific directory under this path.
+      - db-data:/var/lib/postgresql
+    # stackctl waits on this: `infra up` (and a dev session) only continues once it passes. It
+    # probes every second while the container starts and every 30s once it's healthy.
+    #
+    # `-h 127.0.0.1` matters. On first start the image runs a temporary server to initialize the
+    # database, listening on the Unix socket only, then restarts. Without `-h`, pg_isready uses
+    # that socket and reports ready while the real server — the one the app reaches over TCP —
+    # isn't up yet.
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-h', '127.0.0.1', '-U', '${DB_USER}', '-d', '${DB_NAME}']
+      interval: 30s
+      timeout: 5s
+      start_period: 1m
+      start_interval: 1s
+      retries: 3
+
+  # A mail catcher: whatever the app sends over SMTP lands in its web UI, which stackctl's dev
+  # reverse proxy routes at http://mail.localhost:21050 — see `infra` in stackctl.config.ts. The
+  # proxy can't read the UI's port from this file, so the config names it too (MAIL_UI_PORT).
+  mail:
+    image: axllent/mailpit:v1.31.6
+    ports:
+      - '${MAIL_UI_PORT}:8025'
+      - '${MAIL_SMTP_PORT}:1025'
+    # The image checks itself every 15s; probing every second while it starts lets `infra up`
+    # move on as soon as it answers.
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      start_interval: 1s
+      retries: 3
+
+volumes:
+  db-data:
