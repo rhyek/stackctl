@@ -39,7 +39,19 @@ beforeAll(async () => {
   fs.rmSync(buildDir, { recursive: true, force: true });
   await execa(
     'node',
-    [tsc, '-p', path.join(packageDir, 'tsconfig.build.json'), '--outDir', buildDir],
+    [
+      tsc,
+      '-p',
+      path.join(packageDir, 'tsconfig.build.json'),
+      '--outDir',
+      buildDir,
+      // A build the tests only run: no source maps, which would name sources outside the
+      // build's folder, and no declarations.
+      '--sourceMap',
+      'false',
+      '--declaration',
+      'false',
+    ],
     { cwd: packageDir },
   );
   sdk = (await import(pathToFileURL(path.join(buildDir, 'index.js')).href)) as IndexModule;
