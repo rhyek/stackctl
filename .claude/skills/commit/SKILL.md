@@ -2,8 +2,9 @@
 name: commit
 description: >-
   Commit the work in the stackctl repo, re-recording first any of the docs' terminal recordings
-  (scripts/demo: the home page demo, the README GIF, the terminal UI guide's players) that the
-  changes would alter, so the recordings land in the same commit as the change that caused them.
+  (scripts/demo: the home page demo, the README GIF, the guide pages' players and screenshots)
+  that the changes would alter, so the recordings land in the same commit as the change that
+  caused them.
   Use when the user asks to commit in this repo ("commit it", "/commit"), and whenever a
   `git commit` is blocked by the recordings hook. Never on your own initiative: a commit needs
   the user's word.

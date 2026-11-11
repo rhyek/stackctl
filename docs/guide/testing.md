@@ -89,8 +89,8 @@ pnpm test:e2e
 ## One-off test commands
 
 For a suite that needs the environment but not the services, run it through
-[`stackctl run`](./commands.md):
+[`sctl run`](./commands.md):
 
 ```bash
-stackctl --mode test run api test
+sctl --mode test run api test
 ```

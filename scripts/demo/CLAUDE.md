@@ -4,8 +4,8 @@ Everything here exists to produce the recordings of stackctl's terminal UI that 
 
 - **`docs/public/casts/<scene>-<unix-ts>.cast`**, one asciicast per scene, played as text by
   asciinema-player (`docs/.vitepress/theme/TerminalPlayer.vue`): native Menlo, sharp at any zoom,
-  selectable. The home page's demo (`demo.src` in `docs/index.md`) and the terminal UI guide's
-  picker and run screen.
+  selectable. The home page's demo (`demo.src` in `docs/index.md`), the terminal UI guide's
+  picker and run screen, and getting started's screenshot of a first run.
 - **The text copy beside each player in a page**, the screen it shows as plain text, which
   llms.txt and the packaged docs read instead of the player.
 - **`docs/public/demo-<unix-ts>.gif`**, agg's render of the demo's cast, at the top of the root
@@ -58,6 +58,10 @@ files, so the site plays the recording and llms.txt reads the text. Write the bl
 with an empty text block, add the scene to `scenes.ts` (a 74-column terminal fits a docs page)
 with its `description` and its `triggers`, the files whose change can alter what it shows, and
 run `record.sh <scene>`: `place.ts` fills in the cast's name and the text.
+
+**A screenshot** is a scene with `still: true`, shown with `<TerminalPlayer … still />`: its
+cast is one frame, the screen as it stood when the scene took its snapshot, drawn as text like
+any recording.
 
 ## Keeping them current
 

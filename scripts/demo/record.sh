@@ -24,7 +24,7 @@ cd "$(dirname "$0")"
 
 SCENES=("$@")
 if [ ${#SCENES[@]} -eq 0 ]; then
-  SCENES=(demo picker run-screen)
+  SCENES=(demo picker run-screen getting-started)
 fi
 MAX_TAKES="${MAX_TAKES:-3}"
 PUBLIC="../../docs/public"

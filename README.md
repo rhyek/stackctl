@@ -7,7 +7,7 @@ during development. You describe your services once, in a small typed config fil
 starts the ones you pick and the services they need, brings up their infrastructure, loads
 their environment, and shows it all in one place.
 
-![stackctl's terminal UI running the example monorepo](https://raw.githubusercontent.com/rhyek/stackctl/main/docs/public/demo-1794363456.gif)
+![stackctl's terminal UI running the example monorepo](https://raw.githubusercontent.com/rhyek/stackctl/main/docs/public/demo-1794373503.gif)
 
 **Documentation: [stackctl.dev](https://stackctl.dev)**
 
@@ -64,13 +64,13 @@ export default defineConfig({
 ```
 
 Each service needs a `dev` script in its `package.json`, or a `dev` target in a `Makefile`.
-Then:
+Then, with `sctl`, the short alias of `stackctl`:
 
 ```bash
-pnpm stackctl                 # the terminal UI: pick services, run them
-pnpm stackctl --headless -s web   # no UI: stream logs to stdout
-pnpm stackctl run api seed    # one script, with api's environment
-pnpm stackctl infra up        # bring the infra up, then exit
+pnpm sctl                 # the terminal UI: pick services, run them
+pnpm sctl --headless -s web   # no UI: stream logs to stdout
+pnpm sctl run api seed    # one script, with api's environment
+pnpm sctl infra up        # bring the infra up, then exit
 ```
 
 ## Documentation

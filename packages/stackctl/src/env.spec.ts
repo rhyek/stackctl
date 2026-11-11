@@ -953,6 +953,55 @@ describe('STACKCTL_INJECTED_ENV', () => {
     dropInjectedEnv(env);
     expect(env).toEqual({ STACKCTL_MODE: 'test', HOME: '/home/x' });
   });
+
+  test("a layer carries the shell's value of each variable it replaces", () => {
+    vi.stubEnv('STACKCTL_ENV_FLAGS', '--shell');
+    write('.env', 'STACKCTL_ENV_FLAGS="${STACKCTL_ENV_FLAGS} --repo"\nFROM_FILE=1\n');
+    const layer = workspaceEnvLayer({ cwd, override: ['STACKCTL_ENV_FLAGS'] });
+    expect(layer.STACKCTL_ENV_FLAGS).toBe('--shell --repo');
+    // Only what the shell had set: FROM_FILE replaces nothing.
+    expect(JSON.parse(layer.STACKCTL_REPLACED_ENV!)).toEqual({ STACKCTL_ENV_FLAGS: '--shell' });
+    expect(layer.STACKCTL_INJECTED_ENV!.split(',')).toContain('STACKCTL_REPLACED_ENV');
+  });
+
+  test('a layer that replaces nothing of the shell carries no STACKCTL_REPLACED_ENV', () => {
+    write('.env', 'FROM_FILE=1\n');
+    expect(workspaceEnvLayer({ cwd })).not.toHaveProperty('STACKCTL_REPLACED_ENV');
+  });
+
+  test("dropInjectedEnv gives a replaced variable the shell's value back", () => {
+    const env: NodeJS.ProcessEnv = {
+      STACKCTL_INJECTED_ENV: 'A,FLAGS,STACKCTL_REPLACED_ENV',
+      STACKCTL_REPLACED_ENV: '{"FLAGS":"--shell"}',
+      A: 'outer',
+      FLAGS: '--shell --repo',
+      HOME: '/home/x',
+    };
+    dropInjectedEnv(env);
+    expect(env).toEqual({ FLAGS: '--shell', HOME: '/home/x' });
+  });
+
+  test('dropInjectedEnv drops a STACKCTL_REPLACED_ENV it cannot read, restoring nothing', () => {
+    const env: NodeJS.ProcessEnv = {
+      STACKCTL_INJECTED_ENV: 'FLAGS,STACKCTL_REPLACED_ENV',
+      STACKCTL_REPLACED_ENV: '{not json',
+      FLAGS: '--shell --repo',
+      HOME: '/home/x',
+    };
+    dropInjectedEnv(env);
+    expect(env).toEqual({ HOME: '/home/x' });
+  });
+
+  test('a stackctl started from a child sees the shell the outer one was started in', () => {
+    vi.stubEnv('STACKCTL_ENV_FLAGS', '--shell');
+    write('.env', 'STACKCTL_ENV_FLAGS="${STACKCTL_ENV_FLAGS} --repo"\nFROM_FILE=1\n');
+    const child: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...workspaceEnvLayer({ cwd, override: ['STACKCTL_ENV_FLAGS'] }),
+    };
+    dropInjectedEnv(child);
+    expect(child).toEqual({ ...process.env });
+  });
 });
 
 describe('workspaceEnvLayer', () => {

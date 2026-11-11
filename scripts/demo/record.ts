@@ -114,6 +114,8 @@ let inSync = false;
 let copied = null as string | null;
 // Set by the scene (through the stage), so typed as what it can become, not as its first value.
 let snapshot = null as string | null;
+/** How many of the cast's events had been cut when the snapshot was taken: a still's frame. */
+let snapshotAt = 0;
 
 driver.stdout!.on('data', (chunk: Buffer) => {
   screen.feed(chunk);
@@ -218,6 +220,7 @@ const stage: Stage = {
   copied: () => copied,
   rowOf: (text) => screen.find(text)?.row ?? null,
   snapshot(from = 1, to = rows) {
+    snapshotAt = cast.length;
     snapshot = screen
       .lines()
       .slice(from - 1, to)
@@ -249,7 +252,27 @@ if (snapshot === null) {
 if (pending !== '') {
   cast.push([(performance.now() - start) / 1000, 'o', pending]);
 }
+// A still is everything drawn up to its snapshot, as one event: the player lands on that screen.
+const frames: typeof cast = scene.still
+  ? [
+      [
+        0,
+        'o',
+        cast
+          .slice(0, snapshotAt)
+          .map(([, , data]) => data)
+          .join(''),
+      ],
+    ]
+  : cast;
 const header = { version: 2, width: cols, height: rows, theme: THEME };
-fs.writeFileSync(castOut, [header, ...cast].map((line) => JSON.stringify(line)).join('\n') + '\n');
+fs.writeFileSync(
+  castOut,
+  [header, ...frames].map((line) => JSON.stringify(line)).join('\n') + '\n',
+);
 fs.writeFileSync(textOut, `${snapshot}\n`);
-console.log(`record.ts: ${name}: ${cast.length} frames, ${cast.at(-1)![0].toFixed(1)}s`);
+console.log(
+  scene.still
+    ? `record.ts: ${name}: a still`
+    : `record.ts: ${name}: ${cast.length} frames, ${cast.at(-1)![0].toFixed(1)}s`,
+);

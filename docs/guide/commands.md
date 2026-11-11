@@ -8,13 +8,13 @@ Sometimes you don't want the whole stack, only one command with a service's envi
 migration, a seed script, a REPL, a test run.
 
 ```bash
-stackctl exec api -- node src/migrate.ts   # a command, in api's directory with api's env
-stackctl run api seed -- --rows=100        # api's `seed` script, with arguments
-cd apps/api && stackctl run seed           # no target: the current directory
+sctl exec api -- node src/migrate.ts   # a command, in api's directory with api's env
+sctl run api seed -- --rows=100        # api's `seed` script, with arguments
+cd apps/api && sctl run seed           # no target: the current directory
 ```
 
-- **`stackctl exec [target] -- <command>`** runs a literal command. The `--` is required.
-- **`stackctl run [target] <script> [-- args]`** runs a `package.json` script or Makefile
+- **`sctl exec [target] -- <command>`** runs a literal command. The `--` is required.
+- **`sctl run [target] <script> [-- args]`** runs a `package.json` script or Makefile
   target, [the way a service's dev script is run](./services.md#how-a-script-is-run).
 
 Both run in the target's directory with what a session would give it: its resolved
@@ -26,9 +26,9 @@ and a running one is not touched.
 A target is a service's name or a directory:
 
 ```bash
-stackctl exec api -- node src/migrate.ts        # the service named api
-stackctl exec apps/api -- node src/migrate.ts   # its directory, the same thing
-stackctl exec libs/db -- node src/migrate.ts    # a directory that isn't a service
+sctl exec api -- node src/migrate.ts        # the service named api
+sctl exec apps/api -- node src/migrate.ts   # its directory, the same thing
+sctl exec libs/db -- node src/migrate.ts    # a directory that isn't a service
 ```
 
 - **A path anywhere inside a service is that service**, and the command runs in the service's
@@ -43,8 +43,8 @@ stackctl exec libs/db -- node src/migrate.ts    # a directory that isn't a servi
 `--mode` picks the environment, as for a session:
 
 ```bash
-stackctl --mode test run api seed
-stackctl --mode test exec -- vitest
+sctl --mode test run api seed
+sctl --mode test exec -- vitest
 ```
 
 ## Output and exit code

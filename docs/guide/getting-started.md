@@ -35,16 +35,18 @@ yarn add -D stackctl
 
 :::
 
-This installs two commands, `stackctl` and its short alias `sctl`. They are the same program.
+This installs two commands, `stackctl` and its short alias `sctl`. They are the same program:
+`sctl` is the one to type, and the one this guide uses. A script or a CI file spells out
+`stackctl`.
 
 stackctl sets the project up as it installs: in a project with no config, that is
-`stackctl init --yes` (below). It is skipped in CI and never fails an install. pnpm runs a
+`sctl init --yes` (below). It is skipped in CI and never fails an install. pnpm runs a
 dependency's install script only once you allow it: run `pnpm approve-builds`.
 
 ## Set up the project
 
 ```bash
-pnpm stackctl init
+pnpm sctl init
 ```
 
 `init` is interactive and safe to run again. It:
@@ -109,20 +111,35 @@ for every option.
 ## Run it
 
 ```bash
-pnpm stackctl
+pnpm sctl
 ```
 
 Pick the services to run, press `⏎`, and the [terminal UI](./terminal-ui.md) takes over: one
 combined log, with every service's state in the footer.
 
-```
-── example ⎇ main ────────────────────────────────────────────────────────────
-● api 64M   ● web 219M
-←→ select   r restart   s stop   m commands   │   logs: f filter   c clear   │   ^c quit
-web ↗   web ↗   storybook ↗
+<llm-exclude><TerminalPlayer src="/casts/getting-started-1794373786.cast" label="The run screen: the services' combined log, and the footer with each service's state, the keys and the links." still /></llm-exclude>
+<llm-only>
+
+```text
+             ↑ 15 older lines — press Home to jump to oldest
+23:09:32 [backend   ] todo api listening on http://localhost:3001
+23:09:32 [frontend  ] backend ready, starting...
+23:09:32 [frontend  ] started
+23:09:32 [frontend  ]   VITE v8.3.5  ready in 619 ms
+23:09:32 [frontend  ]   ➜  Local:   http://localhost:3000/
+23:09:32 [frontend  ]   ➜  Network: use --host to expose
+23:09:32 [frontend  ] 11:09:32 PM [vite] (ssr) connected.
+── example ⎇ main ────────────────────────────────────────────────────────
+● backend 64M   ● frontend 231M
+infra: ● db 7M   ● mail 12M
+←→ select   r restart   s stop   m commands   │   logs: f filter   c clear
+^c quit
+backend ↗   public ↗   frontend ↗   root ↗   inbox ↗   mail ↗
 ```
 
-To skip the picker, name the services: `pnpm stackctl -s web`.
+</llm-only>
+
+To skip the picker, name the services: `pnpm sctl -s web`.
 
 ## A complete example
 

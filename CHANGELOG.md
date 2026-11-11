@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- **A stackctl started from a process stackctl started keeps the shell's own value of a
+  variable `env.override` appends to**, such as a debugger's `NODE_OPTIONS`.
+
 ## 0.1.2
 
 - **Every log line's text starts in the same column**, infra's and those of a service added

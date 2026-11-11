@@ -14,6 +14,8 @@ const props = defineProps({
   src: { type: String, required: true },
   /** What the recording shows, for a screen reader. */
   label: { type: String, required: true },
+  /** A screenshot: a cast of one frame (a `still` scene), shown once rather than looped. */
+  still: { type: Boolean, default: false },
 });
 
 const element = ref(null);
@@ -27,7 +29,7 @@ onMounted(async () => {
   }
   player = create(withBase(props.src), element.value, {
     autoPlay: true,
-    loop: true,
+    loop: !props.still,
     preload: true,
     fit: 'width',
     controls: false,

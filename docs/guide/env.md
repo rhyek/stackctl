@@ -40,7 +40,7 @@ From lowest to highest:
 1. [`env.vars`](../config/env.md#envvars), variables set in the config.
 2. The workspace's files.
 3. The service's files.
-4. **The environment stackctl was started with.** `LOG_LEVEL=debug stackctl` overrides every
+4. **The environment stackctl was started with.** `LOG_LEVEL=debug sctl` overrides every
    file for one run, as in Vite, Next.js and `node --env-file`.
 
 To let a file win over the shell for some variables (a `NODE_OPTIONS` that extends the
@@ -53,8 +53,8 @@ files of your own between stackctl's, use
 A mode picks the `.env.<mode>` files, and gives the session its own state.
 
 ```sh
-stackctl                 # development
-stackctl --mode test     # .env.test and .env.test.local
+sctl                 # development
+sctl --mode test     # .env.test and .env.test.local
 ```
 
 - **Without `--mode`**, the mode is `STACKCTL_MODE` if set, else `test` in CI (`CI` set and not
@@ -103,10 +103,10 @@ when stackctl starts. Restart stackctl to pick those up.
 
 ## The same environment anywhere
 
-- [`stackctl exec` and `stackctl run`](./commands.md) run one command with a service's
+- [`sctl exec` and `sctl run`](./commands.md) run one command with a service's
   environment.
 - [`resolveEnv()`](../reference/sdk.md#resolveenv) returns it to a script.
-- [`stackctl show-config`](../reference/cli.md#stackctl-show-config) lists, under `envFiles`,
+- [`sctl show-config`](../reference/cli.md#stackctl-show-config) lists, under `envFiles`,
   the files a mode looks for. Check there when a variable is missing.
 
 ## Details
@@ -117,6 +117,7 @@ when stackctl starts. Restart stackctl to pick those up.
   blocks a read of a Dropbox or iCloud folder until you allow access. The services show as
   `waiting`, the log names the file, and the session still answers its control API.
 - **Nested stackctl.** A process stackctl started also gets `STACKCTL_INJECTED_ENV`, the names
-  of the variables stackctl gave it. A stackctl started from that process (an e2e suite that
-  calls `startStack()`, say) drops them first, so its own `.env` files load as from a clean
-  shell. It stays in the outer mode unless `--mode` says otherwise.
+  of the variables stackctl gave it, and `STACKCTL_REPLACED_ENV`, the shell's values of those
+  it changed. A stackctl started from that process (an e2e suite that calls `startStack()`,
+  say) drops the first and restores the second, so its own `.env` files load as from the shell
+  the outer one was started in. It stays in the outer mode unless `--mode` says otherwise.

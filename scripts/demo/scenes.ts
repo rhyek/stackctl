@@ -38,6 +38,11 @@ export interface Scene {
   triggers: string[];
   cols: number;
   rows: number;
+  /**
+   * A screenshot rather than a recording: its cast is one frame, the screen as it stood when the
+   * scene took its snapshot. The page shows it with `<TerminalPlayer still />`.
+   */
+  still?: boolean;
   /** Plays the scene; returns why it failed, if it did. */
   play(stage: Stage): Promise<string | void>;
 }
@@ -104,7 +109,7 @@ export const scenes: Record<string, Scene> = {
     cols: 84,
     rows: 27,
     async play(t) {
-      await t.type('pnpm stackctl');
+      await t.type('pnpm sctl');
       await t.press('enter', 0);
       await t.waitFor('choose services');
       await t.sleep(1200);
@@ -170,7 +175,7 @@ export const scenes: Record<string, Scene> = {
     cols: PAGE_COLS,
     rows: 13,
     async play(t) {
-      await t.type('pnpm stackctl');
+      await t.type('pnpm sctl');
       await t.press('enter', 0);
       await t.waitFor('choose services');
       await t.sleep(1200);
@@ -202,7 +207,7 @@ export const scenes: Record<string, Scene> = {
     cols: PAGE_COLS,
     rows: 18,
     async play(t) {
-      await t.type('pnpm stackctl -s frontend -s worker');
+      await t.type('pnpm sctl -s frontend -s worker');
       await t.press('enter', 0);
       await t.waitFor('ssr) connected');
       await t.sleep(1500);
@@ -227,6 +232,26 @@ export const scenes: Record<string, Scene> = {
       await t.press('ctrl-c', 0);
       await t.waitForPrompt();
       await t.sleep(1000);
+    },
+  },
+
+  'getting-started': {
+    description:
+      "Getting started's screenshot of a first run (docs/guide/getting-started.md, Run it): one still frame of the run screen, a service and its dependency up, their log above the footer.",
+    triggers: [...COMMON, ...SCREEN, ...RUN],
+    cols: PAGE_COLS,
+    rows: 14,
+    still: true,
+    async play(t) {
+      await t.type('pnpm sctl -s frontend');
+      await t.press('enter', 0);
+      await t.waitFor('ssr) connected');
+      await t.sleep(2500);
+      t.snapshot();
+
+      await t.press('ctrl-c', 900);
+      await t.press('ctrl-c', 0);
+      await t.waitForPrompt();
     },
   },
 };
