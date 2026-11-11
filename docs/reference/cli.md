@@ -4,6 +4,8 @@ description: Every stackctl command and flag - start, stop, reset, service, show
 
 # CLI
 
+`sctl` is a short alias of `stackctl`: `sctl run api seed` is `stackctl run api seed`.
+
 ```bash
 stackctl                          # the terminal UI: pick services, run them
 stackctl -s web -s api            # run these services, skipping the picker
@@ -15,9 +17,9 @@ stackctl run api seed             # one script, with api's environment
 stackctl infra up                 # bring the infra up, then exit
 ```
 
-`sctl` is an alias of `stackctl`. Every command works from anywhere in the repo: the workspace
-is the nearest directory, at or above the current one, that holds `stackctl.config.ts`.
-Without one, every command except `init` fails with
+Every command works from anywhere in the repo: the workspace is the nearest directory, at or
+above the current one, that holds `stackctl.config.ts`. Without one, every command except
+`init` fails with
 `No stackctl.config.ts in <dir> or any directory above it`.
 
 | Command                                        | What it does                                              |

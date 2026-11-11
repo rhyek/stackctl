@@ -20,6 +20,8 @@ reference page with the details.
 - **`stackctl infra up --reset` and `stackctl infra destroy` delete data.** Only on request.
 - **Use `stackctl infra docker-compose …`**, never a bare `docker compose …`, which talks to
   a different Compose project.
+- **Write `stackctl`, never its alias `sctl`.** Guide pages type `sctl`; permission rules and
+  scripts match the full name.
 
 ## Is it running?
 

@@ -70,7 +70,7 @@ Every session writes its whole stream to a file, timestamps included, colors rem
 node_modules/.stackctl/modes/<mode>/logs/<timestamp>-<pid>-<n>.log
 ```
 
-Each session gets a new file, and so does each `stackctl exec` and `stackctl run`. Earlier
+Each session gets a new file, and so does each `sctl exec` and `sctl run`. Earlier
 files are kept. `--log-dir <dir>` writes them somewhere else.
 
 ## Reading a session's log
@@ -78,11 +78,11 @@ files are kept. `--log-dir <dir>` writes them somewhere else.
 From another terminal, without disturbing the session:
 
 ```bash
-stackctl logs               # print the current session's log
-stackctl logs -f            # print it, then follow new lines
-stackctl logs --path        # print only the file's path
-stackctl logs --mode test   # the test session's
+sctl logs               # print the current session's log
+sctl logs -f            # print it, then follow new lines
+sctl logs --path        # print only the file's path
+sctl logs --mode test   # the test session's
 ```
 
 Ctrl+C stops the following, never the session. With no session running, it shows the last
-one's log. See [`stackctl logs`](../reference/cli.md#stackctl-logs).
+one's log. See [`sctl logs`](../reference/cli.md#stackctl-logs).
