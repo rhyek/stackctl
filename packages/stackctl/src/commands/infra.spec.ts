@@ -12,7 +12,7 @@ function recordingManager({ stopCode = 0, ok = true } = {}) {
   });
   const manager: InfraCommandManager = {
     async up(req = {}) {
-      calls.push(`up ${JSON.stringify(req.services ?? [])} reset=${String(req.reset ?? false)}`);
+      calls.push(`up ${JSON.stringify(req.services ?? [])} trigger=${String(req.trigger)}`);
       return summary(req);
     },
     async down(services = []) {
@@ -44,22 +44,22 @@ async function run(
 }
 
 describe('runInfraCommand', () => {
-  test('start starts the services, without a reset', async () => {
-    expect(await run('start', ['db'])).toEqual({ code: 0, calls: ['up ["db"] reset=false'] });
+  test('start starts the services, as a start', async () => {
+    expect(await run('start', ['db'])).toEqual({ code: 0, calls: ['up ["db"] trigger=start'] });
   });
 
-  test('reset starts them with a reset', async () => {
-    expect(await run('reset', ['db'])).toEqual({ code: 0, calls: ['up ["db"] reset=true'] });
+  test('reset starts them as a reset', async () => {
+    expect(await run('reset', ['db'])).toEqual({ code: 0, calls: ['up ["db"] trigger=reset'] });
   });
 
   test('stop stops them, and exits as the stop did', async () => {
     expect(await run('stop', ['db'], { stopCode: 4 })).toEqual({ code: 4, calls: ['down ["db"]'] });
   });
 
-  test('restart stops them, then starts them', async () => {
+  test('restart stops them, then starts them as a restart', async () => {
     expect(await run('restart', ['db'])).toEqual({
       code: 0,
-      calls: ['down ["db"]', 'up ["db"] reset=false'],
+      calls: ['down ["db"]', 'up ["db"] trigger=restart'],
     });
   });
 
@@ -75,8 +75,8 @@ describe('runInfraCommand', () => {
   });
 
   test('with no services named, each passes none on: every enabled service', async () => {
-    expect((await run('start', [])).calls).toEqual(['up [] reset=false']);
-    expect((await run('reset', [])).calls).toEqual(['up [] reset=true']);
+    expect((await run('start', [])).calls).toEqual(['up [] trigger=start']);
+    expect((await run('reset', [])).calls).toEqual(['up [] trigger=reset']);
     expect((await run('destroy', [])).calls).toEqual(['destroy []']);
   });
 

@@ -122,20 +122,20 @@ A part of the config can live in its own file and still be checked where it is w
 | Type                                           | For                                             |
 | ---------------------------------------------- | ----------------------------------------------- |
 | `ServiceInput<Names>`                          | one application service                         |
-| `InfraServiceInput`                            | one infra service                               |
-| `InfraServicesInput`                           | a provider's `services` map                     |
+| `DockerComposeServiceInput`                    | one infra service                               |
+| `DockerComposeServicesInput`                   | Docker Compose's `services` map                 |
 | `ReverseProxyRoute<Names>`                     | one `reverseProxy.routes` entry                 |
 | `ReverseProxyInput`, `DockerComposeInfraInput` | a whole `reverseProxy` or provider block        |
 
 ```ts
 // infra/queue.ts
-import type { InfraServiceInput } from 'stackctl';
+import type { DockerComposeServiceInput } from 'stackctl';
 
 export const queue = {
   afterReady: async ({ envs, log }) => {
     log(`queue admin on ${envs.QUEUE_ADMIN_PORT}`);
   },
-} satisfies InfraServiceInput;
+} satisfies DockerComposeServiceInput;
 ```
 
 ```ts
@@ -156,6 +156,27 @@ Node loads the config directly, so its files import each other by their real `.t
 `Names` is the union of service names the part may refer to (`'api' | 'web'`). Use
 `satisfies`, not a type annotation: an annotation widens the part's names to `string`, and
 `defineConfig` can no longer check them.
+
+An infra callback written as a function of its own takes its phase's context type:
+
+| Callback                        | Context                       |
+| ------------------------------- | ----------------------------- |
+| `beforeDestroy`, `afterDestroy` | `DockerComposeDestroyContext` |
+| `beforeStart`                   | `DockerComposeStartContext`   |
+| `afterReady`                    | `DockerComposeReadyContext`   |
+
+A function shared by several phases takes `DockerComposeCallbackContext`.
+
+```ts
+import type { DockerComposeReadyContext } from 'stackctl';
+
+export async function afterReady({ exec, fresh }: DockerComposeReadyContext) {
+  await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
+  if (fresh) {
+    await exec('pnpm', ['seed'], { cwd: 'libs/db' });
+  }
+}
+```
 
 ## Typed service names
 

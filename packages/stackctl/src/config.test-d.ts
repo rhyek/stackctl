@@ -67,9 +67,21 @@ import {
   type StartStackOptions,
 } from './index.js';
 import type {
+  DockerComposeCallbackContext,
+  DockerComposeDestroyContext,
+  DockerComposeReadyContext,
+  DockerComposeServiceInput,
+  DockerComposeServicesInput,
+  DockerComposeStartContext,
   InfraCallbackContext,
+  InfraDestroyContext,
+  InfraDestroyTrigger,
   InfraEnabledContext,
   InfraReadyContext,
+  InfraStartContext,
+  InfraStartTrigger,
+  InfraTrigger,
+  InfraRunOptions,
   InfraRunResult,
   InfraServiceInput,
   InfraServicesInput,
@@ -1113,7 +1125,7 @@ describe('infra callbacks', () => {
                 expectTypeOf(ctx.envs).toEqualTypeOf<Envs>();
                 expectTypeOf(ctx.tokens.domain).toEqualTypeOf<'example.test'>();
                 expectTypeOf(ctx.tokens).not.toHaveProperty('region');
-                expectTypeOf(ctx.reset).toEqualTypeOf<boolean>();
+                expectTypeOf(ctx.trigger).toEqualTypeOf<InfraStartTrigger>();
                 expectTypeOf(ctx.fresh).toEqualTypeOf<boolean>();
                 expectTypeOf(ctx.service).toEqualTypeOf<ServiceDetails>();
                 expectTypeOf(ctx.workspaceDir).toEqualTypeOf<string>();
@@ -1326,6 +1338,45 @@ describe('the input types and the schemas', () => {
 });
 
 describe('infra hook context', () => {
+  test('compose is on the Docker Compose contexts only', () => {
+    expectTypeOf<InfraCallbackContext>().not.toHaveProperty('compose');
+    expectTypeOf<InfraReadyContext>().not.toHaveProperty('compose');
+    expectTypeOf<DockerComposeCallbackContext['compose']>().toEqualTypeOf<
+      (args: string[], opts?: InfraRunOptions) => Promise<InfraRunResult>
+    >();
+    expectTypeOf<DockerComposeReadyContext['compose']>().toEqualTypeOf<
+      DockerComposeCallbackContext['compose']
+    >();
+    expectTypeOf<DockerComposeCallbackContext>().toExtend<InfraCallbackContext>();
+    expectTypeOf<DockerComposeReadyContext>().toExtend<InfraReadyContext>();
+    expectTypeOf<DockerComposeReadyContext['fresh']>().toEqualTypeOf<boolean>();
+  });
+
+  test("a docker-compose service's callbacks get the Docker Compose contexts", () => {
+    defineConfig({
+      serviceRootDir: 'packages',
+      services: { web: {} },
+      infra: {
+        'docker-compose': {
+          services: {
+            db: {
+              beforeStart: (ctx) => {
+                expectTypeOf(ctx).toExtend<DockerComposeStartContext>();
+                expectTypeOf(ctx).not.toHaveProperty('fresh');
+              },
+              beforeDestroy: (ctx) => {
+                expectTypeOf(ctx).toExtend<DockerComposeDestroyContext>();
+              },
+              afterReady: (ctx) => {
+                expectTypeOf(ctx).toExtend<DockerComposeReadyContext>();
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+
   test('the command helper is named exec, with no run', () => {
     expectTypeOf<InfraReadyContext>().toHaveProperty('exec');
     expectTypeOf<InfraReadyContext>().not.toHaveProperty('run');
@@ -1350,6 +1401,118 @@ describe('infra hook context', () => {
   test('enabled gets the mode but no config: it runs while the config is still resolving', () => {
     expectTypeOf<InfraEnabledContext['mode']>().toEqualTypeOf<Mode>();
     expectTypeOf<InfraEnabledContext>().not.toHaveProperty('config');
+  });
+});
+
+describe('the infra callbacks’ trigger', () => {
+  test('names what started the run', () => {
+    expectTypeOf<InfraTrigger>().toEqualTypeOf<
+      'session' | 'start' | 'restart' | 'reset' | 'destroy'
+    >();
+    expectTypeOf<InfraStartTrigger>().toEqualTypeOf<'session' | 'start' | 'restart' | 'reset'>();
+    expectTypeOf<InfraDestroyTrigger>().toEqualTypeOf<'destroy' | 'reset'>();
+    expectTypeOf<InfraCallbackContext['trigger']>().toEqualTypeOf<InfraTrigger>();
+    expectTypeOf<InfraCallbackContext>().not.toHaveProperty('reset');
+  });
+
+  test('each phase’s context has only the triggers that run it', () => {
+    expectTypeOf<InfraDestroyContext['trigger']>().toEqualTypeOf<InfraDestroyTrigger>();
+    expectTypeOf<InfraStartContext['trigger']>().toEqualTypeOf<InfraStartTrigger>();
+    expectTypeOf<InfraReadyContext['trigger']>().toEqualTypeOf<InfraStartTrigger>();
+    expectTypeOf<DockerComposeDestroyContext['trigger']>().toEqualTypeOf<InfraDestroyTrigger>();
+    expectTypeOf<DockerComposeStartContext['trigger']>().toEqualTypeOf<InfraStartTrigger>();
+    expectTypeOf<DockerComposeReadyContext['trigger']>().toEqualTypeOf<InfraStartTrigger>();
+    expectTypeOf<DockerComposeDestroyContext>().toExtend<InfraDestroyContext>();
+    expectTypeOf<DockerComposeStartContext>().toExtend<InfraStartContext>();
+    expectTypeOf<DockerComposeDestroyContext['compose']>().toEqualTypeOf<
+      DockerComposeCallbackContext['compose']
+    >();
+    expectTypeOf<DockerComposeStartContext['compose']>().toEqualTypeOf<
+      DockerComposeCallbackContext['compose']
+    >();
+  });
+
+  test('a callback written inline gets its phase’s trigger', () => {
+    defineConfig({
+      serviceRootDir: 'packages',
+      services: { web: {} },
+      infra: {
+        'docker-compose': {
+          services: {
+            db: {
+              beforeDestroy: ({ trigger }) => {
+                expectTypeOf(trigger).toEqualTypeOf<InfraDestroyTrigger>();
+              },
+              afterDestroy: ({ trigger }) => {
+                expectTypeOf(trigger).toEqualTypeOf<InfraDestroyTrigger>();
+              },
+              beforeStart: ({ trigger }) => {
+                expectTypeOf(trigger).toEqualTypeOf<InfraStartTrigger>();
+              },
+              afterReady: ({ trigger }) => {
+                expectTypeOf(trigger).toEqualTypeOf<InfraStartTrigger>();
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+
+  test('a callback written as a function of its own takes its phase’s context', () => {
+    const beforeDestroy = ({ trigger, log }: DockerComposeDestroyContext) => {
+      // @ts-expect-error -- a destroy is never part of a session's start: no overlap
+      if (trigger === 'session') {
+        log('unreachable');
+      }
+    };
+    const beforeStart = ({ trigger, log }: DockerComposeStartContext) => {
+      // @ts-expect-error -- a start is never a destroy: no overlap
+      if (trigger === 'destroy') {
+        log('unreachable');
+      }
+    };
+    const afterReady = async ({ trigger, fresh, exec }: DockerComposeReadyContext) => {
+      if (fresh || trigger !== 'session') {
+        await exec('pnpm', ['migrate']);
+      }
+    };
+    void ({
+      beforeDestroy,
+      afterDestroy: beforeDestroy,
+      beforeStart,
+      afterReady,
+    } satisfies DockerComposeServiceInput);
+  });
+
+  test("a callback for another phase doesn't fit", () => {
+    const onStart = (_ctx: DockerComposeStartContext) => {};
+    const onDestroy = (_ctx: DockerComposeDestroyContext) => {};
+    const onReady = (_ctx: DockerComposeReadyContext) => {};
+    void ({
+      // @ts-expect-error -- a start callback can't be handed a destroy's trigger
+      beforeDestroy: onStart,
+    } satisfies DockerComposeServiceInput);
+    void ({
+      // @ts-expect-error -- a destroy callback can't be handed a start's trigger
+      beforeStart: onDestroy,
+    } satisfies DockerComposeServiceInput);
+    void ({
+      // @ts-expect-error -- before the start there is nothing to be fresh yet
+      beforeStart: onReady,
+    } satisfies DockerComposeServiceInput);
+  });
+
+  test('a function for every phase takes the common context', () => {
+    const logEvery = ({ trigger, log }: DockerComposeCallbackContext) => {
+      log(trigger);
+    };
+    void ({
+      beforeDestroy: logEvery,
+      afterDestroy: logEvery,
+      beforeStart: logEvery,
+      afterReady: logEvery,
+    } satisfies DockerComposeServiceInput);
   });
 });
 
@@ -1429,10 +1592,10 @@ describe('config split across files', () => {
 
   const queue = {
     afterReady: async (ctx) => {
-      expectTypeOf(ctx).toEqualTypeOf<InfraReadyContext<typeof tokens>>();
+      expectTypeOf(ctx).toEqualTypeOf<DockerComposeReadyContext<typeof tokens>>();
       expectTypeOf(ctx.tokens.region).toEqualTypeOf<'local'>();
     },
-  } satisfies InfraServiceInput<typeof tokens>;
+  } satisfies DockerComposeServiceInput<typeof tokens>;
   const infraServices = {
     db: {},
     queue,
@@ -1442,11 +1605,14 @@ describe('config split across files', () => {
         return ctx.mode !== 'test';
       },
     },
-  } satisfies InfraServicesInput<typeof tokens>;
+  } satisfies DockerComposeServicesInput<typeof tokens>;
   const api = { command: 'dev', deps: ['worker'] } satisfies ServiceInput<Names>;
 
   test('the parts are the types a config takes', () => {
     expectTypeOf<InfraServicesInput>().toEqualTypeOf<Record<string, InfraServiceInput>>();
+    expectTypeOf<DockerComposeServicesInput>().toEqualTypeOf<
+      Record<string, DockerComposeServiceInput>
+    >();
     expectTypeOf<ServiceInput<Names>>().toEqualTypeOf<
       ServiceConfigInput<unknown, TokenRecord, Names, string>
     >();
@@ -1484,7 +1650,7 @@ describe('config split across files', () => {
   test('an annotation widens a part: its keys, which the routes are checked against, are lost', () => {
     // Why the docs say `satisfies`: annotated, the map's keys are any string, so the infra names
     // `reverseProxy.routes` may name are too, and a misspelled one compiles.
-    const annotated: InfraServicesInput<typeof tokens> = infraServices;
+    const annotated: DockerComposeServicesInput<typeof tokens> = infraServices;
     const widened = defineConfig({
       serviceRootDir: 'apps',
       services: { web: {} },

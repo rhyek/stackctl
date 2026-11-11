@@ -172,7 +172,8 @@ Async functions that run around stackctl's own steps:
 | `afterDestroy`  | After they are removed. For state Compose can't see, such as a bind-mounted directory.        |
 
 `afterReady` runs at every session start on purpose: pull a branch with new migrations, start
-stackctl, and they are applied. So what it runs must be idempotent.
+stackctl, and they are applied. So what it runs must be idempotent. To skip it on some runs, read
+[`trigger`](#what-started-the-run).
 
 ```ts
 db: {
@@ -196,7 +197,7 @@ anything is removed, and a failing `beforeStart` before anything is started.
 | `compose`      | `compose(args, opts?)`: runs `docker compose <args>` on this project.                       |
 | `log`          | `log(message)`: writes a line to the infra output.                                          |
 | `fresh`        | `afterReady` only. `true` when this run created the service's data.                         |
-| `reset`        | `true` when this run is a reset.                                                            |
+| `trigger`      | What started this run. See [What started the run](#what-started-the-run).                    |
 | `mode`         | The active mode.                                                                            |
 | `envs`         | The mode's workspace environment, which `exec` and `compose` give their commands.           |
 | `tokens`       | The config's top-level `tokens`.                                                            |
@@ -234,6 +235,35 @@ before.
 Nothing is remembered between runs. If `afterReady` fails on the fresh run, before the seed,
 `fresh` is `false` next time: start over with `stackctl infra reset -s <service>`.
 
+### What started the run
+
+`trigger` names the run that is calling the callback:
+
+| `trigger` | The run                                                  | Its callbacks                    |
+| --------- | -------------------------------------------------------- | -------------------------------- |
+| `session` | A dev session's start, bringing its infra up.            | `beforeStart`, `afterReady`      |
+| `start`   | `infra start`, a session's `s` key, or the control API.  | `beforeStart`, `afterReady`      |
+| `restart` | `infra restart`, `r`, or the control API.                | `beforeStart`, `afterReady`      |
+| `reset`   | `infra reset`, `R`, or the control API.                  | All four                         |
+| `destroy` | `infra destroy`.                                         | `beforeDestroy`, `afterDestroy`  |
+
+To migrate at a session's start only into new data:
+
+```ts
+db: {
+  afterReady: async ({ exec, fresh, trigger }) => {
+    if (fresh || trigger !== 'session') {
+      await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
+    }
+  },
+},
+```
+
+- **A pulled migration then waits for an explicit start:** `stackctl infra start -s db` runs
+  `afterReady` on the running service, without restarting it.
+- **Each callback's `trigger` has only its own runs**, so `trigger === 'session'` in a
+  `beforeDestroy` doesn't compile.
+
 ### Driving the session
 
 `control` is a [control API](../reference/control-api.md#the-client) client for the session
@@ -242,9 +272,9 @@ an infra service's data. Stop it before a reset, start it again after:
 
 ```ts
 db: {
-  beforeDestroy: async ({ reset, control, data }) => {
+  beforeDestroy: async ({ trigger, control, data }) => {
     const status = await control?.query.status();
-    if (reset && status?.services?.api === 'running') {
+    if (trigger === 'reset' && status?.services?.api === 'running') {
       data.apiWasRunning = await control?.command.service.stop('api');
     }
   },
@@ -257,7 +287,8 @@ db: {
 },
 ```
 
-- **At a session's own start the services aren't running yet**, so there is nothing to stop.
+- **At a session's own start (`trigger` is `session`) the services aren't running yet**, so
+  there is nothing to stop.
   This acts on a reset made while the session runs.
 - **Leave the callback's own infra service alone**, and don't `quit()` from a callback.
 

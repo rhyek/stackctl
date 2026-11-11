@@ -12,7 +12,7 @@ import type { Config } from '../config.js';
 import { ambientEnv, baseEnvs } from '../env.js';
 import { execLines } from './exec.js';
 import { DockerComposeProvider } from './providers/docker-compose.js';
-import type { ResolvedInfraService } from './types.js';
+import type { ResolvedDockerComposeInfra } from './types.js';
 
 function dockerAvailable(): boolean {
   try {
@@ -58,7 +58,7 @@ const projects: string[] = [];
 
 /** A provider on a fresh project name; the project is removed after the test. */
 function provider(
-  services: Record<string, ResolvedInfraService> = {},
+  services: ResolvedDockerComposeInfra['services'] = {},
   suffix = '',
 ): { provider: DockerComposeProvider; project: string } {
   const project = `stackctl-spec-${String(process.pid)}-${String(++counter)}${suffix}`;
@@ -188,7 +188,7 @@ describe.skipIf(!dockerAvailable())(
       await dc('exec', '-T', 'checked', 'touch', '/data/marker');
       await dc('exec', '-T', 'plain', 'touch', '/data/marker');
 
-      expect((await infra.up({ reset: true, services: ['checked'] })).ok).toBe(true);
+      expect((await infra.up({ trigger: 'reset', services: ['checked'] })).ok).toBe(true);
 
       expect((await dc('exec', '-T', 'checked', 'test', '-f', '/data/marker')).exitCode).not.toBe(
         0,
@@ -210,7 +210,7 @@ describe.skipIf(!dockerAvailable())(
       await infra.up({}); // 2: everything is already there
       await infra.down([]);
       await infra.up({}); // 3: new containers, old volumes
-      await infra.up({ reset: true, services: ['checked'] }); // 4: checked's volume was just removed
+      await infra.up({ trigger: 'reset', services: ['checked'] }); // 4: checked's volume was just removed
 
       expect(seen.checked).toEqual([true, false, false, true]);
       // `plain` has a named volume too, and was never reset.

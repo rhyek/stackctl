@@ -12,6 +12,7 @@ import {
   type InfraEvent,
   type InfraServiceCallbacks,
   type Readiness,
+  type ResolvedInfraService,
 } from './types.js';
 
 /** A stand-in for the resolved config: callbacks only pass it on. */
@@ -120,12 +121,17 @@ class FakeProvider extends InfraProvider {
     this.calls.push(`tool:${args.join(' ')}@${opts.cwd}`);
     return { exitCode: args[0] === 'boom' ? 2 : 0, stdout: 'tool-out', stderr: '' };
   }
+  protected toolContext(run: ToolHelper) {
+    return { tool: run };
+  }
 }
 
-/** Callbacks for `service` that record their name and the `reset` they saw into `calls`. */
+type ToolHelper = (args: string[]) => Promise<{ stdout: string }>;
+
+/** Callbacks for `service` that record their name and the `trigger` they saw into `calls`. */
 function recording(calls: string[], service: string): InfraServiceCallbacks {
   const record = (name: string) => async (ctx: InfraCallbackContext) => {
-    calls.push(`${name}:${service}:reset=${String(ctx.reset)}`);
+    calls.push(`${name}:${service}:trigger=${ctx.trigger}`);
   };
   return {
     beforeDestroy: record('beforeDestroy'),
@@ -141,9 +147,9 @@ describe('InfraProvider.up', () => {
     Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
     const summary = await provider.up({});
     expect(provider.calls).toEqual([
-      'beforeStart:db:reset=false',
+      'beforeStart:db:trigger=start',
       'start:db,redis',
-      'afterReady:db:reset=false',
+      'afterReady:db:trigger=start',
     ]);
     expect(summary).toEqual({
       ok: true,
@@ -154,17 +160,31 @@ describe('InfraProvider.up', () => {
     });
   });
 
+  test.each(['session', 'restart'] as const)(
+    'a %s destroys nothing, and its callbacks see it as their trigger',
+    async (trigger) => {
+      const provider = new FakeProvider();
+      Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
+      await provider.up({ trigger });
+      expect(provider.calls).toEqual([
+        `beforeStart:db:trigger=${trigger}`,
+        'start:db,redis',
+        `afterReady:db:trigger=${trigger}`,
+      ]);
+    },
+  );
+
   test('a reset destroys the services it is about to start, between beforeDestroy and afterDestroy', async () => {
     const provider = new FakeProvider();
     Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
-    await provider.up({ reset: true });
+    await provider.up({ trigger: 'reset' });
     expect(provider.calls).toEqual([
-      'beforeDestroy:db:reset=true',
+      'beforeDestroy:db:trigger=reset',
       'destroyServices:db,redis',
-      'afterDestroy:db:reset=true',
-      'beforeStart:db:reset=true',
+      'afterDestroy:db:trigger=reset',
+      'beforeStart:db:trigger=reset',
       'start:db,redis',
-      'afterReady:db:reset=true',
+      'afterReady:db:trigger=reset',
     ]);
   });
 
@@ -181,7 +201,7 @@ describe('InfraProvider.up', () => {
       afterReady: note('afterReady'),
     };
     const provider = new FakeProvider({ callbacks: { db: callbacks, redis: callbacks } });
-    await provider.up({ reset: true, services: ['db'] });
+    await provider.up({ trigger: 'reset', services: ['db'] });
     expect(seen).toEqual([
       'beforeDestroy:db:{}',
       'afterDestroy:db:{"beforeDestroy":"db"}',
@@ -201,7 +221,7 @@ describe('InfraProvider.up', () => {
 
   test('a reset with services named destroys only those', async () => {
     const provider = new FakeProvider();
-    await provider.up({ reset: true, services: ['redis'] });
+    await provider.up({ trigger: 'reset', services: ['redis'] });
     expect(provider.calls).toEqual(['destroyServices:redis', 'start:redis']);
   });
 
@@ -215,7 +235,7 @@ describe('InfraProvider.up', () => {
         },
       },
     });
-    const summary = await provider.up({ reset: true });
+    const summary = await provider.up({ trigger: 'reset' });
     expect(provider.calls).toEqual([]);
     expect(summary).toEqual({
       ok: false,
@@ -259,7 +279,7 @@ describe('InfraProvider.up', () => {
 
   test('a failed destroy aborts before anything starts', async () => {
     const provider = new FakeProvider({ failDestroy: 'rm failed' });
-    const summary = await provider.up({ reset: true, services: ['db'] });
+    const summary = await provider.up({ trigger: 'reset', services: ['db'] });
     expect(provider.calls).toEqual(['destroyServices:db']);
     expect(summary).toEqual({
       ok: false,
@@ -274,7 +294,7 @@ describe('InfraProvider.up', () => {
       readiness: { db: [WAITING, { state: 'failed', detail: 'exited (1)' }] },
     });
     const summary = await provider.up({});
-    expect(calls).toContain('afterReady:redis:reset=false');
+    expect(calls).toContain('afterReady:redis:trigger=start');
     expect(summary).toEqual({
       ok: false,
       services: [
@@ -352,7 +372,7 @@ describe('fresh', () => {
 
   test('is read after any destroy and before the start — a reset makes a service fresh', async () => {
     const provider = new FakeProvider({ recordFresh: true });
-    await provider.up({ reset: true, services: ['db'] });
+    await provider.up({ trigger: 'reset', services: ['db'] });
     expect(provider.calls).toEqual(['destroyServices:db', 'readFresh:db', 'start:db']);
   });
 });
@@ -382,7 +402,8 @@ describe('InfraProvider callback context: buildAddress', () => {
       },
       services: { web: {} },
     });
-    const services = config.infra!['docker-compose']!.services;
+    // Compose's callbacks, which this provider-neutral fake runs with the base context alone.
+    const services = config.infra!['docker-compose']!.services as Record<string, ResolvedInfraService>; // oxfmt-ignore
     await new FakeProvider({ config, services: ['mail'], callbacks: services }).up({});
     expect(seen?.()).toBe('https://mail.example.test');
     expect(seen?.({ path: '/inbox' })).toBe('https://mail.example.test/inbox');
@@ -418,7 +439,7 @@ describe('InfraProvider callback context', () => {
       service: { name: 'db', kind: 'infra', route: null },
       mode: 'test',
       config: CONFIG,
-      reset: false,
+      trigger: 'start',
       workspaceDir: '/ws',
       tokens: { domain: 'example.test' },
       envs: { FROM_ENV: 'yes', TOOL_PROJECT: 'ws-test' },
@@ -454,7 +475,7 @@ describe('InfraProvider callback context', () => {
         looked = true;
         return undefined;
       },
-    }).up({ reset: true });
+    }).up({ trigger: 'reset' });
     expect(looked).toBe(false);
   });
 
@@ -535,13 +556,15 @@ describe('InfraProvider callback context', () => {
     expect(summary.services[1]!.ok).toBe(true);
   });
 
-  test("compose runs the provider's tool, and rejects on a non-zero exit too", async () => {
+  test("a callback gets the provider's tool helper, which rejects on a non-zero exit too", async () => {
     const provider = new FakeProvider({
       callbacks: {
         db: {
-          afterReady: async ({ compose }) => {
-            expect((await compose(['exec', 'db', 'true'])).stdout).toBe('tool-out');
-            await compose(['boom']);
+          afterReady: async (ctx) => {
+            // The base context is provider-neutral; the provider adds its own helper to it.
+            const { tool } = ctx as typeof ctx & { tool: ToolHelper };
+            expect((await tool(['exec', 'db', 'true'])).stdout).toBe('tool-out');
+            await tool(['boom']);
           },
         },
       },
@@ -553,15 +576,15 @@ describe('InfraProvider callback context', () => {
 });
 
 describe('InfraProvider.destroy', () => {
-  test('with no services destroys everything; the callbacks around it see reset: false', async () => {
+  test('with no services destroys everything; the callbacks around it see the destroy', async () => {
     const provider = new FakeProvider();
     Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
     const events: InfraEvent[] = [];
     const summary = await provider.destroy({ onEvent: (e) => events.push(e) });
     expect(provider.calls).toEqual([
-      'beforeDestroy:db:reset=false',
+      'beforeDestroy:db:trigger=destroy',
       'destroyAll',
-      'afterDestroy:db:reset=false',
+      'afterDestroy:db:trigger=destroy',
     ]);
     expect(summary.ok).toBe(true);
     expect(events[0]).toEqual({
@@ -652,7 +675,7 @@ describe('a disabled service', () => {
 
   test('is not touched by a reset, which destroys only what it is about to start', async () => {
     const provider = withDisabledRedis();
-    expect((await provider.up({ reset: true })).ok).toBe(true);
+    expect((await provider.up({ trigger: 'reset' })).ok).toBe(true);
     expect(provider.calls).toEqual(['destroyServices:db', 'start:db']);
   });
 
@@ -677,7 +700,7 @@ describe('no services to act on', () => {
       ok: true,
       services: [],
     });
-    expect(await provider.up({ reset: true })).toEqual({ ok: true, services: [] });
+    expect(await provider.up({ trigger: 'reset' })).toEqual({ ok: true, services: [] });
     expect(provider.calls).toEqual([]);
     expect(events).toEqual([{ type: 'targets', provider: 'fake', action: 'up', services: [] }]);
   });

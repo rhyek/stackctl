@@ -11,6 +11,7 @@ import type { Exec, ExecOptions, ExecResult, LineStream, SpawnInherit, Stream } 
 import {
   InfraError,
   type InfraCallbackContext,
+  type InfraDestroyTrigger,
   type InfraEvent,
   type InfraRunOptions,
   type InfraRunResult,
@@ -19,6 +20,8 @@ import {
   type InfraServiceResult,
   type InfraServiceState,
   type InfraServiceStatus,
+  type InfraStartTrigger,
+  type InfraTrigger,
   type Readiness,
   unknownServicesError,
 } from './types.js';
@@ -73,15 +76,34 @@ export interface InfraWatch {
 export interface InfraRunRequest {
   /** The services to act on. Omitted or empty means all of them. */
   services?: string[];
-  /** Destroy the targets before starting them. */
-  reset?: boolean;
+  /**
+   * What started the run, which its callbacks get as `trigger`: `session`, `start` (the default),
+   * `restart` or `reset`. A `reset` destroys the targets before starting them.
+   */
+  trigger?: InfraStartTrigger;
   onEvent?: (event: InfraEvent) => void;
 }
 
 export type Emit = (event: InfraEvent) => void;
 
-/** The callbacks that run before the start; `afterReady` has its own path and context. */
-type CallbackName = 'beforeDestroy' | 'afterDestroy' | 'beforeStart';
+/**
+ * The callbacks that run before the start, with the triggers each can see; `afterReady` has its
+ * own path and context.
+ */
+interface PhaseTriggers {
+  beforeDestroy: InfraDestroyTrigger;
+  afterDestroy: InfraDestroyTrigger;
+  beforeStart: InfraStartTrigger;
+}
+
+type CallbackName = keyof PhaseTriggers;
+
+/** A service's callbacks for those phases, each taking a context with its phase's triggers. */
+type PhaseCallbacks = {
+  [N in CallbackName]?: (
+    ctx: InfraCallbackContext<TokenRecord, PhaseTriggers[N]>,
+  ) => void | Promise<void>;
+};
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -247,8 +269,16 @@ export abstract class InfraProvider {
   protected abstract readStatuses(targets: string[]): Promise<Map<string, Readiness>>;
   /** Text explaining why a service failed (its log tail, say); empty when there is none. */
   protected abstract failureDetail(service: string): Promise<string>;
-  /** Runs the provider's tool for a callback's `compose` helper. */
+  /** Runs the provider's tool, for the helper {@link toolContext} hands callbacks. */
   protected abstract runTool(args: string[], opts: ExecOptions): Promise<ExecResult>;
+  /**
+   * What the provider adds to its callbacks' context: its tool's helper (Docker Compose's
+   * `compose`), given `run`, which runs the tool with the callback's environment and settles its
+   * exit as `exec` does.
+   */
+  protected abstract toolContext(
+    run: (args: string[], opts?: InfraRunOptions) => Promise<InfraRunResult>,
+  ): object;
 
   /** How the provider's tool is named in a message about a command that failed. */
   protected toolLabel(): string {
@@ -261,7 +291,7 @@ export abstract class InfraProvider {
   }
 
   /**
-   * Brings the targets up and waits until each is ready: (with `reset`) `beforeDestroy`,
+   * Brings the targets up and waits until each is ready: (on a `reset`) `beforeDestroy`,
    * destroy them and `afterDestroy`, then `beforeStart`, one start for all of them, a readiness poll, and each
    * service's `afterReady` the moment *it* is ready.
    *
@@ -271,7 +301,7 @@ export abstract class InfraProvider {
    */
   async up(req: InfraRunRequest = {}): Promise<InfraRunSummary> {
     const emit = req.onEvent ?? (() => {});
-    const reset = req.reset ?? false;
+    const trigger = req.trigger ?? 'start';
     const { targets } = await this.resolveTargets(req.services, 'up');
     const run = new Run(targets, emit, this.runtime.connectControl);
     emit({ type: 'targets', provider: this.key, action: 'up', services: targets });
@@ -284,20 +314,20 @@ export abstract class InfraProvider {
       if (targets.length === 0) {
         return run.summary();
       }
-      if (reset) {
+      if (trigger === 'reset') {
         // Exactly the services about to be started, never the whole project: a reset must not
         // take the data of a service it isn't bringing back — one disabled in this mode, say.
         run.setAll('destroying');
-        if (!(await this.runPhase('beforeDestroy', run, reset))) {
+        if (!(await this.runPhase('beforeDestroy', run, trigger))) {
           return run.summary();
         }
         await this.destroyServices(targets, emit);
-        if (!(await this.runPhase('afterDestroy', run, reset))) {
+        if (!(await this.runPhase('afterDestroy', run, trigger))) {
           return run.summary();
         }
       }
       run.setAll('starting');
-      if (!(await this.runPhase('beforeStart', run, reset))) {
+      if (!(await this.runPhase('beforeStart', run, trigger))) {
         return run.summary();
       }
       // After any destroy, so a reset service counts: its data is about to be created anew.
@@ -308,23 +338,23 @@ export abstract class InfraProvider {
       return run.summary();
     }
 
-    await this.awaitReady(run, reset, fresh);
+    await this.awaitReady(run, trigger, fresh);
     return run.summary();
   }
 
   /**
-   * Calls `beforeDestroy({ reset: false })`, removes the targets and their data, then calls
-   * `afterDestroy({ reset: false })`. A `beforeDestroy` failure removes nothing. With no
+   * Calls `beforeDestroy({ trigger: 'destroy' })`, removes the targets and their data, then calls
+   * `afterDestroy({ trigger: 'destroy' })`. A `beforeDestroy` failure removes nothing. With no
    * services named it removes the whole project — disabled services' leftovers included — and
    * the targets, for the callbacks, are the enabled ones.
    */
-  async destroy(req: Omit<InfraRunRequest, 'reset'> = {}): Promise<InfraRunSummary> {
+  async destroy(req: Omit<InfraRunRequest, 'trigger'> = {}): Promise<InfraRunSummary> {
     const emit = req.onEvent ?? (() => {});
     const { targets, everything } = await this.resolveTargets(req.services, 'destroy');
     const run = new Run(targets, emit, this.runtime.connectControl);
     emit({ type: 'targets', provider: this.key, action: 'destroy', services: targets });
     run.setAll('destroying');
-    if (!(await this.runPhase('beforeDestroy', run, false))) {
+    if (!(await this.runPhase('beforeDestroy', run, 'destroy'))) {
       return run.summary();
     }
     try {
@@ -338,7 +368,7 @@ export abstract class InfraProvider {
       run.failAll(errorMessage(err));
       return run.summary();
     }
-    const failures = await this.runCallbacks('afterDestroy', run, false);
+    const failures = await this.runCallbacks('afterDestroy', run, 'destroy');
     for (const service of targets) {
       const error = failures.get(service);
       if (error === undefined) {
@@ -396,8 +426,12 @@ export abstract class InfraProvider {
    * for `beforeDestroy`, not destroyed) — these phases come before the single start or destroy,
    * so there is no partial way forward.
    */
-  private async runPhase(name: CallbackName, run: Run, reset: boolean): Promise<boolean> {
-    const failures = await this.runCallbacks(name, run, reset);
+  private async runPhase<N extends CallbackName>(
+    name: N,
+    run: Run,
+    trigger: PhaseTriggers[N],
+  ): Promise<boolean> {
+    const failures = await this.runCallbacks(name, run, trigger);
     if (failures.size === 0) {
       return true;
     }
@@ -410,20 +444,21 @@ export abstract class InfraProvider {
   }
 
   /** Runs `name` for each target that has it, in parallel. Returns the failures, by service. */
-  private async runCallbacks(
-    name: CallbackName,
+  private async runCallbacks<N extends CallbackName>(
+    name: N,
     run: Run,
-    reset: boolean,
+    trigger: PhaseTriggers[N],
   ): Promise<Map<string, string>> {
     const failures = new Map<string, string>();
     await Promise.all(
       run.targets.map(async (service) => {
-        const callback = this.serviceConfig[service]?.[name];
+        const callbacks: PhaseCallbacks = this.serviceConfig[service] ?? {};
+        const callback = callbacks[name];
         if (!callback) {
           return;
         }
         try {
-          await callback(this.context(service, reset, run, await run.control()));
+          await callback(this.context(service, trigger, run, await run.control()));
         } catch (err) {
           failures.set(service, `${name} failed: ${errorMessage(err)}`);
         }
@@ -437,7 +472,11 @@ export abstract class InfraProvider {
    * `afterReady` starts as soon as that service is ready, so a slow one doesn't hold up
    * another's migrations.
    */
-  private async awaitReady(run: Run, reset: boolean, fresh: Set<string>): Promise<void> {
+  private async awaitReady(
+    run: Run,
+    trigger: InfraStartTrigger,
+    fresh: Set<string>,
+  ): Promise<void> {
     const pending = new Set(run.targets);
     const settling: Promise<void>[] = [];
     const lastDetail = new Map<string, string>();
@@ -458,7 +497,7 @@ export abstract class InfraProvider {
         const reading = readings.get(service) ?? { state: 'pending', detail: 'creating' };
         if (reading.state === 'ready') {
           pending.delete(service);
-          settling.push(this.settleReady(service, run, reset, fresh.has(service)));
+          settling.push(this.settleReady(service, run, trigger, fresh.has(service)));
         } else if (reading.state === 'failed') {
           pending.delete(service);
           settling.push(this.settleFailed(service, reading.detail, run));
@@ -488,7 +527,7 @@ export abstract class InfraProvider {
   private async settleReady(
     service: string,
     run: Run,
-    reset: boolean,
+    trigger: InfraStartTrigger,
     fresh: boolean,
   ): Promise<void> {
     const callback = this.serviceConfig[service]?.afterReady;
@@ -496,7 +535,7 @@ export abstract class InfraProvider {
       run.set(service, 'starting', 'afterReady');
       try {
         await callback({
-          ...this.context(service, reset, run, await run.control()),
+          ...this.context(service, trigger, run, await run.control()),
           fresh,
         });
       } catch (err) {
@@ -517,13 +556,13 @@ export abstract class InfraProvider {
     run.fail(service, why ? `${detail}\n${why}` : detail);
   }
 
-  /** What a callback for `service` receives. */
-  private context(
+  /** What a callback for `service` receives, on a run `trigger` started. */
+  private context<G extends InfraTrigger>(
     service: string,
-    reset: boolean,
+    trigger: G,
     run: Run,
     control: ControlClient | undefined,
-  ): InfraCallbackContext {
+  ): InfraCallbackContext<TokenRecord, G> {
     const { workspaceDir, mode, config, tokens, exec } = this.runtime;
     const { emit } = run;
     const envs = { ...this.runtime.envs, ...this.extraEnv() };
@@ -549,16 +588,17 @@ export abstract class InfraProvider {
       buildAddress: infraBuildAddress(service, this.serviceConfig[service], config),
       mode,
       config,
-      reset,
+      trigger,
       workspaceDir,
       envs,
       tokens,
-      compose: async (args, opts) =>
+      ...this.toolContext(async (args, opts) =>
         settle(
           [this.toolLabel(), ...args].join(' '),
           await this.runTool(args, execOptions(opts)),
           opts,
         ),
+      ),
       exec: async (command, args = [], opts) =>
         settle([command, ...args].join(' '), await exec(command, args, execOptions(opts)), opts),
       log: (message) => {

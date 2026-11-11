@@ -71,9 +71,12 @@ for scene in "${SCENES[@]}"; do
     # rounded corners from clipping a character. The corners are the site player's 12px at 2x,
     # made transparent so they round on GitHub's and npm's light and dark pages alike.
     # Transparency turns off ffmpeg's frame-to-frame compression; gifsicle puts it back.
+    # Menlo has no rounded box corners (╭╮╰╯), and agg's fallback draws them small and off the
+    # lines, so the GIF's boxes take Menlo's square ones. The site's player draws its own.
     gif_name="demo-$(date +%s).gif"
+    sed 's/╭/┌/g; s/╮/┐/g; s/╰/└/g; s/╯/┘/g' "$cast" > "$WORK/gif.cast"
     agg --quiet --text-font-family "Menlo" --font-size 30 --line-height 1.2 \
-      --idle-time-limit 10 --last-frame-duration 2 --fps-cap 30 "$cast" "$WORK/raw.gif"
+      --idle-time-limit 10 --last-frame-duration 2 --fps-cap 30 "$WORK/gif.cast" "$WORK/raw.gif"
     radius=24
     corners="if(gt(abs(W/2-X),W/2-$radius)*gt(abs(H/2-Y),H/2-$radius),if(lte(hypot($radius-(W/2-abs(W/2-X)),$radius-(H/2-abs(H/2-Y))),$radius),255,0),255)"
     ffmpeg -v error -y -i "$WORK/raw.gif" \

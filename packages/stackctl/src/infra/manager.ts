@@ -104,7 +104,7 @@ export class InfraManager {
   }
 
   /** Removes services and their data. See {@link InfraProvider.destroy}. */
-  async destroy(req: Omit<InfraRunRequest, 'reset'> = {}): Promise<InfraRunSummary> {
+  async destroy(req: Omit<InfraRunRequest, 'trigger'> = {}): Promise<InfraRunSummary> {
     return this.acrossProviders(req.services, (provider, services) =>
       provider.destroy({ ...req, services }),
     );
