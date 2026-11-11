@@ -50,7 +50,7 @@ function logAt(logs: LogStore, ts: string, text: string): void {
     at: Date.parse(ts.replace(' ', 'T')),
     ts,
     showTs: true,
-    label: '[stackctl]',
+    label: { name: 'stackctl' },
     filterKey: 'system',
   });
 }

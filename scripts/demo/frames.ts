@@ -32,6 +32,11 @@ const framesDir = join(demoDir, '.frames');
 const INK_THRESHOLD = 80;
 /** Flag a frame when it carries less than this share of its neighbours' text. */
 const DIP_RATIO = 0.65;
+/**
+ * A dip below this share fails the take. Calibrated against real takes: a repaint artefact
+ * carries ~30% of its neighbours' text, the filter applying or clearing (a real change) ~50%.
+ */
+const ARTEFACT_RATIO = 0.4;
 /** Frames on each side that a frame is compared against (median, so a burst can't skew it). */
 const NEIGHBOURHOOD = 8;
 
@@ -196,3 +201,16 @@ if (dips.length === 0) {
   console.log(`  (none below ${DIP_RATIO * 100}% — nothing to look at)`);
 }
 console.log(`\nEvery frame is in ${framesDir}`);
+
+// The verdict record.sh keeps or drops a take by: any half-painted footer in the run phase, or
+// a dip deep enough to be a repaint artefact rather than the filter.
+const artefacts = dips.filter(({ ratio }) => ratio < ARTEFACT_RATIO);
+if (suspect.length > 0 || artefacts.length > 0) {
+  console.log(
+    `\nFAIL: ${suspect.length} half-painted stretch(es), ${artefacts.length} frame(s) below ` +
+      `${ARTEFACT_RATIO * 100}% of their neighbours' text`,
+  );
+  process.exitCode = 1;
+} else {
+  console.log('\nOK: no frame looks off');
+}

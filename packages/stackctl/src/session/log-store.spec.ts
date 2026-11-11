@@ -44,7 +44,7 @@ function line(text: string, opts: Partial<Omit<LogLine, 'id'>> = {}): Omit<LogLi
     at: Date.now(),
     ts: TS,
     showTs: true,
-    label: `[${service ?? 'stackctl'}]`,
+    label: { name: service ?? 'stackctl' },
     filterKey: service ?? 'system',
     ...opts,
   };
@@ -186,10 +186,15 @@ describe('the buffer', () => {
 });
 
 describe('the logfile', () => {
-  test('writes the stamp, the label and the text, colors stripped', () => {
+  test('writes the stamp, the label padded to the width so far and the text, colors stripped', () => {
     const s = newStore();
-    s.append(line(red('boom'), { label: red('[web     ]'), isError: true }));
-    expect(fs.readFileSync(s.getLogFile(), 'utf8')).toBe(`${TS} [web     ] boom\n`);
+    s.addLabels(['web', 'worker']);
+    s.append(line(red('boom'), { label: { name: 'web', paint: red }, isError: true }));
+    s.addLabels(['billing-worker']);
+    s.append(line('up', { label: { name: 'web' } }));
+    expect(fs.readFileSync(s.getLogFile(), 'utf8')).toBe(
+      `${TS} [web   ] boom\n${TS} [web           ] up\n`,
+    );
   });
 
   test('always timestamps the on-disk log file, even with the on-screen option off', () => {

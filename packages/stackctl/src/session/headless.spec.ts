@@ -21,15 +21,15 @@ import type { SupervisedProcess } from './supervisor.js';
 import type { LogLine } from './types.js';
 
 // The capture's own lines (baseline `headless-backend.out.txt`, `--headless -s backend` in the
-// example, piped) from the proxy's route table on.
+// example, piped) from the proxy's route table on, the labels padded to `stackctl`.
 const CAPTURE = `2026-11-08 09:04:50 [stackctl] [INFO] dev reverse proxy listening on 127.0.0.1:21050 — \`*\` is every other host
 2026-11-08 09:04:50 [stackctl]   api.localhost: backend :3001
 2026-11-08 09:04:50 [stackctl]   mail.localhost: infra service mail :21054
 2026-11-08 09:04:50 [stackctl]   app.localhost: frontend :3000
 2026-11-08 09:04:50 [stackctl]   */todos/**: backend :3001
 2026-11-08 09:04:50 [stackctl]   */**: frontend :3000
-2026-11-08 09:04:50 [backend] started
-2026-11-08 09:04:51 [backend] todo api listening on http://localhost:3001
+2026-11-08 09:04:50 [backend ] started
+2026-11-08 09:04:51 [backend ] todo api listening on http://localhost:3001
 2026-11-08 09:05:04 [stackctl] [WARN] shutting down...
 `;
 
@@ -188,16 +188,17 @@ describe('the headless printer', () => {
     const stdout = sink();
     const stderr = sink();
     const printer = createHeadlessPrinter({ logs, echo: true, stdout, stderr });
-    const append = (label: string, text: string, isError = false, filterKey = 'infra') => {
-      const line: Omit<LogLine, 'id'> = { service: null, text, isError, at: Date.now(), ts: logTimestamp(), showTs: true, label, filterKey }; // oxfmt-ignore
+    logs.addLabels(['infra', 'infra:db']);
+    const append = (name: string, text: string, isError = false, filterKey = 'infra') => {
+      const line: Omit<LogLine, 'id'> = { service: null, text, isError, at: Date.now(), ts: logTimestamp(), showTs: true, label: { name }, filterKey }; // oxfmt-ignore
       logs.append(line);
     };
     printer.write('▶ infra (development): db');
-    append('[infra   ]', 'Container example-db-1 Running');
-    append('[infra:db]', 'role "app" does not exist', true);
+    append('infra', 'Container example-db-1 Running');
+    append('infra:db', 'role "app" does not exist', true);
     // Synchronously after the appends, as infra/report.ts writes.
     printer.write('  db  failed: not healthy');
-    append('[stackctl]', '[ERROR] db: not healthy', true, 'system');
+    append('stackctl', '[ERROR] db: not healthy', true, 'system');
     printer.dispose();
     expect(unstamped(stdout.text)).toBe(
       ['▶ infra (development): db', '<stamp> [infra   ] Container example-db-1 Running', '  db  failed: not healthy', ''].join('\n'), // oxfmt-ignore
@@ -214,9 +215,9 @@ describe('the headless printer', () => {
     const stderr = sink();
     const printer = createHeadlessPrinter({ logs, echo: false, stdout, stderr });
     const base = { at: Date.now(), ts: '2026-11-08 09:04:50', showTs: true };
-    logs.append({ ...base, service: 'web', text: 'boom', isError: true, label: '[web]', filterKey: 'web' }); // oxfmt-ignore
-    logs.append({ ...base, service: null, text: '[INFO] freeing dev ports', isError: false, label: '[stackctl]', filterKey: 'system' }); // oxfmt-ignore
-    logs.append({ ...base, service: null, text: '[ERROR] port held', isError: true, label: '[stackctl]', filterKey: 'system' }); // oxfmt-ignore
+    logs.append({ ...base, service: 'web', text: 'boom', isError: true, label: { name: 'web' }, filterKey: 'web' }); // oxfmt-ignore
+    logs.append({ ...base, service: null, text: '[INFO] freeing dev ports', isError: false, label: { name: 'stackctl' }, filterKey: 'system' }); // oxfmt-ignore
+    logs.append({ ...base, service: null, text: '[ERROR] port held', isError: true, label: { name: 'stackctl' }, filterKey: 'system' }); // oxfmt-ignore
     printer.dispose();
     expect(stdout.text).toBe('2026-11-08 09:04:50 [stackctl] [INFO] freeing dev ports\n');
     expect(stderr.text).toBe('2026-11-08 09:04:50 [stackctl] [ERROR] port held\n');

@@ -14,9 +14,16 @@ It is internal tooling — nothing in it belongs in the user-facing docs.
 ## Recording
 
 ```sh
-./scripts/demo/record.sh          # from anywhere
-node scripts/demo/frames.ts       # then check the result
+./scripts/demo/record.sh          # from anywhere; checks every take itself
+node scripts/demo/frames.ts       # to look at the frames of the GIF it kept
 ```
+
+**A take is published only if it passes.** The capture can't be made identical run to run (VHS
+photographs a live app from headless Chromium), so `record.sh` checks each take and records up to
+`MAX_TAKES` (3) until one passes: the double-click copied `Added` (the clipboard says so), and
+`frames.ts` exits 0 (no half-painted footer, no frame below 40% of its neighbours' text). Before
+each take it waits for the load average to drop to `MAX_LOAD` (twice the cores). If no take
+passes, it exits 1 and the previous GIF and links stay as they are.
 
 Needs `brew install vhs ttyd ffmpeg`, and Docker for the example's infra; `expect` ships with
 macOS. It drives the **real** example workspace, so `cd example && pnpm stackctl` must boot
@@ -58,10 +65,12 @@ degrades to the old demo instead of pasting the machine's real clipboard into a 
 
 ### Coordinates
 
-Both are derived, not measured off pixels, and both have re-derivation notes in `click.exp`:
+Neither is measured off pixels:
 
-- **Column 23** — a log line opens with its time and label, `15:45:27 [backend ] `, 20 cells,
-  so the backend's message text starts at column 21 and `Added` covers 21–25.
+- **The column is read off stackctl's output.** Once the command finishes, `click.exp` finds the
+  backend's last `Added todo` line in the session's logfile, whose label is padded by the same
+  function as the screen's, and aims two cells into `Added`. A longer name in the example moves
+  the word and the click with it.
 - **Row `rows-9`** — the footer is 5 rows in normal mode, so the newest log line is on `rows-5`.
   Four rows above that is inside the five `Added todo:` lines whether nothing has arrived since
   the command finished or the worker's three-line heartbeat has.
@@ -70,6 +79,14 @@ The terminal is **35 rows x 111 columns**, which falls out of the tape's `Set` b
 re-derive it after changing `Width`/`Height`/`FontSize`/`Padding`, render a throwaway tape with
 the same block that runs `stty size > /tmp/size.txt`. Those same numbers back the `crop=` values
 in `record.sh`.
+
+## The strokes are thinned to match a terminal
+
+Chrome draws the terminal on a canvas with macOS font smoothing, which thickens every stroke;
+kitty and most terminals draw Menlo without it. VHS starts the system Chrome itself, so there is
+no flag to turn it off. Instead `record.sh` runs ffmpeg's `erosion` on the 2x render, capped at 48
+per channel, before the downscale: it takes in each stroke's anti-aliased edge and leaves its
+solid middle (its color) alone, so bold still reads bold. Above ~64 the dim grays start to fade.
 
 ## Two rules that keep the recording clean
 
@@ -118,6 +135,8 @@ fix — but check every take before keeping it.
 
 - **Half-painted frames track machine load.** Headless Chromium has to keep up with the repaints;
   it can't when the machine is busy. A take recorded at load ~150 came back with seven of them,
-  and the same tape at load ~20 recorded clean. Check `uptime` before recording.
+  and the same tape at load ~20 recorded clean. `record.sh` waits for the load, and drops a take
+  `frames.ts` fails.
 - **The click lands on the wrong line** when the worker's heartbeat interleaves with the todos and
   shifts the rows, which shows up as a different word in the notice and in the filter.
+  `record.sh` drops a take whose clipboard doesn't read `Added`.

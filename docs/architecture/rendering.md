@@ -291,13 +291,19 @@ The logfile is always timestamped.
 
 ## log-layout: wrapping a line
 
-`countRows(line, cols, mode)` and `wrapLineRows(line, cols, mode)` (`session/log-layout.ts`),
-cached in a `WeakMap` per line, side by side per timestamp mode so neither evicts the other:
+`countRows(line, cols, mode, labelWidth)` and `wrapLineRows(line, cols, mode, labelWidth)`
+(`session/log-layout.ts`), cached in a `WeakMap` per line, side by side per timestamp mode so
+neither evicts the other, and recomputed when the width or the label width changes. The
+`LogStore` passes its own `labelWidth`, so the viewport and headless never pass one:
 
+- **One label width, owned by the `LogStore`.** A line keeps its label's bare name and color
+  (`LogLabel`); `labelGutter(label, width)` pads it when it is drawn, on screen and in the logfile
+  alike. The width is the longest name the store has been given with `addLabels`: each service as
+  the `Supervisor` joins it (at start, or added over the control API), stackctl's own two, and
+  infra's from the config and from the provider's targets. A wider name re-pads every buffered line; the logfile pads from then on.
 - **Every** row carries the timestamp + `[name]` gutter, not just the first, so a wrapped line
-  keeps an unbroken left gutter. The gutter is measured from the line's actual label
-  (`labelWidth`), not a nominal width: stackctl's own labels are padded to the widest name, and
-  assuming less overflows the terminal, where `truncate-end` silently eats the tail.
+  keeps an unbroken left gutter. The gutter is measured from the drawn label, not a nominal
+  width: assuming less overflows the terminal, where `truncate-end` silently eats the tail.
 - **Continuation rows** are indented by `hangingIndent(text)` — the width of a leading ` key: ` —
   so they line up under the _value_, matching how `log-formatter.ts` aligns a value containing
   newlines; falling back to the line's own leading whitespace, then to 0. The indent is capped so

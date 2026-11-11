@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- **Every log line's text starts in the same column**, infra's and those of a service added
+  mid-session included.
+- **Commands received over the control API are logged under `[control]`**, rather than
+  `[dt:control]`.
+
 ## 0.1.1
 
 - **The README and the docs name stackctl's SDK**: `startStack()`, `exec()`, `run()` and

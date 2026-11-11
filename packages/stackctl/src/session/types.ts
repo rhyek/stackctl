@@ -63,6 +63,13 @@ export interface InfraLogLine {
  */
 export type TimestampMode = 'date' | 'time' | 'none';
 
+/** A log line's gutter label: the name between its brackets, and the color it is drawn in. */
+export interface LogLabel {
+  name: string;
+  /** Colors the whole bracketed label; absent, it is drawn uncolored. */
+  paint?: (text: string) => string;
+}
+
 /** One buffered log record. */
 export interface LogLine {
   /** Increases in append order. */
@@ -83,10 +90,10 @@ export interface LogLine {
   /** Whether the line shows its timestamp on screen. The logfile always has it. */
   showTs: boolean;
   /**
-   * The gutter label the line is drawn with: `[name]`, padded and colored, without the space
-   * that follows it. Its width is measured, never assumed.
+   * The gutter label the line is drawn with, `[name]`. It is padded when it is drawn, to the
+   * width the log holds then ({@link labelGutter}), so it lines up with every other line's.
    */
-  label: string;
+  label: LogLabel;
   /** The word the filter matches besides the text: a service's name lowercased, `system`, … */
   filterKey: string;
   /**

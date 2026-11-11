@@ -21,19 +21,43 @@ set term_rows [lindex $size 0]
 set term_cols [lindex $size 1]
 set stty_init "rows $term_rows columns $term_cols"
 
-# Where to click. A log line opens with its time and its service's label, `15:45:27 [backend ] `:
-# 20 cells, so the backend's message text starts at column 21 and the word `Added` of
-# `Added todo: …` covers columns 21-25. Column 23 is comfortably inside it.
+# Where to click. The column is read off stackctl's own output, once the command has finished
+# (`added_column` below): a log line opens with its time and its service's label, padded to the
+# session's label width, so where `Added` of `Added todo: …` starts depends on the example's
+# names. The click lands two cells into the word.
 #
 # The footer is 5 rows tall in normal mode, so the newest log line sits on row rows-5 and
 # the command's own output ends `Added todo:` x5 then `✔ add-random-todo finished`. Row
 # rows-9 is four rows above the newest, which lands on one of those five `Added` lines
 # whether nothing has arrived since (rows-9 is the 2nd) or the worker's three-line
 # heartbeat has (rows-9 is the 5th) — the click waits out one beat, so at most one tick
-# can land in between. Re-derive both if the footer grows a line, the backend's label gets
-# wider (the example gains a longer service name), or the worker's tick stops being three lines.
-set click_col 23
+# can land in between. Re-derive the row if the footer grows a line or the worker's tick stops
+# being three lines.
 set click_row [expr {$term_rows - 9}]
+
+# The session's logfile holds every line as the screen draws it, with the date in front and the
+# label padded by the same function: `2026-11-10 15:45:27 [backend   ] Added todo: …`. The screen
+# shows the time alone (`15:45:27 `), so a cell on screen is its index in the file line minus the
+# date's 11, plus one (columns count from 1). Reading a small file takes a few milliseconds, so
+# the relay never stalls on it.
+set logs_dir [file normalize [file join [file dirname [info script]] ../../example/node_modules/.stackctl/modes/development/logs]]
+proc added_column {logs_dir} {
+    set files [lsort -command {apply {{a b} {expr {[file mtime $a] - [file mtime $b]}}}} [glob -nocomplain -directory $logs_dir *.log]]
+    if {[llength $files] == 0} {
+        error "no session logfile in $logs_dir"
+    }
+    set f [open [lindex $files end]]
+    set lines [split [read $f] "\n"]
+    close $f
+    for {set i [expr {[llength $lines] - 1}]} {$i >= 0} {incr i -1} {
+        set at [string first "\] Added todo" [lindex $lines $i]]
+        if {$at >= 0 && [string match {*\[backend*} [lindex $lines $i]]} {
+            # `Added` starts two past the bracket; aim two cells into it.
+            return [expr {$at + 2 - 11 + 1 + 2}]
+        }
+    }
+    error "no `Added todo` line from the backend in [lindex $files end]"
+}
 
 spawn -noecho bash
 
@@ -52,6 +76,8 @@ proc forward_until_command_done {} {
     interact -o -nobuffer -ex "add-random-todo finished" return
 }
 forward_until_command_done
+
+set click_col [added_column $logs_dir]
 
 # A beat before the click, so it reads as a deliberate act on a settled screen rather than
 # something that happened while the logs were still moving. It must NOT be `sleep`: that

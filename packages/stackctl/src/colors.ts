@@ -103,7 +103,7 @@ export const HOTKEY_LABEL_COLOR: Color = '#bbbbbb';
 // ---------------------------------------------------------------------------
 
 /**
- * stackctl's own log channels (`[stackctl]`, `[dt:control]`) — a warm gold that reads
+ * stackctl's own log channels (`[stackctl]`, `[control]`) — a warm gold that reads
  * as the tool's own voice, distinct from the per-package prefix colors.
  */
 export const STACKCTL_LABEL_COLOR: Color = '#d7af5f';

@@ -11,8 +11,12 @@ import {
   type Selection,
 } from '../selection.js';
 import { expandTabs } from '../wrap-rows.js';
-import { countRows, wrapLineRows } from './log-layout.js';
-import type { LogLine, TimestampMode } from './types.js';
+import {
+  countRows as countRowsAt,
+  labelGutter,
+  wrapLineRows as wrapLineRowsAt,
+} from './log-layout.js';
+import type { LogLabel, LogLine, TimestampMode } from './types.js';
 
 // The line records are built directly: the text of stackctl's own lines comes from the real
 // internal logger and formatter, so colors, the `[INFO]` header and the `  key: value` properties
@@ -27,9 +31,17 @@ const ESC = String.fromCharCode(27);
 const red = (text: string) => `${ESC}[31m${text}${ESC}[39m`;
 
 /** stackctl's gold label, as truecolor SGR. */
-function label(name: string): string {
-  return `${ESC}[38;2;215;175;95m[${name.padEnd(LONGEST_NAME)}]${ESC}[39m`;
+function label(name: string): LogLabel {
+  return { name, paint: (text) => `${ESC}[38;2;215;175;95m${text}${ESC}[39m` };
 }
+
+// Laid out as the fixture session's store lays them out: labels padded to its longest name.
+const countRows = (line: LogLine, cols: number, mode: TimestampMode) =>
+  countRowsAt(line, cols, mode, LONGEST_NAME);
+const wrapLineRows = (line: LogLine, cols: number, mode: TimestampMode) =>
+  wrapLineRowsAt(line, cols, mode, LONGEST_NAME);
+/** The columns a line's label takes, drawn. */
+const labelColumns = (line: LogLine) => stringWidth(labelGutter(line.label, LONGEST_NAME));
 
 let nextId = 0;
 
@@ -76,9 +88,9 @@ function system(text: string, showTs = true): LogLine {
   return rendered((l) => l.system.info(text), 'stackctl', 'system', showTs)[0]!;
 }
 
-/** A `[dt:control]` entry: an `[INFO] <command>` header and one `  key: value` line per attr. */
+/** A `[control]` entry: an `[INFO] <command>` header and one `  key: value` line per attr. */
 function control(command: string, attrs: Record<string, string> = {}, showTs = true): LogLine[] {
-  return rendered((l) => l.control.info(attrs, command), 'dt:control', 'dt:control', showTs);
+  return rendered((l) => l.control.info(attrs, command), 'control', 'control', showTs);
 }
 
 describe('on-screen log timestamps', () => {
@@ -114,7 +126,7 @@ describe('on-screen log timestamps', () => {
   test('the time layout reclaims the date column, so a long line wraps into fewer rows', () => {
     const line = system('x'.repeat(150));
     // 90 columns: 20 of gutter leave 70 → 3 rows; 9 of gutter leave 81 → 2 rows.
-    const cols = 90 + stringWidth(line.label) + 1;
+    const cols = 90 + labelColumns(line) + 1;
     expect(countRows(line, cols, 'date')).toBe(3);
     expect(countRows(line, cols, 'time')).toBe(2);
     expect(wrapLineRows(line, cols, 'time')).toHaveLength(2);
@@ -172,13 +184,13 @@ describe('wrapping a line too wide for the terminal', () => {
 
   test('repeats the prefix on every wrapped row', () => {
     for (const row of rows(longAttr())) {
-      expect(row).toMatch(/^\[dt:control\] /);
+      expect(row).toMatch(/^\[control\] /);
     }
   });
 
   test('repeats the timestamp on every wrapped row when timestamps are on', () => {
     for (const row of rows(longAttr({ timestamps: true }))) {
-      expect(row).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[dt:control\] /);
+      expect(row).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[control\] /);
     }
   });
 
@@ -252,13 +264,13 @@ describe('wrapping a line too wide for the terminal', () => {
   // gutter, its indent being display padding; a wrapped row's content starts past the indent.
   test('a row’s content starts at the gutter, and past the hanging indent on a continuation', () => {
     const line = system('x', false);
-    const gutter = stringWidth(line.label) + 1;
+    const gutter = labelColumns(line) + 1;
     const indented = { ...line, id: nextId++, text: '        second line' };
     expect(wrapLineRows(indented, COLS, 'date')).toEqual([
       expect.objectContaining({ contentStart: gutter }),
     ]);
     const attr = longAttr();
-    const attrGutter = stringWidth(attr.label) + 1;
+    const attrGutter = labelColumns(attr) + 1;
     const wrapped = wrapLineRows(attr, COLS, 'date');
     expect(wrapped[0]!.contentStart).toBe(attrGutter);
     for (const row of wrapped.slice(1)) {
