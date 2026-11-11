@@ -64,4 +64,4 @@ await exec({ target: 'api', command: ['node', 'src/migrate.ts'] });
 const { exitCode } = await run({ target: 'api', script: 'seed', mode: 'test' });
 ```
 
-See the [Node API](../reference/node-api.md#exec-and-run).
+See the [SDK](../reference/sdk.md#exec-and-run).

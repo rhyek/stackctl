@@ -48,7 +48,7 @@ ${CLAUDE_PROJECT_DIR}/node_modules/stackctl/docs/llms.txt
 
 The playbook has the recipes: checking what is running, reaching a service, starting a stack in
 the background, driving a session, one-off commands, infra, logs, onboarding a service. The index
-lists every other page (configuration, CLI, control API, Node API) with what it covers: read the
+lists every other page (configuration, CLI, control API, SDK) with what it covers: read the
 page a task needs, by its path in the index, relative to `node_modules/stackctl/docs/`.
 
 Those should already read as absolute paths. If they still show an unresolved placeholder, your

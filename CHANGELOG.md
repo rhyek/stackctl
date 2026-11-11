@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- **The README and the docs name stackctl's SDK**: `startStack()`, `exec()`, `run()` and
+  `resolveEnv()`, for your own scripts and test suites. See [docs/reference/sdk.md](docs/reference/sdk.md).
+
 ## 0.1.0
 
 First release of stackctl, a terminal UI and CLI for a monorepo's services, infrastructure,

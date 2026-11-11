@@ -47,7 +47,7 @@ await stack.stop();
 
 `stack.origins` has every service's URL, and `stack.control` is a
 [control API](../reference/control-api.md) client for restarting a service mid-suite. See
-[`startStack()`](../reference/node-api.md#startstack).
+[`startStack()`](../reference/sdk.md#startstack).
 
 ## In CI
 

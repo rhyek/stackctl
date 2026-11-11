@@ -16,7 +16,7 @@ their environment, and shows it all in one place.
 - **One typed config.** `stackctl.config.ts` describes every service. Pick one and the
   services it needs come with it, started in order and held until they are healthy.
 - **A terminal UI.** One combined, filterable log, with each service's state and memory in
-  the footer. Restart, stop or run a script with a key or a click.
+  the footer. Drive it with the keyboard or the mouse.
 - **Infra included.** Point it at your `docker-compose.yaml`: databases and brokers come up,
   get healthy and get migrated before your services start.
 - **Environment handled.** Layered `.env` files per workspace, service and mode, injected into
@@ -25,6 +25,8 @@ their environment, and shows it all in one place.
   while a service starts.
 - **The same stack in tests and CI.** `startStack()` for an e2e suite, `stackctl start --detach`
   for a CI job, in a mode that runs beside your dev session.
+- **An SDK for scripts and tests.** `startStack()`, `exec()`, `run()` and `resolveEnv()` give your
+  own code what the CLI gives a shell, typed and with the same environment.
 - **Built for coding agents.** A headless mode, a localhost control API, an installable skill
   and `llms.txt`.
 - **Any language.** A service is a `dev` script in `package.json` or a `Makefile` target.
@@ -77,6 +79,7 @@ pnpm stackctl infra up        # bring the infra up, then exit
 - [The config file](https://stackctl.dev/config/config-file)
 - [CLI](https://stackctl.dev/reference/cli)
 - [Control API](https://stackctl.dev/reference/control-api)
+- [SDK](https://stackctl.dev/reference/sdk)
 - [Built for agents](https://stackctl.dev/ai/overview)
 
 A complete example monorepo is in [`example/`](https://github.com/rhyek/stackctl/tree/main/example).
