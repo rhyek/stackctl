@@ -35,7 +35,7 @@ export default defineConfig({
     ],
   },
   // Infrastructure that isn't an application service: the Postgres and the mail catcher in
-  // ./docker-compose.yaml. `stackctl infra up` starts them and waits for their healthchecks;
+  // ./docker-compose.yaml. `stackctl infra start` starts them and waits for their healthchecks;
   // `pnpm dev` does the same before starting the services, and leaves them running when you quit.
   // `infra: { 'docker-compose': {} }` alone would start both — `services` attaches callbacks, and
   // gives a service the port `reverseProxy.routes` reaches it on.
@@ -43,13 +43,13 @@ export default defineConfig({
     'docker-compose': {
       services: {
         db: {
-          // Once Postgres is healthy — on every `infra up` and every session start, including
+          // Once Postgres is healthy — on every `infra start` and every session start, including
           // when it was already running, so this has to be idempotent. `exec` executes a command
           // with the mode's environment (DATABASE_URI among it) and sends its output to stackctl.
           afterReady: async ({ exec, fresh }) => {
             await exec('node', ['src/migrate.ts'], { cwd: 'libs/db' });
             // `fresh`: this run created the database's volume — the very first start, or the
-            // first after `stackctl infra destroy` / `infra up --reset`. Start from sample rows.
+            // first after `stackctl infra destroy` / `infra reset`. Start from sample rows.
             if (fresh) {
               await exec('node', ['src/seed.ts'], { cwd: 'libs/db' });
             }

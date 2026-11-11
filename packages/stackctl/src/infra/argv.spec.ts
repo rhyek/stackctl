@@ -21,8 +21,8 @@ describe('findPassthrough', () => {
   });
 
   test('is -1 for the other infra subcommands and for no infra at all', () => {
-    expect(findPassthrough(argv('infra', 'up'))).toBe(-1);
-    expect(findPassthrough(argv('infra', 'up', 'docker-compose'))).toBe(-1);
+    expect(findPassthrough(argv('infra', 'start'))).toBe(-1);
+    expect(findPassthrough(argv('infra', 'start', 'docker-compose'))).toBe(-1);
     expect(findPassthrough(argv('infra'))).toBe(-1);
     expect(findPassthrough(argv('--plain', '-p', 'web'))).toBe(-1);
   });
@@ -42,6 +42,6 @@ describe('passthroughArgs', () => {
   });
 
   test('is null when there is no passthrough', () => {
-    expect(passthroughArgs(argv('infra', 'up'))).toBeNull();
+    expect(passthroughArgs(argv('infra', 'start'))).toBeNull();
   });
 });

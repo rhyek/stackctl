@@ -70,8 +70,8 @@ service and get `{ envs, tokens }`.
   up a changed value.
 - **Reading `port` in a callback of a service with no `port`** is an error at load, naming the
   service.
-- **Infra callbacks are the exception**: `beforeUp`, `afterReady` and the others are async and
-  run on every `infra up`. See [Infra callbacks](./infra.md#callbacks).
+- **Infra callbacks are the exception**: `beforeStart`, `afterReady` and the others are async
+  and run on every `infra start`. See [Infra callbacks](./infra.md#callbacks).
 
 ## Tokens
 

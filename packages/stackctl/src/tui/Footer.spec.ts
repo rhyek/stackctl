@@ -206,7 +206,7 @@ describe('Design A at 104 columns (S2-R14)', () => {
       RULE,
       APPS,
       INFRA,
-      '←→ select   r restart   s stop   m commands   │   logs: f filter   c clear   │   ^c quit',
+      '←→ select   r restart   s stop   m commands  │  logs: f filter   c clear  │  ^c quit',
       LINKS,
     ]);
     // `● api 64M` from cell 1: the name, cells 3 through 5, in the focus color.
@@ -219,7 +219,7 @@ describe('Design A at 104 columns (S2-R14)', () => {
       RULE,
       APPS,
       INFRA,
-      '←→ select   r restart   s stop   R reset data   │   logs: f filter   c clear   │   ^c quit',
+      '←→ select   r restart   s stop   R reset data  │  logs: f filter   c clear  │  ^c quit',
       LINKS,
     ]);
     // `● db 23M` from cell 8, after `infra: `: the name, cells 10 and 11.
@@ -233,7 +233,7 @@ describe('Design A at 104 columns (S2-R14)', () => {
       RULE,
       '○ api   ○ web',
       'infra: ● db   ● mail',
-      'logs: f filter   c clear   │   ^c quit',
+      'logs: f filter   c clear  │  ^c quit',
     ]);
     expect(focusSpan(layout.rows[1]!)).toBeNull();
     expect(focusSpan(layout.rows[2]!)).toBeNull();
@@ -346,8 +346,8 @@ describe('the footer', () => {
   test('an applied filter shows on the keys row', () => {
     const layout = footerLayout(running(), ui({ filter: 'error api' }), 104);
     expect(renderFooter(layout, 104).slice(layout.keysRow)).toEqual([
-      '←→ select   r restart   s stop   m commands   │   logs: f filter: error api   esc clear filter   c clear',
-      '^c quit',
+      '←→ select   r restart   s stop   m commands',
+      'logs: f filter: error api   esc clear filter   c clear  │  ^c quit',
       LINKS,
     ]);
   });
@@ -419,7 +419,17 @@ describe('the footer', () => {
     const rows = renderFooter(layout, 61).slice(layout.keysRow, linksStart(layout));
     expect(rows).toEqual([
       '←→ select   r restart   s stop   m commands',
-      'logs: f filter   c clear   │   ^c quit',
+      'logs: f filter   c clear  │  ^c quit',
+    ]);
+  });
+
+  test("the session's keys never wrap onto a row of their own: the log's keys go with them", () => {
+    // 80 columns fit the select keys and the log's keys, but not `^c quit` after them.
+    const layout = footerLayout(running(), ui(), 80);
+    const rows = renderFooter(layout, 80).slice(layout.keysRow, linksStart(layout));
+    expect(rows).toEqual([
+      '←→ select   r restart   s stop   m commands',
+      'logs: f filter   c clear  │  ^c quit',
     ]);
   });
 
@@ -432,7 +442,7 @@ describe('the footer', () => {
     expect(renderFooter(layout, 104).slice(1)).toEqual([
       '○ api   ○ web',
       'infra: ○ db   ● mail',
-      'logs: f filter   c clear   │   ^c quit',
+      'logs: f filter   c clear  │  ^c quit',
       'public ↗   web ↗',
     ]);
     expect(layout.rows[1]!.find((s) => s.text === '○')).toMatchObject({ color: 'gray' });

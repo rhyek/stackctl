@@ -147,9 +147,9 @@ export interface ControlClient<P extends string = ServiceName> {
       start(service: string): Promise<boolean>;
       /** Stops a service, keeping its data. */
       stop(service: string): Promise<boolean>;
-      /** Recreates the service's container, keeping its data: `down`, then `up`. */
+      /** Recreates the service's container, keeping its data, as `infra restart` does. */
       restart(service: string): Promise<boolean>;
-      /** Removes the service and its data, then brings it up again, as `infra up --reset` does. */
+      /** Removes the service and its data, then starts it clean, as `infra reset` does. */
       reset(service: string): Promise<boolean>;
     };
     /**

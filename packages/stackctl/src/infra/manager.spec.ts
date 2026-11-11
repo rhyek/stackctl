@@ -171,8 +171,8 @@ describe('InfraManager', () => {
         'docker-compose': {
           services: {
             db: {
-              beforeUp: ({ mode, config }) => {
-                seen.beforeUp = { mode, config };
+              beforeStart: ({ mode, config }) => {
+                seen.beforeStart = { mode, config };
               },
               afterReady: ({ mode, config }) => {
                 seen.afterReady = { mode, config };
@@ -183,7 +183,7 @@ describe('InfraManager', () => {
       });
       const manager = (await InfraManager.fromConfig(config, { exec }))!;
       expect((await manager.up({ services: ['db'] })).ok).toBe(true);
-      for (const hook of ['beforeUp', 'afterReady']) {
+      for (const hook of ['beforeStart', 'afterReady']) {
         expect(seen[hook]!.mode).toBe('test');
         // The loaded config itself, not a copy — the one `show-config` prints.
         expect(seen[hook]!.config).toBe(config);

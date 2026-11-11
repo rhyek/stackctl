@@ -1032,7 +1032,7 @@ export type DefineConfigOptions<
   env?: EnvInput<Top>;
   /**
    * Infrastructure that isn't an application service — a database, a cache, a broker — keyed by
-   * provider (`'docker-compose'` is the only one). `stackctl infra up` brings it up and waits until
+   * provider (`'docker-compose'` is the only one). `stackctl infra start` starts it and waits until
    * it is ready, and a dev session does the same before starting the services; quitting stackctl
    * leaves it running. `infra: { 'docker-compose': true }` is a complete config.
    * See {@link InfraInput}.
@@ -1698,7 +1698,7 @@ const serviceDetailsOf = new WeakMap<object, ServiceDetails>();
 const buildAddressOf = new WeakMap<object, (opts?: BuildAddressOptions) => string>();
 
 /**
- * An infra service as its `beforeUp`/`afterReady`/… callbacks see it (`service` in their
+ * An infra service as its `beforeStart`/`afterReady`/… callbacks see it (`service` in their
  * context): the same {@link ServiceDetails} its `urls` callbacks got when the config loaded.
  */
 export function infraServiceDetails(
@@ -1717,7 +1717,7 @@ export function infraServiceDetails(
 }
 
 /**
- * The `buildAddress` an infra service's `beforeUp`/`afterReady`/… callbacks get: the same one its
+ * The `buildAddress` an infra service's `beforeStart`/`afterReady`/… callbacks get: the same one its
  * `urls` callbacks got when the config loaded, else one starting from `config`'s proxy (its route's
  * subdomain, else the bare domain), or from `http://localhost:<port>` without one.
  */

@@ -81,7 +81,7 @@ export interface InfraRunRequest {
 export type Emit = (event: InfraEvent) => void;
 
 /** The callbacks that run before the start; `afterReady` has its own path and context. */
-type CallbackName = 'beforeDestroy' | 'afterDestroy' | 'beforeUp';
+type CallbackName = 'beforeDestroy' | 'afterDestroy' | 'beforeStart';
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -262,7 +262,7 @@ export abstract class InfraProvider {
 
   /**
    * Brings the targets up and waits until each is ready: (with `reset`) `beforeDestroy`,
-   * destroy them and `afterDestroy`, then `beforeUp`, one start for all of them, a readiness poll, and each
+   * destroy them and `afterDestroy`, then `beforeStart`, one start for all of them, a readiness poll, and each
    * service's `afterReady` the moment *it* is ready.
    *
    * A failure before the services are started aborts the run and fails every target. After
@@ -297,7 +297,7 @@ export abstract class InfraProvider {
         }
       }
       run.setAll('starting');
-      if (!(await this.runPhase('beforeUp', run, reset))) {
+      if (!(await this.runPhase('beforeStart', run, reset))) {
         return run.summary();
       }
       // After any destroy, so a reset service counts: its data is about to be created anew.

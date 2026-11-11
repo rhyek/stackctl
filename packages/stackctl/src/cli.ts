@@ -526,48 +526,42 @@ program
 const infra = program
   .command('infra')
   .description(
-    'bring up, tear down, or drive the infrastructure declared under `infra` (databases, caches, …)',
+    "start, stop, restart, reset or destroy the infrastructure declared under `infra` (databases, caches, …), or run its provider's tool",
   )
   .option(MODE_FLAGS, MODE_HELP)
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP);
 
-infra
-  .command('up')
-  .description(
-    'start the services (all, or the ones named), wait until they are ready, then exit; they keep running',
-  )
-  .argument('[services...]', 'services to start (default: all)')
-  .option('--reset', 'destroy the services first, then start them clean', false)
-  .option(MODE_FLAGS, MODE_HELP)
-  .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
-  .action(async (services: string[], opts: { reset: boolean }) => {
-    const { runInfraAction } = await import('./commands/infra.js');
-    await runInfraAction('up', { services, reset: opts.reset });
-  });
+const INFRA_COMMANDS = [
+  [
+    'start',
+    'start the services and wait until they are ready, then exit; they keep running. afterReady runs, even for a service already running',
+  ],
+  ['stop', 'stop and remove the containers; their data is kept'],
+  ['restart', 'stop the services, then start them: the containers are recreated, their data kept'],
+  ['reset', 'delete the services and their data, then start them clean'],
+  [
+    'destroy',
+    'remove the services and their data, without starting them again; with no -s, the whole project (containers, volumes, networks)',
+  ],
+] as const;
 
-infra
-  .command('down')
-  .description('stop and remove the containers (all, or the ones named); their data is kept')
-  .argument('[services...]', 'services to stop (default: all)')
-  .option(MODE_FLAGS, MODE_HELP)
-  .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
-  .action(async (services: string[]) => {
-    const { runInfraDown } = await import('./commands/infra.js');
-    await runInfraDown(services);
-  });
-
-infra
-  .command('destroy')
-  .description(
-    'remove the services and their data: the ones named, or — with none named — the whole project (containers, volumes, networks)',
-  )
-  .argument('[services...]', 'services to destroy (default: everything)')
-  .option(MODE_FLAGS, MODE_HELP)
-  .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
-  .action(async (services: string[]) => {
-    const { runInfraAction } = await import('./commands/infra.js');
-    await runInfraAction('destroy', { services });
-  });
+for (const [command, description] of INFRA_COMMANDS) {
+  infra
+    .command(command)
+    .description(description)
+    .option(
+      SERVICE_FLAGS,
+      'infra service to act on (repeatable; default: every enabled one)',
+      collect,
+      [],
+    )
+    .option(MODE_FLAGS, MODE_HELP)
+    .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
+    .action(async (opts: { service: string[] }) => {
+      const { runInfra } = await import('./commands/infra.js');
+      await runInfra(command, opts.service);
+    });
+}
 
 // Listed for --help. A real invocation never reaches this action: it's dispatched from raw argv
 // before Commander parses (see the bottom of this file), because nothing after the provider word

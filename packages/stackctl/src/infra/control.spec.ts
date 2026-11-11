@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { InfraControl, infraCliSteps } from './control.js';
+import { InfraControl, infraCliArgs } from './control.js';
 import type { InfraServiceState } from './types.js';
 
 /**
@@ -44,15 +44,11 @@ async function settled(infra: InfraControl, service: string) {
   await vi.waitFor(() => expect(infra.isBusy(service)).toBe(false), { timeout: 5000 });
 }
 
-describe('infraCliSteps', () => {
-  test('maps each action to the infra commands it runs', () => {
-    expect(infraCliSteps('start', 'db')).toEqual([['infra', 'up', 'db']]);
-    expect(infraCliSteps('stop', 'db')).toEqual([['infra', 'down', 'db']]);
-    expect(infraCliSteps('restart', 'db')).toEqual([
-      ['infra', 'down', 'db'],
-      ['infra', 'up', 'db'],
-    ]);
-    expect(infraCliSteps('reset', 'db')).toEqual([['infra', 'up', '--reset', 'db']]);
+describe('infraCliArgs', () => {
+  test('runs the infra command of the same name, for the one service', () => {
+    for (const action of ['start', 'stop', 'restart', 'reset'] as const) {
+      expect(infraCliArgs(action, 'db')).toEqual(['infra', action, '-s', 'db']);
+    }
   });
 });
 
@@ -79,38 +75,31 @@ describe('InfraControl', () => {
     expect(infra.run('db', 'stop')).toBe('busy');
     await settled(infra, 'db');
     expect(lines).toEqual([
-      'db: ▶ running: stackctl infra down db',
-      'db: args: infra down db --mode test',
-      'db: ✔ stackctl infra down db finished',
-      'db: ▶ running: stackctl infra up db',
-      'db: args: infra up db --mode test',
-      'db: ✔ stackctl infra up db finished',
+      'db: ▶ running: stackctl infra restart -s db',
+      'db: args: infra restart -s db --mode test',
+      'db: ✔ stackctl infra restart -s db finished',
     ]);
     expect(infra.status('db')).toBe('running');
     expect(refresh).toHaveBeenCalled();
   });
 
-  test('stops a restart at the step that fails', async () => {
+  test('logs a command that fails, with its exit code', async () => {
     const { infra, lines } = control();
-    infra.run('broken', 'restart');
+    infra.run('broken', 'reset');
     await settled(infra, 'broken');
-    expect(lines.at(-1)).toBe('broken: ✘ stackctl infra down broken exited with code 3');
-    expect(lines.some((l) => l.includes('infra up broken'))).toBe(false);
+    expect(lines.at(-1)).toBe('broken: ✘ stackctl infra reset -s broken exited with code 3');
   });
 
   test('refuses a service it does not have', () => {
     expect(control().infra.run('cache', 'start')).toBe('unknown');
   });
 
-  test('starts nothing once stopped: no new action, and no further step of one under way', async () => {
-    // A shutdown stops the control and kills what is running; an action asked for after that, or
-    // the next step of one already under way, would outlive the session.
-    const { infra, lines } = control();
-    infra.run('db', 'restart');
+  test('starts nothing once stopped', () => {
+    // A shutdown stops the control and kills what is running; an action asked for after that
+    // would outlive the session.
+    const { infra } = control();
     infra.stop();
-    expect(infra.run('broken', 'start')).toBe('busy');
-    await settled(infra, 'db');
-    expect(lines.some((l) => l.includes('infra up db'))).toBe(false);
+    expect(infra.run('db', 'start')).toBe('busy');
   });
 
   test('a step under way when the control stops logs no end line', async () => {
@@ -119,7 +108,7 @@ describe('InfraControl', () => {
     infra.run('db', 'start');
     infra.stop();
     await settled(infra, 'db');
-    expect(lines).toContain('db: ▶ running: stackctl infra up db');
+    expect(lines).toContain('db: ▶ running: stackctl infra start -s db');
     expect(lines.filter((l) => l.includes('✔') || l.includes('✘'))).toEqual([]);
   });
 });

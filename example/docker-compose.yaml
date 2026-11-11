@@ -1,7 +1,7 @@
 # The example's infrastructure — a Postgres and a mail catcher — run by stackctl's `infra` (see
 # stackctl.config.ts):
 #
-#   pnpm stackctl infra up             # start it and wait until it's ready
+#   pnpm stackctl infra start          # start it and wait until it's ready
 #   pnpm stackctl infra docker-compose ps
 #
 # Every ${VAR} comes from the mode's .env file (.env.development, or .env.test under
@@ -19,7 +19,7 @@ services:
     volumes:
       # From Postgres 18 the image keeps its data in a version-specific directory under this path.
       - db-data:/var/lib/postgresql
-    # stackctl waits on this: `infra up` (and a dev session) only continues once it passes. It
+    # stackctl waits on this: `infra start` (and a dev session) only continues once it passes. It
     # probes every second while the container starts and every 30s once it's healthy.
     #
     # `-h 127.0.0.1` matters. On first start the image runs a temporary server to initialize the
@@ -42,7 +42,7 @@ services:
     ports:
       - '${MAIL_UI_PORT}:8025'
       - '${MAIL_SMTP_PORT}:1025'
-    # The image checks itself every 15s; probing every second while it starts lets `infra up`
+    # The image checks itself every 15s; probing every second while it starts lets `infra start`
     # move on as soon as it answers.
     healthcheck:
       test: ['CMD', '/mailpit', 'readyz']

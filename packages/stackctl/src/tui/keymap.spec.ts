@@ -131,7 +131,7 @@ function allPresses(): [string, KeyFlags][] {
   return presses;
 }
 
-/** A row as drawn: `  ` then hints 3 cells apart, groups split by `   │   ` (run-screen §2.11.1). */
+/** A row as drawn: `  ` then hints 3 cells apart, groups split by `  │  ` (run-screen §2.11.1). */
 function keysRow(hints: Hint[]): string {
   const groups: string[][] = [];
   let last: number | undefined;
@@ -143,7 +143,7 @@ function keysRow(hints: Hint[]): string {
     }
     groups.at(-1)!.push(text);
   }
-  return `  ${groups.map((g) => g.join('   ')).join('   │   ')}`;
+  return `  ${groups.map((g) => g.join('   ')).join('  │  ')}`;
 }
 
 function menuRow(hints: Hint[]): string {
@@ -220,25 +220,25 @@ describe('the key table', () => {
 describe('the keys row', () => {
   test('an app service focused, running: spec mockup 1', () => {
     expect(keysRow(hintsFor(ctx({ focused: appFocused() })))).toBe(
-      '  ←→ select   r restart   s stop   m commands   │   f filter   c clear   │   ^c quit',
+      '  ←→ select   r restart   s stop   m commands  │  f filter   c clear  │  ^c quit',
     );
   });
 
   test('an infra entry focused: spec mockup 2', () => {
     expect(keysRow(hintsFor(ctx({ focused: infraFocused() })))).toBe(
-      '  ←→ select   r restart   s stop   R reset data   │   f filter   c clear   │   ^c quit',
+      '  ←→ select   r restart   s stop   R reset data  │  f filter   c clear  │  ^c quit',
     );
   });
 
   test('starting up and after a startup failure: spec mockup 3', () => {
     for (const phase of ['starting', 'failed'] as const) {
-      expect(keysRow(hintsFor(ctx({ phase })))).toBe('  f filter   c clear   │   ^c quit');
+      expect(keysRow(hintsFor(ctx({ phase })))).toBe('  f filter   c clear  │  ^c quit');
       expect(resolveKey(ctx({ phase }), 't', {})).toBeNull();
     }
   });
 
   test('running with no entries shows the log keys and quit', () => {
-    expect(keysRow(hintsFor(ctx()))).toBe('  f filter   c clear   │   ^c quit');
+    expect(keysRow(hintsFor(ctx()))).toBe('  f filter   c clear  │  ^c quit');
   });
 
   test('t is no key, in any state', () => {
@@ -251,7 +251,7 @@ describe('the keys row', () => {
   test('an applied filter shows its terms on f and adds esc clear filter', () => {
     const hints = hintsFor(ctx({ focused: appFocused(), filter: 'error api' }));
     expect(keysRow(hints)).toBe(
-      '  ←→ select   r restart   s stop   m commands   │   f filter: error api   esc clear filter   c clear   │   ^c quit',
+      '  ←→ select   r restart   s stop   m commands  │  f filter: error api   esc clear filter   c clear  │  ^c quit',
     );
     expect(hints.find((h) => h.key === 'f')).toMatchObject({
       label: 'filter:',

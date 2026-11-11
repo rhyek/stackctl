@@ -66,7 +66,8 @@ function inkPerFrame(gif: string, label: string, cropBottom?: number): number[] 
     '-i',
     gif,
     '-vf',
-    `${crop}format=gray,lutyuv=y='if(gt(val,${INK_THRESHOLD}),255,0)',` +
+    // Transparent pixels (the rounded corners) count as no ink, whatever color they decode to.
+    `${crop}format=rgba,premultiply=inplace=1,format=gray,lutyuv=y='if(gt(val,${INK_THRESHOLD}),255,0)',` +
       `signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=${out}`,
     '-f',
     'null',

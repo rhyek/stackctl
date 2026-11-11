@@ -35,7 +35,7 @@ export class InfraFailedError extends Error {
 
 /**
  * The infra step of a dev session: bring every service up — no reset — and wait, exactly as
- * `stackctl infra up` does, before any package starts. What it prints goes out through
+ * `stackctl infra start` does, before any package starts. What it prints goes out through
  * `onEvent`. Resolves with what the run phase needs (the services for the footer, with their
  * public origins, a live watch of their states and their memory), or `undefined` when the config
  * declares no `infra`. Throws {@link InfraFailedError} when a service doesn't make it: the

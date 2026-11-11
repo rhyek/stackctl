@@ -22,24 +22,11 @@ const IN_PROGRESS: Record<InfraAction, InfraStatus> = {
 };
 
 /**
- * The `stackctl infra …` invocations an action runs, in order; a step that fails ends it.
- * `restart` is `down` then `up`: the container is recreated — picking up a changed compose file
- * — and its data kept. `reset` destroys the service and its data first.
+ * The `stackctl infra …` invocation an action runs: the infra command of the same name, for the
+ * one service.
  */
-export function infraCliSteps(action: InfraAction, service: string): string[][] {
-  switch (action) {
-    case 'start':
-      return [['infra', 'up', service]];
-    case 'stop':
-      return [['infra', 'down', service]];
-    case 'restart':
-      return [
-        ['infra', 'down', service],
-        ['infra', 'up', service],
-      ];
-    case 'reset':
-      return [['infra', 'up', '--reset', service]];
-  }
+export function infraCliArgs(action: InfraAction, service: string): string[] {
+  return ['infra', action, '-s', service];
 }
 
 /** Why {@link InfraControl.run} did or didn't take an action on. */
@@ -110,8 +97,8 @@ export class InfraControl {
   }
 
   /**
-   * Stops watching, and refuses every action from here on — a new one, and the next step of one
-   * under way. A step under way logs no end line once it exits. The actions under way are the
+   * Stops watching, and refuses every action from here on. An action under way logs no end line
+   * once it exits. The actions under way are the
    * caller's to kill (see {@link takeLiving}).
    */
   stop(): void {
@@ -159,11 +146,7 @@ export class InfraControl {
     this.emit();
     void (async () => {
       try {
-        for (const step of infraCliSteps(action, service)) {
-          if (!(await this.runStep(service, step))) {
-            break;
-          }
-        }
+        await this.runCommand(service, infraCliArgs(action, service));
       } finally {
         this.busy.delete(service);
         this.emit();
@@ -199,14 +182,11 @@ export class InfraControl {
 
   /**
    * Runs one `stackctl infra …` command to its exit, its output going to the session log line by
-   * line, and resolves with whether it succeeded. It is kept among the commands running, and in
+   * line. It is kept among the commands running, and in
    * the session record, until it exits. Its end is logged, unless the session's shutdown stopped
    * it: a shutdown logs no end line for what it waits on.
    */
-  private async runStep(service: string, args: string[]): Promise<boolean> {
-    if (this.stopped) {
-      return false;
-    }
+  private async runCommand(service: string, args: string[]): Promise<void> {
     const title = `stackctl ${args.join(' ')}`;
     this.opts.log(service, chalk.cyan(`▶ running: ${title}`), false);
     const [node, ...cliArgs] = this.opts.cli;
@@ -229,15 +209,14 @@ export class InfraControl {
     const { exitCode } = await child;
     this.procs.delete(child);
     if (this.stopped) {
-      return false;
+      return;
     }
     const code = exitCode ?? 1;
     if (code === 0) {
       this.opts.log(service, chalk.green(`✔ ${title} finished`), false);
-      return true;
+    } else {
+      this.opts.log(service, chalk.red(`✘ ${title} exited with code ${String(code)}`), true);
     }
-    this.opts.log(service, chalk.red(`✘ ${title} exited with code ${String(code)}`), true);
-    return false;
   }
 }
 

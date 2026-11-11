@@ -412,6 +412,41 @@ describe('stackctl exec', () => {
   });
 });
 
+describe('stackctl infra', () => {
+  // This workspace declares no infra, so a command that parses gets as far as saying so.
+  const NO_INFRA = 'No `infra` in the stackctl config';
+  const COMMANDS = ['start', 'stop', 'restart', 'reset', 'destroy'];
+
+  test.each(COMMANDS)('infra %s -s db -s mail reaches the infra', async (command) => {
+    const result = await stackctl(['infra', command, '-s', 'db', '-s', 'mail']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(NO_INFRA);
+  });
+
+  test.each(COMMANDS)('infra %s with no -s reaches the infra', async (command) => {
+    const result = await stackctl(['infra', command]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(NO_INFRA);
+  });
+
+  test.each(COMMANDS)(
+    'infra %s db fails before touching anything: services are named with -s',
+    async (command) => {
+      const result = await stackctl(['infra', command, 'db']);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toMatch(/too many arguments/);
+      expect(result.stderr).not.toContain(NO_INFRA);
+    },
+  );
+
+  test.each(['up', 'down'])('infra %s is not a command', async (command) => {
+    const result = await stackctl(['infra', command]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/unknown command/);
+    expect(result.stderr).not.toContain(NO_INFRA);
+  });
+});
+
 describe('exec and run take a target', () => {
   const api = () => path.join(ws, 'packages', 'api');
   /** What api's `build` printed: its directory, the mode, and its arguments. */
@@ -705,7 +740,7 @@ describe('finding the workspace', () => {
     [['run', 'x']],
     [['logs']],
     [['show-config']],
-    [['infra', 'up']],
+    [['infra', 'start']],
     [['stop']],
     [['reset']],
     [['start', '--headless', '-s', 'a']],

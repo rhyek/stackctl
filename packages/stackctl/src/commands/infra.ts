@@ -1,9 +1,9 @@
 import chalk from 'chalk';
 import { getLoadedConfig } from '../config.js';
+import type { InfraAction } from '../infra/control.js';
 import { InfraManager } from '../infra/manager.js';
-import type { InfraRunRequest } from '../infra/provider.js';
-import { createInfraReporter } from '../infra/report.js';
-import { InfraError, type InfraRunSummary } from '../infra/types.js';
+import { createInfraReporter, type InfraReporter } from '../infra/report.js';
+import { InfraError } from '../infra/types.js';
 import { loadConfigOrExit } from './workspace.js';
 
 // `stackctl infra …`: the services the packages need but that aren't packages. Every subcommand
@@ -40,22 +40,45 @@ async function infraExitCode(run: () => Promise<number>): Promise<number> {
   }
 }
 
-/** `infra up` / `infra destroy`: run it with the plain reporter, exit 0 only if every service made it. */
-export async function runInfraAction(
-  action: 'up' | 'destroy',
-  req: Pick<InfraRunRequest, 'services' | 'reset'>,
-): Promise<never> {
+/** The `stackctl infra` lifecycle commands: a session's infra actions, and `destroy`. */
+export type InfraCommand = InfraAction | 'destroy';
+
+/** The part of {@link InfraManager} the lifecycle commands drive. */
+export type InfraCommandManager = Pick<InfraManager, 'up' | 'down' | 'destroy'>;
+
+/**
+ * Runs a lifecycle command on `services` (none: every enabled one; for `destroy`, the whole
+ * project) and resolves with its exit code. `restart` is `stop` then `start`: the containers are
+ * recreated, picking up a changed compose file, and their data kept. A failed stop starts nothing.
+ */
+export async function runInfraCommand(
+  manager: InfraCommandManager,
+  command: InfraCommand,
+  services: string[],
+  reporter: InfraReporter,
+): Promise<number> {
+  if (command === 'stop' || command === 'restart') {
+    const code = await manager.down(services);
+    if (command === 'stop' || code !== 0) {
+      return code;
+    }
+  }
+  const run = { services, onEvent: reporter.onEvent };
+  if (command === 'destroy') {
+    const summary = await manager.destroy(run);
+    reporter.finish(summary, 'destroy');
+    return summary.ok ? 0 : 1;
+  }
+  const summary = await manager.up({ ...run, reset: command === 'reset' });
+  reporter.finish(summary, 'up');
+  return summary.ok ? 0 : 1;
+}
+
+/** `stackctl infra <command>`: runs it with the plain reporter, and exits with its code. */
+export async function runInfra(command: InfraCommand, services: string[]): Promise<never> {
   const { manager, mode } = await loadInfraOrExit();
   const reporter = createInfraReporter({ mode });
-  process.exit(
-    await infraExitCode(async () => {
-      const run = { ...req, onEvent: reporter.onEvent };
-      const summary: InfraRunSummary =
-        action === 'up' ? await manager.up(run) : await manager.destroy(run);
-      reporter.finish(summary, action);
-      return summary.ok ? 0 : 1;
-    }),
-  );
+  process.exit(await infraExitCode(() => runInfraCommand(manager, command, services, reporter)));
 }
 
 /**
@@ -70,10 +93,4 @@ export async function runInfraPassthrough(
 ): Promise<never> {
   const { manager } = await loadInfraOrExit();
   process.exit(await infraExitCode(() => manager.passthrough(provider, args, invocationCwd)));
-}
-
-/** `infra down`: stop and remove the containers, keeping their data. */
-export async function runInfraDown(services: string[]): Promise<never> {
-  const { manager } = await loadInfraOrExit();
-  process.exit(await infraExitCode(() => manager.down(services)));
 }

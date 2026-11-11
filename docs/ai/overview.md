@@ -109,7 +109,7 @@ An agent shares the machine with you, so stackctl draws a few lines:
   session an agent starts runs in its own background task and ends with it.
 - **Graceful stops only.** The skill tells agents to stop and restart through the control API,
   never with `kill`.
-- **Data is deleted only on request.** `infra up --reset` and `infra destroy` are documented
+- **Data is deleted only on request.** `infra reset` and `infra destroy` are documented
   to agents as destructive.
 
 stackctl recognizes an agent by the environment variables agents set (`CLAUDECODE`,
