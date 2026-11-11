@@ -28,7 +28,7 @@ const demoDir = dirname(fileURLToPath(import.meta.url));
 const assetsDir = resolve(demoDir, '../../docs/public');
 const framesDir = join(demoDir, '.frames');
 
-/** Luma above which a pixel counts as text: the tape's background sits near 41, its text far above. */
+/** Luma above which a pixel counts as text: the theme's background sits near 41, its text far above. */
 const INK_THRESHOLD = 80;
 /** Flag a frame when it carries less than this share of its neighbours' text. */
 const DIP_RATIO = 0.65;

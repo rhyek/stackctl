@@ -3,7 +3,6 @@
 import { defineConfig } from 'stackctl';
 
 export default defineConfig({
-  infra: { 'docker-compose': true },
   reverseProxy: {
     port: 4000,
     routes: [
@@ -19,10 +18,21 @@ export default defineConfig({
     frontend: {
       port: 3000,
       deps: [{ service: 'backend', wait: true }],
-      urls: ['/'], // a link to frontend in the footer
+      urls: [{ label: 'home', url: '/' }],
     },
-    worker: {
-      command: ['start', { watches: false }],
+  },
+  infra: {
+    'docker-compose': {
+      services: {
+        db: {
+          afterReady: async ({ exec, fresh }) => {
+            await exec('pnpm', ['migrate']);
+            if (fresh) {
+              await exec('pnpm', ['seed']);
+            }
+          },
+        },
+      },
     },
   },
 });

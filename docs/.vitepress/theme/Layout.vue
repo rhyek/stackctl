@@ -2,6 +2,7 @@
 import { useData, withBase } from 'vitepress';
 import DefaultTheme, { VPButton } from 'vitepress/theme';
 import HomeConfig from './HomeConfig.md';
+import TerminalPlayer from './TerminalPlayer.vue';
 
 // The home page's frontmatter names the recording, `demo: { src, alt }`, and the words beside
 // the config example, `config: { title, details, linkText, link }`. The example itself is
@@ -14,7 +15,7 @@ const { frontmatter } = useData();
   <Layout>
     <template #home-hero-after>
       <div v-if="frontmatter.demo" class="home-demo">
-        <img :src="withBase(frontmatter.demo.src)" :alt="frontmatter.demo.alt" />
+        <TerminalPlayer :src="frontmatter.demo.src" :label="frontmatter.demo.alt" />
       </div>
       <section v-if="frontmatter.config" class="home-config">
         <div class="pitch">
@@ -42,12 +43,13 @@ const { frontmatter } = useData();
   padding: 0 24px 48px;
 }
 
-.home-demo img {
-  display: block;
-  width: 100%;
-  border-radius: 12px;
-  border: 1px solid var(--vp-c-divider);
-  box-shadow: var(--vp-shadow-3);
+/*
+ * The player fits the terminal's columns to its width: at 800px that is a terminal's text size;
+ * narrower screens scale it down.
+ */
+.home-demo :deep(.terminal-player) {
+  max-width: 800px;
+  margin: 0 auto;
 }
 
 .home-config {
@@ -81,6 +83,15 @@ const { frontmatter } = useData();
   border-radius: 12px;
 }
 
+/* A whole config is long: a little denser than a docs page's code, at the same size. */
+.home-config .code :deep(pre) {
+  padding: 16px 0;
+}
+
+.home-config .code :deep(code) {
+  line-height: 1.5;
+}
+
 @media (min-width: 640px) {
   .home-demo,
   .home-config {
@@ -97,6 +108,13 @@ const { frontmatter } = useData();
   .home-config {
     grid-template-columns: 2fr 3fr;
     gap: 48px;
+    align-items: start;
+  }
+
+  /* Beside a config longer than itself, the pitch stays in view under the nav while it scrolls. */
+  .home-config .pitch {
+    position: sticky;
+    top: calc(var(--vp-nav-height) + 48px);
   }
 }
 </style>

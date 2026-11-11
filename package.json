@@ -28,6 +28,7 @@
     "@types/node": "^26.6.5",
     "@types/picomatch": "^4.0.3",
     "@types/react": "^19.3.0",
+    "asciinema-player": "3.18.0",
     "lint-staged": "^17.6.0",
     "oxfmt": "^0.74.0",
     "oxlint": "^1.89.0",
