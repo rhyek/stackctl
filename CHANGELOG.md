@@ -7,6 +7,11 @@
 - **`stackctl infra restart` recreates infra containers and keeps their data**, as the footer's
   `r` does.
 
+### Fixes
+
+- **The footer's `^c quit` no longer wraps onto a row of its own**, and the keys row's groups
+  sit closer together.
+
 ### Breaking changes
 
 - **`stackctl infra` takes a session's verbs, with services named by `-s`**: `up` is `start`,

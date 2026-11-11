@@ -109,7 +109,7 @@ export const scenes: Record<string, Scene> = {
     cols: 84,
     rows: 27,
     async play(t) {
-      await t.type('pnpm sctl');
+      await t.type('pnpm stackctl');
       await t.press('enter', 0);
       await t.waitFor('choose services');
       await t.sleep(1200);
@@ -243,7 +243,7 @@ export const scenes: Record<string, Scene> = {
     rows: 14,
     still: true,
     async play(t) {
-      await t.type('pnpm sctl -s frontend');
+      await t.type('pnpm stackctl -s frontend');
       await t.press('enter', 0);
       await t.waitFor('ssr) connected');
       await t.sleep(2500);

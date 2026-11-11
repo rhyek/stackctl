@@ -29,7 +29,7 @@ It is internal tooling — nothing in it belongs in the user-facing docs.
 ./scripts/demo/record.sh picker          # just the ones named
 ```
 
-Needs `brew install agg ffmpeg`, python3, and Docker for the example's infra. It drives the
+Needs `brew install agg ffmpeg gifsicle`, python3, and Docker for the example's infra. It drives the
 **real** example workspace, so `cd example && pnpm stackctl` must boot cleanly first.
 
 - **It needs ports 3000–3002 and 21050 free**, and stops, naming the process, if one is held.

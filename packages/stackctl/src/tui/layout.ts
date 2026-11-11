@@ -226,8 +226,13 @@ export interface HintLayoutOptions {
   indent: number;
   /** Blank cells between two hints of a group. */
   gap: number;
-  /** Groups are set apart by `   │   ` (otherwise by `gap`, like hints). */
+  /** Groups are set apart by `  │  ` (otherwise by `gap`, like hints). */
   separators: boolean;
+  /**
+   * Groups, by number, that never start a row while the group before them could go with them: when
+   * one doesn't fit after that group, both start the next row.
+   */
+  keepWithPrevious?: readonly number[];
   /** A dim heading drawn before a group's first hint, by group number, after its separator. */
   headings?: Readonly<Record<number, string>>;
 }
@@ -241,10 +246,12 @@ export interface PlacedHint {
   width: number;
 }
 
-const SEPARATOR: Segment[] = [blank(3), { text: '│', dim: true }, blank(3)];
+const SEPARATOR: Segment[] = [blank(2), { text: '│', dim: true }, blank(2)];
 
 /** The footer keys row's group headings: the log's keys are headed `logs:`. */
 const KEY_GROUP_HEADINGS: Readonly<Record<number, string>> = { 2: 'logs:' };
+/** The footer keys row's session keys (`^c quit`) wrap together with the log's. */
+const KEY_GROUPS_KEPT_WITH_PREVIOUS: readonly number[] = [3];
 
 /**
  * Hints laid out in rows of at most `cols` cells. A group that doesn't fit on the current row
@@ -279,22 +286,37 @@ export function layoutHints(
     const col = row.push(...hintSegments(hint));
     placed.push({ hint, row: builders.length - 1, col, width: hintWidth(hint) });
   };
-  for (const group of groups) {
+  const between: Segment[] = opts.separators ? SEPARATOR : [blank(opts.gap)];
+  const headOf = (group: HintLike[]): Segment[] => {
     const heading = opts.headings?.[group[0]!.group];
-    const head: Segment[] = heading === undefined ? [] : [{ text: heading, dim: true }, blank(1)];
-    const between: Segment[] = opts.separators ? SEPARATOR : [blank(opts.gap)];
-    const groupWidth =
-      rowWidth(head) + group.reduce((w, h) => w + hintWidth(h), 0) + opts.gap * (group.length - 1);
+    return heading === undefined ? [] : [{ text: heading, dim: true }, blank(1)];
+  };
+  const widthOf = (group: HintLike[]) =>
+    rowWidth(headOf(group)) +
+    group.reduce((w, h) => w + hintWidth(h), 0) +
+    opts.gap * (group.length - 1);
+  groups.forEach((group, i) => {
+    // A group kept with the one before it: when the two don't fit here but do on a row of their
+    // own, the one before starts the next row, and this one follows it there.
+    const next = groups[i + 1];
+    if (next && opts.keepWithPrevious?.includes(next[0]!.group) && !empty()) {
+      const both = widthOf(group) + rowWidth(between) + widthOf(next);
+      if (row.used + rowWidth(between) + both > cols && opts.indent + both <= cols) {
+        newRow();
+      }
+    }
+    const head = headOf(group);
+    const groupWidth = widthOf(group);
     if (!empty()) {
       if (row.used + rowWidth(between) + groupWidth <= cols) {
         row.push(...between, ...head);
-        group.forEach((hint, i) => {
-          if (i > 0) {
+        group.forEach((hint, j) => {
+          if (j > 0) {
             row.push(blank(opts.gap));
           }
           place(hint);
         });
-        continue;
+        return;
       }
       newRow();
     }
@@ -309,7 +331,7 @@ export function layoutHints(
       }
       place(hint);
     }
-  }
+  });
   return { rows: builders.map((b) => clip(b.segments, cols)), placed };
 }
 
@@ -596,6 +618,7 @@ export function footerLayout(
     gap: 3,
     separators: true,
     headings: KEY_GROUP_HEADINGS,
+    keepWithPrevious: KEY_GROUPS_KEPT_WITH_PREVIOUS,
   };
   if (ui.mode === 'filter') {
     const filter = filterRow(ui.filterDraft, hintsFor(kc), cols, keysRow);

@@ -15,7 +15,7 @@
 # clicking it), which the scene checks; each scene is recorded up to MAX_TAKES (3) times until it
 # passes. `frames.ts` checks the GIF too, as a guard.
 #
-# Requires: brew install agg ffmpeg, python3 (for the e2e suite's PTY driver), and Docker for the
+# Requires: brew install agg ffmpeg gifsicle, python3 (for the e2e suite's PTY driver), and Docker for the
 # example's infra. The recording drives the real example (Go worker + Vite frontend), so a plain
 # `pnpm stackctl` must boot cleanly here first, with its ports (3000-3002, 21050) free. It never
 # touches the clipboard (see record.ts).
@@ -67,14 +67,19 @@ for scene in "${SCENES[@]}"; do
   if [ "$scene" = demo ]; then
     # The README's GIF: agg renders the cast in the colors it embeds (record.ts), drawing Menlo
     # itself at the weight a terminal draws it. 30px Menlo is an 18px cell: a 2x image, sharp on
-    # a retina screen at a terminal's text size. A margin of the terminal's background keeps a
-    # rounded frame from clipping a character.
+    # a retina screen at a terminal's text size. A margin of the terminal's background keeps the
+    # rounded corners from clipping a character. The corners are the site player's 12px at 2x,
+    # made transparent so they round on GitHub's and npm's light and dark pages alike.
+    # Transparency turns off ffmpeg's frame-to-frame compression; gifsicle puts it back.
     gif_name="demo-$(date +%s).gif"
     agg --quiet --text-font-family "Menlo" --font-size 30 --line-height 1.2 \
       --idle-time-limit 10 --last-frame-duration 2 --fps-cap 30 "$cast" "$WORK/raw.gif"
+    radius=24
+    corners="if(gt(abs(W/2-X),W/2-$radius)*gt(abs(H/2-Y),H/2-$radius),if(lte(hypot($radius-(W/2-abs(W/2-X)),$radius-(H/2-abs(H/2-Y))),$radius),255,0),255)"
     ffmpeg -v error -y -i "$WORK/raw.gif" \
-      -vf "pad=iw+56:ih+56:28:28:color=0x24292E,split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];[b][p]paletteuse=dither=none" \
-      "$WORK/$gif_name"
+      -vf "pad=iw+56:ih+56:28:28:color=0x24292E,format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='$corners',split[a][b];[a]palettegen=max_colors=256:reserve_transparent=1:stats_mode=full[p];[b][p]paletteuse=dither=none:alpha_threshold=128" \
+      "$WORK/rounded.gif"
+    gifsicle -O3 "$WORK/rounded.gif" -o "$WORK/$gif_name"
     if ! node frames.ts "$WORK/$gif_name"; then
       echo "error: frames.ts found a frame that looks off; the demo is unchanged" >&2
       exit 1
