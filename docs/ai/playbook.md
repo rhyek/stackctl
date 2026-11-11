@@ -17,7 +17,7 @@ reference page with the details.
 - **Never guess a port or hostname.** `stackctl show-config` prints the resolved ones.
 - **Don't pass `--kill-others` or `killOthers: true`** unless the user said to.
 - **Don't use `stackctl start --detach`.** It is for CI and is refused for an agent.
-- **`stackctl infra up --reset` and `stackctl infra destroy` delete data.** Only on request.
+- **`stackctl infra reset` and `stackctl infra destroy` delete data.** Only on request.
 - **Use `stackctl infra docker-compose …`**, never a bare `docker compose …`, which talks to
   a different Compose project.
 - **Write `stackctl`, never its alias `sctl`.** Guide pages type `sctl`; permission rules and
@@ -138,7 +138,7 @@ See [One-off commands](../guide/commands.md). From a script, use
 ## Infra
 
 ```bash
-stackctl infra up                          # start the databases etc., wait until ready
+stackctl infra start                       # start the databases etc., wait until ready
 stackctl infra docker-compose ps           # what is running
 stackctl infra docker-compose exec db psql -U app
 stackctl infra docker-compose logs --tail 100 db

@@ -14,7 +14,7 @@ stackctl --mode test              # another mode: .env.test, its own session
 stackctl stop                     # stop the mode's session
 stackctl service restart -s api   # restart one service in the running session
 stackctl run api seed             # one script, with api's environment
-stackctl infra up                 # bring the infra up, then exit
+stackctl infra start              # start the infra, then exit
 ```
 
 Every command works from anywhere in the repo: the workspace is the nearest directory, at or
@@ -32,7 +32,7 @@ above the current one, that holds `stackctl.config.ts`. Without one, every comma
 | [`exec`](#stackctl-exec-and-stackctl-run)      | Run a command with a service's environment.               |
 | [`run`](#stackctl-exec-and-stackctl-run)       | Run a script with a service's environment.                |
 | [`logs`](#stackctl-logs)                       | Print or follow the session's log.                        |
-| [`infra`](#stackctl-infra)                     | Bring infra up, down, or run Compose on it.               |
+| [`infra`](#stackctl-infra)                     | Start, stop, reset or destroy infra, or run Compose on it. |
 | [`init`](#stackctl-init)                       | Set the project up.                                       |
 
 ## Global options
@@ -231,22 +231,33 @@ else from the mode's session record, else the newest file in the mode's log dire
 ## `stackctl infra`
 
 ```bash
-stackctl infra up [services...] [--reset]
-stackctl infra down [services...]
-stackctl infra destroy [services...]
+stackctl infra start   [-s <name>...]
+stackctl infra stop    [-s <name>...]
+stackctl infra restart [-s <name>...]
+stackctl infra reset   [-s <name>...]
+stackctl infra destroy [-s <name>...]
 stackctl infra docker-compose [args...]
 ```
 
-Drives the [infra](../config/infra.md) the config declares. Every subcommand exits when it is
-done, and none disturbs a running session.
+Drives the [infra](../config/infra.md) the config declares, the same actions as a session's
+`s`, `r` and `R` keys. Every subcommand exits when it is done, and none disturbs a running
+session.
 
 | Subcommand                 | What it does                                                                          |
 | -------------------------- | ------------------------------------------------------------------------------------- |
-| `up [services...]`         | Starts the services (default: every enabled one), waits until each is ready, runs `afterReady`, exits `0`, or `1` if one failed. They keep running. |
-| `up --reset`               | Destroys those services first, then starts them clean.                                |
-| `down [services...]`       | Removes the containers. Data is kept.                                                 |
-| `destroy [services...]`    | Removes the containers **and their data**. With no services named, the whole project. |
+| `start`                    | Starts the services, waits until each is ready and runs `afterReady`, then exits `0`, or `1` if one failed. They keep running. |
+| `stop`                     | Removes the containers. Data is kept.                                                 |
+| `restart`                  | `stop`, then `start`: the containers are recreated, picking up a changed compose file. Data is kept. |
+| `reset`                    | Removes the services **and their data**, then starts them clean.                      |
+| `destroy`                  | Removes the containers **and their data**, and starts nothing. With no `-s`, the whole project. |
 | `docker-compose [args...]` | Runs `docker compose <args>` on this project and mode, with your terminal.            |
+
+- **`-s, --service <name>` picks the services**, repeatable. With none, every enabled one:
+  `stackctl infra reset` deletes **every** infra service's data.
+- **`start` runs `afterReady` even for a service already running**, so it applies new
+  migrations to a database that is up.
+- **`reset` here is not `stackctl reset`**, which deletes the mode's session state and leaves
+  infra alone.
 
 ```
 ▶ infra (development): db, redis

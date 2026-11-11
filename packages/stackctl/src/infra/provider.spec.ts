@@ -130,18 +130,18 @@ function recording(calls: string[], service: string): InfraServiceCallbacks {
   return {
     beforeDestroy: record('beforeDestroy'),
     afterDestroy: record('afterDestroy'),
-    beforeUp: record('beforeUp'),
+    beforeStart: record('beforeStart'),
     afterReady: record('afterReady'),
   };
 }
 
 describe('InfraProvider.up', () => {
-  test('runs beforeUp, starts every service in one call, then afterReady', async () => {
+  test('runs beforeStart, starts every service in one call, then afterReady', async () => {
     const provider = new FakeProvider();
     Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
     const summary = await provider.up({});
     expect(provider.calls).toEqual([
-      'beforeUp:db:reset=false',
+      'beforeStart:db:reset=false',
       'start:db,redis',
       'afterReady:db:reset=false',
     ]);
@@ -154,7 +154,7 @@ describe('InfraProvider.up', () => {
     });
   });
 
-  test('--reset destroys the services it is about to start, between beforeDestroy and afterDestroy', async () => {
+  test('a reset destroys the services it is about to start, between beforeDestroy and afterDestroy', async () => {
     const provider = new FakeProvider();
     Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
     await provider.up({ reset: true });
@@ -162,7 +162,7 @@ describe('InfraProvider.up', () => {
       'beforeDestroy:db:reset=true',
       'destroyServices:db,redis',
       'afterDestroy:db:reset=true',
-      'beforeUp:db:reset=true',
+      'beforeStart:db:reset=true',
       'start:db,redis',
       'afterReady:db:reset=true',
     ]);
@@ -177,7 +177,7 @@ describe('InfraProvider.up', () => {
     const callbacks: InfraServiceCallbacks = {
       beforeDestroy: note('beforeDestroy'),
       afterDestroy: note('afterDestroy'),
-      beforeUp: note('beforeUp'),
+      beforeStart: note('beforeStart'),
       afterReady: note('afterReady'),
     };
     const provider = new FakeProvider({ callbacks: { db: callbacks, redis: callbacks } });
@@ -185,27 +185,27 @@ describe('InfraProvider.up', () => {
     expect(seen).toEqual([
       'beforeDestroy:db:{}',
       'afterDestroy:db:{"beforeDestroy":"db"}',
-      'beforeUp:db:{"beforeDestroy":"db","afterDestroy":"db"}',
-      'afterReady:db:{"beforeDestroy":"db","afterDestroy":"db","beforeUp":"db"}',
+      'beforeStart:db:{"beforeDestroy":"db","afterDestroy":"db"}',
+      'afterReady:db:{"beforeDestroy":"db","afterDestroy":"db","beforeStart":"db"}',
     ]);
     seen.length = 0;
     await provider.up({});
     // A new run, and each service its own object.
     expect(seen.sort()).toEqual([
-      'afterReady:db:{"beforeUp":"db"}',
-      'afterReady:redis:{"beforeUp":"redis"}',
-      'beforeUp:db:{}',
-      'beforeUp:redis:{}',
+      'afterReady:db:{"beforeStart":"db"}',
+      'afterReady:redis:{"beforeStart":"redis"}',
+      'beforeStart:db:{}',
+      'beforeStart:redis:{}',
     ]);
   });
 
-  test('--reset with services named destroys only those', async () => {
+  test('a reset with services named destroys only those', async () => {
     const provider = new FakeProvider();
     await provider.up({ reset: true, services: ['redis'] });
     expect(provider.calls).toEqual(['destroyServices:redis', 'start:redis']);
   });
 
-  test('a beforeDestroy failure under --reset destroys and starts nothing', async () => {
+  test('a beforeDestroy failure under a reset destroys and starts nothing', async () => {
     const provider = new FakeProvider({
       callbacks: {
         db: {
@@ -226,11 +226,11 @@ describe('InfraProvider.up', () => {
     });
   });
 
-  test('a beforeUp failure starts nothing and fails every target', async () => {
+  test('a beforeStart failure starts nothing and fails every target', async () => {
     const provider = new FakeProvider({
       callbacks: {
         db: {
-          beforeUp: async () => {
+          beforeStart: async () => {
             throw new Error('disk full');
           },
         },
@@ -242,10 +242,10 @@ describe('InfraProvider.up', () => {
     expect(summary.services[0]).toEqual({
       service: 'db',
       ok: false,
-      error: 'beforeUp failed: disk full',
+      error: 'beforeStart failed: disk full',
     });
     expect(summary.services[1]).toMatchObject({ service: 'redis', ok: false });
-    expect(summary.services[1]!.error).toMatch(/not started.*db.*beforeUp/);
+    expect(summary.services[1]!.error).toMatch(/not started.*db.*beforeStart/);
   });
 
   test('a failed start fails every target with the provider message', async () => {
@@ -434,7 +434,7 @@ describe('InfraProvider callback context', () => {
     };
     const provider = new FakeProvider({
       callbacks: {
-        db: { beforeUp: record, afterReady: record },
+        db: { beforeStart: record, afterReady: record },
         redis: { afterReady: record },
       },
       connectControl: async () => {
@@ -650,7 +650,7 @@ describe('a disabled service', () => {
     expect(provider.calls).toEqual(['destroyServices:redis']);
   });
 
-  test('is not touched by `up --reset`, which destroys only what it is about to start', async () => {
+  test('is not touched by a reset, which destroys only what it is about to start', async () => {
     const provider = withDisabledRedis();
     expect((await provider.up({ reset: true })).ok).toBe(true);
     expect(provider.calls).toEqual(['destroyServices:db', 'start:db']);
@@ -670,7 +670,7 @@ describe('no services to act on', () => {
   const allDisabled = (o: { failDestroyAll?: string } = {}) =>
     new FakeProvider({ services: ['db'], callbacks: { db: { enabled: false } }, ...o });
 
-  test('up starts nothing — and with --reset destroys nothing — and succeeds', async () => {
+  test('up starts nothing — and a reset destroys nothing — and succeeds', async () => {
     const provider = allDisabled();
     const events: InfraEvent[] = [];
     expect(await provider.up({ onEvent: (e) => events.push(e) })).toEqual({

@@ -841,7 +841,7 @@ describe('the callbacks’ buildAddress', () => {
                 expectTypeOf(ctx.buildAddress).toEqualTypeOf<BuildAddress>();
                 expectTypeOf(ctx).not.toHaveProperty('reverseProxy');
               },
-              beforeUp: (ctx) => {
+              beforeStart: (ctx) => {
                 expectTypeOf(ctx.buildAddress).toEqualTypeOf<BuildAddress>();
                 expectTypeOf(ctx).not.toHaveProperty('reverseProxy');
               },
@@ -1123,7 +1123,7 @@ describe('infra callbacks', () => {
                 expectTypeOf(ctx.log).parameters.toEqualTypeOf<[message: string]>();
               },
               // a synchronous callback is fine too
-              beforeUp: (ctx) => {
+              beforeStart: (ctx) => {
                 expectTypeOf(ctx.mode).toEqualTypeOf<Mode>();
                 // only afterReady knows: before the start there is nothing to be fresh yet
                 expectTypeOf(ctx).not.toHaveProperty('fresh');
@@ -1337,7 +1337,7 @@ describe('infra hook context', () => {
     expectTypeOf<InfraReadyContext['mode']>().toEqualTypeOf<Mode>();
     expectTypeOf<InfraReadyContext['config']>().toEqualTypeOf<Config<string>>();
     void ({
-      beforeUp: ({ config, mode }) => {
+      beforeStart: ({ config, mode }) => {
         expectTypeOf(config.envMode).toEqualTypeOf<Mode>();
         expectTypeOf(mode).toEqualTypeOf<Mode>();
       },

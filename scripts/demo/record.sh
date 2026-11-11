@@ -44,7 +44,7 @@ done
 
 # The example's infra (Postgres, the mail catcher), up and migrated before the recording starts,
 # so a recorded startup takes the second it takes on a warm machine.
-(cd ../../example && pnpm stackctl infra up)
+(cd ../../example && pnpm stackctl infra start)
 
 for scene in "${SCENES[@]}"; do
   cast="$WORK/$scene.cast"

@@ -26,10 +26,10 @@ is served at, via stackctl's dev reverse proxy) or its `port` on localhost. The 
 a service"_ section says which to use and how. Never guess a port or hostname.
 
 If you need the project's **database or other infrastructure** — to start it, reset it, or look
-at it — use `stackctl infra` (`up`, `down`, `destroy`, and `docker-compose <args>` for Compose
-itself), never a bare `docker compose`: stackctl puts the mode in the Compose project name, so a
-bare command talks to a different, empty project. `infra up --reset` and `infra destroy` delete
-data — only on request. `config/infra.md` has the details.
+at it — use `stackctl infra` (`start`, `stop`, `restart`, `reset`, `destroy`, and
+`docker-compose <args>` for Compose itself), never a bare `docker compose`: stackctl puts the mode
+in the Compose project name, so a bare command talks to a different, empty project. `infra reset`
+and `infra destroy` delete data — only on request. `config/infra.md` has the details.
 
 If all you need is **whether an app is already running**, read the playbook's _"Is it running?"_
 section — it covers how to tell whether stackctl manages that app in the first place, how to read

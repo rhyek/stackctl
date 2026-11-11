@@ -132,7 +132,7 @@ describe('resolveMode', () => {
         resolveMode(['node', 'cli', 'infra', '-m', 'test', 'docker-compose', '--mode', 'x']).mode,
       ).toBe('test');
       // The other infra subcommands take the mode anywhere, like `exec`.
-      expect(resolveMode(['node', 'cli', 'infra', 'up', '--mode', 'test']).mode).toBe('test');
+      expect(resolveMode(['node', 'cli', 'infra', 'start', '--mode', 'test']).mode).toBe('test');
     });
   });
 

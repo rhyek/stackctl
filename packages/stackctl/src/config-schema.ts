@@ -215,7 +215,7 @@ export const InfraServiceSchema = z.strictObject({
   publicOrigin: PublicOriginSchema.optional(),
   beforeDestroy: infraCallback(),
   afterDestroy: infraCallback(),
-  beforeUp: infraCallback(),
+  beforeStart: infraCallback(),
   afterReady: infraCallback(),
 });
 

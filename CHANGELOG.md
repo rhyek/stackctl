@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0
+
+### Features
+
+- **`stackctl infra restart` recreates infra containers and keeps their data**, as the footer's
+  `r` does.
+
+### Breaking changes
+
+- **`stackctl infra` takes a session's verbs, with services named by `-s`**: `up` is `start`,
+  `down` is `stop` and `up --reset` is `reset`. Change `stackctl infra up db` to
+  `stackctl infra start -s db`, and the same for `destroy`. See
+  [docs/reference/cli.md](docs/reference/cli.md#stackctl-infra).
+- **The infra callback `beforeUp` is `beforeStart`.** Rename it in `stackctl.config.ts`.
+
 ## 0.1.3
 
 - **A stackctl started from a process stackctl started keeps the shell's own value of a

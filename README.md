@@ -70,7 +70,7 @@ Then, with `sctl`, the short alias of `stackctl`:
 pnpm sctl                 # the terminal UI: pick services, run them
 pnpm sctl --headless -s web   # no UI: stream logs to stdout
 pnpm sctl run api seed    # one script, with api's environment
-pnpm sctl infra up        # bring the infra up, then exit
+pnpm sctl infra start     # start the infra, then exit
 ```
 
 ## Documentation

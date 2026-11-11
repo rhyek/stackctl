@@ -180,7 +180,7 @@ describe.skipIf(!dockerAvailable())(
       expect(await networks(project)).toEqual([]);
     });
 
-    test('up --reset for one service gives it a fresh volume and keeps the others running', async () => {
+    test('a reset of one service gives it a fresh volume and keeps the others running', async () => {
       const { provider: infra, project } = provider();
       await infra.up({});
       const dc = (...args: string[]) =>

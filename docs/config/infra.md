@@ -24,7 +24,7 @@ That is a complete config for a project with a `docker-compose.yaml` at its root
 
 ## How it behaves
 
-- **A session brings infra up first.** `stackctl` runs every enabled infra service, waits for
+- **A session starts infra first.** `stackctl` runs every enabled infra service, waits for
   each to be [ready](#readiness), then starts the application services.
 - **Quitting leaves it running**, so the next start takes well under a second.
 - **A failure stops the startup.** Services aren't started against a database that isn't
@@ -48,13 +48,14 @@ The same actions are on the [control API](../reference/control-api.md#post-comma
 `stackctl infra` does the same work without a session. Every command exits when it is done.
 
 ```sh
-stackctl infra up                     # start everything, wait until ready, exit
-stackctl infra up db                  # only db
-stackctl infra up --reset db          # delete db's data, then start it clean
-stackctl infra down                   # stop and remove containers, keep the data
+stackctl infra start                  # start everything, wait until ready, exit
+stackctl infra start -s db            # only db
+stackctl infra restart -s db          # recreate db's container, keep its data
+stackctl infra reset -s db            # delete db's data, then start it clean
+stackctl infra stop                   # stop and remove containers, keep the data
 stackctl infra destroy                # remove containers and their data
 stackctl infra docker-compose ps      # Compose itself, on this project and mode
-stackctl --mode test infra up         # the test mode's own containers
+stackctl --mode test infra start      # the test mode's own containers
 ```
 
 See [`stackctl infra`](../reference/cli.md#stackctl-infra).
@@ -86,7 +87,7 @@ infra: {
 | Option         | Default                | What it is                                                              |
 | -------------- | ---------------------- | ----------------------------------------------------------------------- |
 | `file`         | Compose's own discovery | The compose file, relative to the workspace.                           |
-| `readyTimeout` | `300000` (5 minutes)   | How long `up` waits for the services to be ready, in ms.                |
+| `readyTimeout` | `300000` (5 minutes)   | How long `start` waits for the services to be ready, in ms.                |
 | `services`     | none                   | Per-service options, keyed by Compose service name.                     |
 
 **Every service in the compose file runs**, listed under `services` or not. List one to give
@@ -100,7 +101,7 @@ Per-service options:
 | [`port`](#port-and-urls)      | Its host port, for the reverse proxy and footer links.                   |
 | [`urls`](#port-and-urls)      | Footer links.                                                            |
 | `publicOrigin`                | Overrides parts of its public origin. See [`publicOrigin`](./urls.md#publicorigin). |
-| [`beforeUp`, `afterReady`, `beforeDestroy`, `afterDestroy`](#callbacks) | Your setup and teardown steps. |
+| [`beforeStart`, `afterReady`, `beforeDestroy`, `afterDestroy`](#callbacks) | Your setup and teardown steps. |
 
 ### The compose file
 
@@ -129,7 +130,7 @@ services: {
 }
 ```
 
-A disabled service is left out of `infra up` and of sessions, and its callbacks don't run.
+A disabled service is left out of `infra start` and of sessions, and its callbacks don't run.
 Two things it doesn't do:
 
 - **It doesn't override `depends_on`.** If an enabled service depends on a disabled one,
@@ -165,9 +166,9 @@ Async functions that run around stackctl's own steps:
 
 | Callback        | Runs                                                                                          |
 | --------------- | --------------------------------------------------------------------------------------------- |
-| `beforeUp`      | On every `up`, before the services are started.                                               |
-| `afterReady`    | On every `up`, once the service is ready, **including when it was already running**.          |
-| `beforeDestroy` | Before the service's containers and data are removed (`destroy`, `up --reset`).               |
+| `beforeStart`   | On every start, before the services are started.                                              |
+| `afterReady`    | On every start, once the service is ready, **including when it was already running**.         |
+| `beforeDestroy` | Before the service's containers and data are removed (`destroy`, `reset`).                    |
 | `afterDestroy`  | After they are removed. For state Compose can't see, such as a bind-mounted directory.        |
 
 `afterReady` runs at every session start on purpose: pull a branch with new migrations, start
@@ -185,7 +186,7 @@ db: {
 ```
 
 A callback that throws fails its service. A failing `beforeDestroy` stops the run before
-anything is removed, and a failing `beforeUp` before anything is started.
+anything is removed, and a failing `beforeStart` before anything is started.
 
 ### What a callback receives
 
@@ -195,7 +196,7 @@ anything is removed, and a failing `beforeUp` before anything is started.
 | `compose`      | `compose(args, opts?)`: runs `docker compose <args>` on this project.                       |
 | `log`          | `log(message)`: writes a line to the infra output.                                          |
 | `fresh`        | `afterReady` only. `true` when this run created the service's data.                         |
-| `reset`        | `true` when this run is `infra up --reset`.                                                 |
+| `reset`        | `true` when this run is a reset.                                                            |
 | `mode`         | The active mode.                                                                            |
 | `envs`         | The mode's workspace environment, which `exec` and `compose` give their commands.           |
 | `tokens`       | The config's top-level `tokens`.                                                            |
@@ -221,16 +222,17 @@ anything is removed, and a failing `beforeUp` before anything is started.
 `fresh` is `true` when this run created the service's data: none of its named volumes existed
 before.
 
-| What happened                      | `fresh` |
-| ---------------------------------- | ------- |
-| The service's first start          | `true`  |
-| `infra up` again                   | `false` |
-| `infra down`, then `infra up`      | `false` |
-| `infra destroy`, then `infra up`   | `true`  |
-| `infra up --reset`                 | `true`  |
+| What happened                         | `fresh` |
+| ------------------------------------- | ------- |
+| The service's first start             | `true`  |
+| `infra start` again                   | `false` |
+| `infra stop`, then `infra start`      | `false` |
+| `infra restart`                       | `false` |
+| `infra destroy`, then `infra start`   | `true`  |
+| `infra reset`                         | `true`  |
 
 Nothing is remembered between runs. If `afterReady` fails on the fresh run, before the seed,
-`fresh` is `false` next time: start over with `stackctl infra up --reset <service>`.
+`fresh` is `false` next time: start over with `stackctl infra reset -s <service>`.
 
 ### Driving the session
 
@@ -263,7 +265,7 @@ db: {
 
 stackctl sets the Compose project name to `<workspace directory>-<mode>`: `example-development`,
 `example-test`. Each mode is its own project, with its own containers, volumes and network, so
-`stackctl infra up` and `stackctl --mode test infra up` run side by side on the ports from
+`stackctl infra start` and `stackctl --mode test infra start` run side by side on the ports from
 their own `.env.<mode>` files.
 
 To choose the name yourself, set `COMPOSE_PROJECT_NAME` in a `.env` file.
@@ -286,6 +288,6 @@ container is running" isn't the same as "it accepts connections".
 | no services | The whole project: every container, named and anonymous volume, and network.                |
 | services    | Those services' containers, and the volumes **only they** mount. The network stays.         |
 
-`infra up --reset` works the second way, on the services it is about to start. Images,
+`infra reset` works the second way, on the services it is about to start. Images,
 `external` volumes and bind-mounted host directories are never removed: clean up the last in
 `afterDestroy`.

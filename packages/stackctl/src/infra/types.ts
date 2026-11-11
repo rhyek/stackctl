@@ -14,7 +14,7 @@ import type {
 import type { ControlClient } from '../control-client.js';
 import type { Envs, Mode } from '../env.js';
 
-/** How long `infra up` waits for the services to become ready, when the config doesn't say. */
+/** How long `infra start` waits for the services to become ready, when the config doesn't say. */
 export const DEFAULT_READY_TIMEOUT_MS = 300_000;
 
 /** Options for the `compose` and `exec` helpers an infra callback receives. */
@@ -60,7 +60,7 @@ export interface InfraCallbackContext<T = TokenRecord> {
    * stackctl's own object, not a copy.
    */
   readonly config: Config<string>;
-  /** `true` when this run is `infra up --reset`. Always `false` under `infra destroy`. */
+  /** `true` when this run is `infra reset`. Always `false` under `infra destroy`. */
   reset: boolean;
   /** The workspace root, absolute. */
   workspaceDir: string;
@@ -95,7 +95,7 @@ export interface InfraCallbackContext<T = TokenRecord> {
    * A client for the running dev session of this config in this mode, its methods named after
    * the control API's paths: `query.status()`, `command.service.stop(name)` (and `start`,
    * `restart`), `command.infra.reset(service)` (and `start`, `stop`, `restart`),
-   * `command.quit()`. `undefined` when no such session is running — `infra up` from a terminal
+   * `command.quit()`. `undefined` when no such session is running — `infra start` from a terminal
    * with no session up, say.
    *
    * It is bound when the run's first callback starts. At a session's own start its infra comes
@@ -121,12 +121,12 @@ export interface InfraReadyContext<T = TokenRecord> extends InfraCallbackContext
    * a destroy or a reset. The moment to seed: `if (fresh) await exec('pnpm', ['seed'])`.
    *
    * It goes by the service's named volumes: fresh means none of them existed before this run
-   * started it. So stopping a service and starting it again (`infra down`, then `up`) is not
+   * started it. So stopping a service and starting it again (`infra stop`, then `start`) is not
    * fresh — the container is new, the data isn't. A service with no named volume keeps its data
    * in the container, and is fresh when it had none.
    *
    * It describes this run only. If `afterReady` fails on the run where it is `true`, it is
-   * `false` on the next one; `infra up --reset <service>` gives the service a clean start.
+   * `false` on the next one; `infra reset -s <service>` gives the service a clean start.
    */
   fresh: boolean;
 }
@@ -135,20 +135,20 @@ export interface InfraReadyContext<T = TokenRecord> extends InfraCallbackContext
 export interface InfraServiceCallbacks<T = TokenRecord> {
   /**
    * Before the service's container and volumes are removed — on `infra destroy` and on
-   * `infra up --reset` (`reset` tells them apart). For whatever must let go of the data first,
+   * `infra reset` (`reset` tells them apart). For whatever must let go of the data first,
    * such as a service holding connections to it: `control?.command.service.stop('api')`. A
    * failure stops the run before anything is removed.
    */
   beforeDestroy?: InfraCallback<T>;
   /**
    * After the service's container and volumes are removed — on `infra destroy` and on
-   * `infra up --reset`. For state the provider can't see, such as a bind-mounted directory.
+   * `infra reset`. For state the provider can't see, such as a bind-mounted directory.
    */
   afterDestroy?: InfraCallback<T>;
-  /** On every `infra up`, after any destroy and before the services are started. */
-  beforeUp?: InfraCallback<T>;
+  /** On every `infra start`, after any destroy and before the services are started. */
+  beforeStart?: InfraCallback<T>;
   /**
-   * On every `infra up`, once the service is ready — **including when it was already running**.
+   * On every `infra start`, once the service is ready — **including when it was already running**.
    * For migrations, so it must be idempotent; seed behind its `fresh` flag.
    */
   afterReady?: (ctx: InfraReadyContext<T>) => void | Promise<void>;
@@ -181,7 +181,7 @@ export interface InfraServiceInput<T = TokenRecord> extends InfraServiceCallback
   /**
    * Whether stackctl runs this service (default `true`). A literal, or a callback over the mode
    * and environment — `({ mode }) => mode !== 'test'`, `({ envs }) => Boolean(envs.API_KEY)`.
-   * A disabled service is left out of `infra up` and of a dev session, and its callbacks don't
+   * A disabled service is left out of `infra start` and of a dev session, and its callbacks don't
    * run. (Compose still starts it if an enabled service `depends_on` it.)
    */
   enabled?: boolean | ((ctx: InfraEnabledContext<T>) => boolean);
@@ -252,7 +252,7 @@ export interface DockerComposeInfraInput<T = TokenRecord> {
    * (`compose.yaml`, `docker-compose.yaml`, and any override file).
    */
   file?: string;
-  /** How long `infra up` waits for the services to become ready, in ms. Defaults to 5 minutes. */
+  /** How long `infra start` waits for the services to become ready, in ms. Defaults to 5 minutes. */
   readyTimeout?: number;
   /**
    * Per-service options, keyed by Compose service name. Every service Compose reports for the

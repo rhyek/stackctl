@@ -673,7 +673,7 @@ describe('fresh', () => {
   });
 
   test('a service with a named volume goes by the volume, not the container', async () => {
-    // After `infra down`: the containers are gone and the data is still there.
+    // After `infra stop`: the containers are gone and the data is still there.
     expect(await freshSeen({ volumes: ['example-test_db-data'], containers: [] })).toEqual({
       db: false,
       redis: true,
