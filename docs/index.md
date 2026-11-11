@@ -5,6 +5,9 @@ hero:
   name: stackctl
   text: Run your monorepo's stack in one terminal.
   tagline: A terminal UI and CLI for a monorepo's services, infrastructure, tests and CI during development.
+  image:
+    src: /logo.svg
+    alt: stackctl
   actions:
     - theme: brand
       text: Get started

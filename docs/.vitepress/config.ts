@@ -1,8 +1,23 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vitepress';
 import llmstxt from 'vitepress-plugin-llms';
 
 const repo = 'https://github.com/rhyek/stackctl';
 const site = 'https://stackctl.dev';
+
+/**
+ * A file in docs/public/ by its URL, with a hash of its content as the query (`/logo.svg?v=…`).
+ * VitePress serves public files under their own names, so without it a changed icon would keep
+ * its URL, and browsers and the CDN would keep the old file.
+ */
+function versioned(url: string): string {
+  // The dev server can hand the same frontmatter in again: hash the path, not a hashed URL.
+  const path = url.split('?')[0]!;
+  const file = new URL(`../public${path}`, import.meta.url);
+  const hash = createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 8);
+  return `${path}?v=${hash}`;
+}
 
 export default defineConfig({
   title: 'stackctl',
@@ -13,6 +28,27 @@ export default defineConfig({
   // Contributor internals and working notes live in docs/ too, but aren't part of the site.
   srcExclude: ['architecture/**', 'superpowers/**'],
   sitemap: { hostname: site },
+  // The icon (docs/public/logo.svg) in the browser tab, with a PNG for browsers that don't take
+  // an SVG one, and the square one iOS rounds for a home-screen bookmark.
+  head: [
+    ['link', { rel: 'icon', href: versioned('/logo.svg'), type: 'image/svg+xml' }],
+    [
+      'link',
+      { rel: 'icon', href: versioned('/favicon-32.png'), type: 'image/png', sizes: '32x32' },
+    ],
+    ['link', { rel: 'apple-touch-icon', href: versioned('/apple-touch-icon.png') }],
+  ],
+  // The home page's images, named in its frontmatter by their plain path, get the same hash.
+  transformPageData(page) {
+    const hero = page.frontmatter.hero as { image?: { src: string } } | undefined;
+    const demo = page.frontmatter.demo as { src: string } | undefined;
+    if (hero?.image) {
+      hero.image.src = versioned(hero.image.src);
+    }
+    if (demo) {
+      demo.src = versioned(demo.src);
+    }
+  },
 
   // llms.txt, llms-full.txt and a Markdown copy of every page, generated from the same files.
   // `scripts/package-docs.ts` copies them into the npm package for the agent skill to read.
@@ -20,6 +56,7 @@ export default defineConfig({
   vite: { plugins: [llmstxt({ ignoreFiles: ['.vitepress/**'] })] },
 
   themeConfig: {
+    logo: { src: versioned('/logo.svg'), alt: '' },
     nav: [
       { text: 'Guide', link: '/guide/getting-started', activeMatch: '^/guide/' },
       { text: 'Config', link: '/config/config-file', activeMatch: '^/config/' },
