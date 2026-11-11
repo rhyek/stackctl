@@ -10,6 +10,27 @@
   --vp-c-brand-soft: rgba(22, 163, 74, 0.14);
   --vp-code-color: var(--vp-c-text-1);
   --vp-home-hero-name-color: var(--vp-c-indigo-1);
+  /* The glow behind the home page's icon: its indigo, and the cyan of a service waiting. */
+  --vp-home-hero-image-background-image: linear-gradient(-45deg, #8b93ff 50%, #22d3ee 50%);
+  --vp-home-hero-image-filter: blur(44px);
+}
+
+@media (min-width: 640px) {
+  :root {
+    --vp-home-hero-image-filter: blur(56px);
+  }
+}
+
+@media (min-width: 960px) {
+  :root {
+    --vp-home-hero-image-filter: blur(68px);
+  }
+}
+
+/* The icon is drawn on its own rounded tile; at hero size it gets a soft shadow to sit on. */
+.VPHero .image-src {
+  border-radius: 22%;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
 }
 
 .dark {

@@ -5,9 +5,10 @@ paths:
   - "docs/.vitepress/config.ts"
   - "packages/stackctl/package.json"
   - "packages/stackctl/src/cli.ts"
+  - "docs/public/logo.svg"
 ---
 
-# How stackctl describes itself — one wording, everywhere, in lockstep
+# How stackctl describes itself — one wording and one icon, everywhere, in lockstep
 
 stackctl's name, headline and one-line description appear in several places that people meet
 first: the README, the site's home page, search results, the npm page, `stackctl --help` and
@@ -47,3 +48,23 @@ Where each one lives:
 - **Released `CHANGELOG.md` entries keep the wording they shipped with.** They are history, not
   a copy of the description.
 - **Update this file's table** when the wording changes, so it stays the reference.
+
+## The icon
+
+`docs/public/logo.svg` is the icon: a prompt in front of three log lines, the middle one yellow,
+on a dark rounded tile. Everything else is made from it, so a change to it is a change to all of
+them, in the same change:
+
+| Place                                   | File                               | Wired in                                   |
+| --------------------------------------- | ---------------------------------- | ------------------------------------------ |
+| The browser tab                         | `logo.svg`, and `favicon-32.png`   | `head` in `docs/.vitepress/config.ts`      |
+| An iPhone's home screen                 | `apple-touch-icon.png` (180 px, square: iOS rounds it) | `head`                 |
+| The site's nav bar                      | `logo.svg`                         | `themeConfig.logo`                         |
+| The home page, beside the headline      | `logo.svg`                         | `hero.image` in `docs/index.md`            |
+
+- **The PNGs are renders of the SVG.** Re-render both when it changes, at their sizes, from a
+  browser (headless Chrome with a transparent background; the touch icon from the SVG with the
+  tile's corners squared).
+- **Every URL to them carries a hash of the file** (`versioned()` in the site config), so a
+  changed icon is a new URL and no browser or CDN keeps the old one. Reference a public file
+  through it, never by its bare path.
