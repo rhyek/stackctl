@@ -13,6 +13,7 @@ import type {
 } from '../config.js';
 import type { ControlClient } from '../control-client.js';
 import type { Envs, Mode } from '../env.js';
+import type { InfraAction } from './control.js';
 
 /** How long `infra start` waits for the services to become ready, when the config doesn't say. */
 export const DEFAULT_READY_TIMEOUT_MS = 300_000;
@@ -34,11 +35,33 @@ export interface InfraRunResult {
 }
 
 /**
- * What every infra callback receives. Unlike the config's other callbacks — synchronous, and
- * resolved once while the config loads — these are async and run when an `infra` command (or a
- * dev session's infra step) does.
+ * What started an infra run, as its callbacks get it in `trigger`:
+ *
+ * - `session`: a dev session bringing its infra up as it starts.
+ * - `start`, `restart`, `reset`: that `infra` command — run from a terminal, by a session's keys
+ *   (`s`, `r`, `R`) or through the control API alike.
+ * - `destroy`: `infra destroy`.
+ *
+ * `infra stop` runs no callbacks.
  */
-export interface InfraCallbackContext<T = TokenRecord> {
+export type InfraTrigger = 'session' | Exclude<InfraAction, 'stop'> | 'destroy';
+
+/** The runs that start a service, so the triggers `beforeStart` and `afterReady` see. */
+export type InfraStartTrigger = Exclude<InfraTrigger, 'destroy'>;
+
+/** The runs that destroy a service, so the triggers `beforeDestroy` and `afterDestroy` see. */
+export type InfraDestroyTrigger = Extract<InfraTrigger, 'destroy' | 'reset'>;
+
+/**
+ * What every infra callback receives, whatever the provider and the phase. Unlike the config's
+ * other callbacks — synchronous, and resolved once while the config loads — these are async and
+ * run when an `infra` command (or a dev session's infra step) does.
+ *
+ * `G` is the triggers the callback can see. Each phase has its own context, with its own:
+ * {@link InfraDestroyContext}, {@link InfraStartContext} and {@link InfraReadyContext}. A provider
+ * adds its own tool: see {@link DockerComposeCallbackContext}.
+ */
+export interface InfraCallbackContext<T = TokenRecord, G extends InfraTrigger = InfraTrigger> {
   /**
    * The service this callback belongs to, as its `urls` callbacks saw it: its `name`, its `port`,
    * where the dev reverse proxy serves it (`route`) and its `publicOrigin`.
@@ -60,8 +83,12 @@ export interface InfraCallbackContext<T = TokenRecord> {
    * stackctl's own object, not a copy.
    */
   readonly config: Config<string>;
-  /** `true` when this run is `infra reset`. Always `false` under `infra destroy`. */
-  reset: boolean;
+  /**
+   * What started this run: `session`, `start`, `restart`, `reset` or `destroy` (see
+   * {@link InfraTrigger}), narrowed to the runs this callback is part of. A reset runs both the
+   * destroy callbacks and the start ones, each with `reset`.
+   */
+  trigger: G;
   /** The workspace root, absolute. */
   workspaceDir: string;
   /**
@@ -69,20 +96,13 @@ export interface InfraCallbackContext<T = TokenRecord> {
    * the ambient environment wins over the files, except for the variables `env.override` names —
    * plus whatever the provider adds (`COMPOSE_PROJECT_NAME`). It includes `STACKCTL_MODE`.
    *
-   * It is the whole environment {@link exec} and {@link compose} give their commands. Workspace
+   * It is the whole environment {@link exec} and the provider's tool give their commands. Workspace
    * scope only: a service's own `.env` files, and the `PORT`/`PUBLIC_ORIGIN` stackctl injects
    * into a service's process, aren't in it.
    */
   envs: Envs;
   /** The config's top-level `tokens`, typed from what the config declares. */
   tokens: T;
-  /**
-   * Runs `docker compose <args>` against this project — the compose file and the mode's project
-   * name already applied, and {@link envs} as its environment (an `env` option is merged on top,
-   * but can't change the project). Its output goes to stackctl's infra output, and a non-zero
-   * exit rejects unless `reject: false`.
-   */
-  compose: (args: string[], opts?: InfraRunOptions) => Promise<InfraRunResult>;
   /**
    * Runs any other command with {@link envs} as its environment (an `env` option is merged on
    * top) — so a migration or seed script gets the mode's variables and `STACKCTL_MODE` with
@@ -98,9 +118,10 @@ export interface InfraCallbackContext<T = TokenRecord> {
    * `command.quit()`. `undefined` when no such session is running — `infra start` from a terminal
    * with no session up, say.
    *
-   * It is bound when the run's first callback starts. At a session's own start its infra comes
-   * up before its services, so `services` is still `null` there and the service commands return
-   * `false`. Don't `quit()` from a callback: the session ends the run that is calling it.
+   * It is bound when the run's first callback starts. At a session's own start (`trigger` is
+   * `session`) its infra comes up before its services, so `services` is still `null` there and
+   * the service commands return `false`. Don't `quit()` from a callback: the session ends the run
+   * that is calling it.
    */
   control?: ControlClient;
   /**
@@ -112,10 +133,18 @@ export interface InfraCallbackContext<T = TokenRecord> {
   data: Record<string, unknown>;
 }
 
-export type InfraCallback<T = TokenRecord> = (ctx: InfraCallbackContext<T>) => void | Promise<void>;
+export type InfraCallback<T = TokenRecord, C = InfraCallbackContext<T>> = (
+  ctx: C,
+) => void | Promise<void>;
 
-/** What `afterReady` receives: the common context, plus what is only known once a service is up. */
-export interface InfraReadyContext<T = TokenRecord> extends InfraCallbackContext<T> {
+/** What `beforeDestroy` and `afterDestroy` receive: the common context, on a destroy or a reset. */
+export type InfraDestroyContext<T = TokenRecord> = InfraCallbackContext<T, InfraDestroyTrigger>;
+
+/** What `beforeStart` receives: the common context, on any run that starts the service. */
+export type InfraStartContext<T = TokenRecord> = InfraCallbackContext<T, InfraStartTrigger>;
+
+/** What `afterReady` receives: the start context, plus what is only known once a service is up. */
+export interface InfraReadyContext<T = TokenRecord> extends InfraStartContext<T> {
   /**
    * `true` when **this run created the service's data** — the first time it ever ran, and after
    * a destroy or a reset. The moment to seed: `if (fresh) await exec('pnpm', ['seed'])`.
@@ -131,27 +160,83 @@ export interface InfraReadyContext<T = TokenRecord> extends InfraCallbackContext
   fresh: boolean;
 }
 
-/** The callbacks a service can attach. They run around stackctl's built-in steps, never instead. */
-export interface InfraServiceCallbacks<T = TokenRecord> {
+/**
+ * What a Docker Compose service's callbacks receive: the common context, and `compose`. Each phase
+ * has its own, with its own triggers: {@link DockerComposeDestroyContext},
+ * {@link DockerComposeStartContext} and {@link DockerComposeReadyContext}. This one, with every
+ * trigger, types a function shared by several phases.
+ */
+export interface DockerComposeCallbackContext<
+  T = TokenRecord,
+  G extends InfraTrigger = InfraTrigger,
+> extends InfraCallbackContext<T, G> {
+  /**
+   * Runs `docker compose <args>` against this project — the compose file and the mode's project
+   * name already applied, and {@link envs} as its environment (an `env` option is merged on top,
+   * but can't change the project). Its output goes to stackctl's infra output, and a non-zero
+   * exit rejects unless `reject: false`.
+   */
+  compose: (args: string[], opts?: InfraRunOptions) => Promise<InfraRunResult>;
+}
+
+/** What a Docker Compose service's `beforeDestroy` and `afterDestroy` receive. */
+export type DockerComposeDestroyContext<T = TokenRecord> = DockerComposeCallbackContext<
+  T,
+  InfraDestroyTrigger
+>;
+
+/** What a Docker Compose service's `beforeStart` receives. */
+export type DockerComposeStartContext<T = TokenRecord> = DockerComposeCallbackContext<
+  T,
+  InfraStartTrigger
+>;
+
+/** What a Docker Compose service's `afterReady` receives: the ready context, and `compose`. */
+export interface DockerComposeReadyContext<T = TokenRecord> extends InfraReadyContext<T> {
+  /**
+   * Runs `docker compose <args>` against this project — the compose file and the mode's project
+   * name already applied, and {@link envs} as its environment (an `env` option is merged on top,
+   * but can't change the project). Its output goes to stackctl's infra output, and a non-zero
+   * exit rejects unless `reject: false`.
+   */
+  compose: (args: string[], opts?: InfraRunOptions) => Promise<InfraRunResult>;
+}
+
+/**
+ * The callbacks a service can attach. They run around stackctl's built-in steps, never instead.
+ * `D`, `S` and `R` are the contexts its provider hands the destroy callbacks, `beforeStart` and
+ * `afterReady`: for Docker Compose, {@link DockerComposeDestroyContext},
+ * {@link DockerComposeStartContext} and {@link DockerComposeReadyContext}.
+ */
+export interface InfraServiceCallbacks<
+  T = TokenRecord,
+  D = InfraDestroyContext<T>,
+  S = InfraStartContext<T>,
+  R = InfraReadyContext<T>,
+> {
   /**
    * Before the service's container and volumes are removed — on `infra destroy` and on
-   * `infra reset` (`reset` tells them apart). For whatever must let go of the data first,
+   * `infra reset` (`trigger` tells them apart). For whatever must let go of the data first,
    * such as a service holding connections to it: `control?.command.service.stop('api')`. A
    * failure stops the run before anything is removed.
    */
-  beforeDestroy?: InfraCallback<T>;
+  beforeDestroy?: InfraCallback<T, D>;
   /**
    * After the service's container and volumes are removed — on `infra destroy` and on
    * `infra reset`. For state the provider can't see, such as a bind-mounted directory.
    */
-  afterDestroy?: InfraCallback<T>;
-  /** On every `infra start`, after any destroy and before the services are started. */
-  beforeStart?: InfraCallback<T>;
+  afterDestroy?: InfraCallback<T, D>;
   /**
-   * On every `infra start`, once the service is ready — **including when it was already running**.
-   * For migrations, so it must be idempotent; seed behind its `fresh` flag.
+   * On every run that starts the service — a session's start, `infra start`, `restart` and
+   * `reset` — after any destroy and before the services are started.
    */
-  afterReady?: (ctx: InfraReadyContext<T>) => void | Promise<void>;
+  beforeStart?: InfraCallback<T, S>;
+  /**
+   * On every run that starts the service, once it is ready — **including when it was already
+   * running**. For migrations, so it must be idempotent; seed behind its `fresh` flag, and read
+   * `trigger` to skip work on some runs.
+   */
+  afterReady?: (ctx: R) => void | Promise<void>;
 }
 
 /**
@@ -175,9 +260,16 @@ export interface InfraEnabledContext<T = TokenRecord> {
 
 /**
  * What a service can be given under `services`: its callbacks, whether it runs at all, and the
- * port it answers on. Shared by every provider. `reverseProxy.routes` routes to it by its key.
+ * port it answers on. Shared by every provider, whose contexts its callbacks get (`D`, `S`, `R`):
+ * {@link DockerComposeServiceInput} for Docker Compose. `reverseProxy.routes` routes to it by its
+ * key.
  */
-export interface InfraServiceInput<T = TokenRecord> extends InfraServiceCallbacks<T> {
+export interface InfraServiceInput<
+  T = TokenRecord,
+  D = InfraDestroyContext<T>,
+  S = InfraStartContext<T>,
+  R = InfraReadyContext<T>,
+> extends InfraServiceCallbacks<T, D, S, R> {
   /**
    * Whether stackctl runs this service (default `true`). A literal, or a callback over the mode
    * and environment — `({ mode }) => mode !== 'test'`, `({ envs }) => Boolean(envs.API_KEY)`.
@@ -217,20 +309,46 @@ export interface InfraServiceInput<T = TokenRecord> extends InfraServiceCallback
   publicOrigin?: PublicOriginInput | ((ctx: ConfigContext<T>) => PublicOriginInput);
 }
 
+/** A provider's `services`, keyed by service name. For Docker Compose's, see {@link DockerComposeServicesInput}. */
+export type InfraServicesInput<
+  T = TokenRecord,
+  D = InfraDestroyContext<T>,
+  S = InfraStartContext<T>,
+  R = InfraReadyContext<T>,
+> = Record<string, InfraServiceInput<T, D, S, R>>;
+
+/** One Docker Compose service under `services`: its callbacks get `compose`. */
+export type DockerComposeServiceInput<T = TokenRecord> = InfraServiceInput<
+  T,
+  DockerComposeDestroyContext<T>,
+  DockerComposeStartContext<T>,
+  DockerComposeReadyContext<T>
+>;
+
 /**
- * A provider's `services`, written apart from `defineConfig` — in a file of its own, say — and
- * checked where it's written: `export const infraServices = { db, cache: {} } satisfies
- * InfraServicesInput`. `T` is the config's `tokens`, for the callbacks' `tokens`: pass
+ * Docker Compose's `services`, written apart from `defineConfig` — in a file of its own, say —
+ * and checked where it's written: `export const infraServices = { db, cache: {} } satisfies
+ * DockerComposeServicesInput`. `T` is the config's `tokens`, for the callbacks' `tokens`: pass
  * `typeof tokens` when the config's are declared as a `const`.
  *
  * Use `satisfies`, not an annotation: an annotation gives the variable this whole type, whose keys
  * are any `string`, so `reverseProxy.routes` could name any infra service, a misspelled one
  * included.
  */
-export type InfraServicesInput<T = TokenRecord> = Record<string, InfraServiceInput<T>>;
+export type DockerComposeServicesInput<T = TokenRecord> = Record<
+  string,
+  DockerComposeServiceInput<T>
+>;
 
-/** A service's config, resolved: `enabled` decided, `port` and `urls` settled, the callbacks as written. */
-export interface ResolvedInfraService extends InfraServiceCallbacks {
+/**
+ * A service's config, resolved: `enabled` decided, `port` and `urls` settled, the callbacks as
+ * written, taking its provider's contexts (`D`, `S`, `R`).
+ */
+export interface ResolvedInfraService<
+  D = InfraDestroyContext,
+  S = InfraStartContext,
+  R = InfraReadyContext,
+> extends InfraServiceCallbacks<TokenRecord, D, S, R> {
   enabled: boolean;
   /** The service's port on `localhost`, with any callback resolved; never set for a disabled service. */
   port?: number;
@@ -258,7 +376,7 @@ export interface DockerComposeInfraInput<T = TokenRecord> {
    * Per-service options, keyed by Compose service name. Every service Compose reports for the
    * file runs, listed here or not — unless its `enabled` says otherwise.
    */
-  services?: Record<string, InfraServiceInput<T>>;
+  services?: Record<string, DockerComposeServiceInput<T>>;
 }
 
 /** The top-level `infra` option: keyed by provider, and it must name at least one. */
@@ -277,7 +395,14 @@ export interface ResolvedDockerComposeInfra<I extends string = string> {
    * The services the config names, with `enabled`, `port` and `urls` resolved and the callbacks
    * as written. Functions have no JSON form, so serializing one leaves the rest.
    */
-  services: Record<I, ResolvedInfraService>;
+  services: Record<
+    I,
+    ResolvedInfraService<
+      DockerComposeDestroyContext,
+      DockerComposeStartContext,
+      DockerComposeReadyContext
+    >
+  >;
 }
 
 /**

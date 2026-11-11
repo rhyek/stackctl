@@ -8,10 +8,12 @@ import {
 } from '../exec.js';
 import { InfraProvider, type Emit, type ProviderRuntime } from '../provider.js';
 import {
+  type DockerComposeCallbackContext,
   InfraError,
   type InfraServiceState,
   type Readiness,
   type ResolvedDockerComposeInfra,
+  type ResolvedInfraService,
 } from '../types.js';
 
 /** The fields of a `docker compose ps --format json` row that readiness is read from. */
@@ -204,11 +206,23 @@ export class DockerComposeProvider extends InfraProvider {
     private readonly resolved: ResolvedDockerComposeInfra,
     runtime: ProviderRuntime,
   ) {
-    super(runtime, resolved.services, resolved.readyTimeout);
+    // The base class calls each callback with its own context plus what `toolContext` adds,
+    // `compose`: the Docker Compose context these callbacks are typed for.
+    super(
+      runtime,
+      resolved.services as Record<string, ResolvedInfraService>,
+      resolved.readyTimeout,
+    );
   }
 
   protected override toolLabel(): string {
     return 'docker compose';
+  }
+
+  protected toolContext(
+    run: DockerComposeCallbackContext['compose'],
+  ): Pick<DockerComposeCallbackContext, 'compose'> {
+    return { compose: run };
   }
 
   /**

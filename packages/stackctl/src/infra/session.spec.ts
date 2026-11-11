@@ -71,6 +71,34 @@ describe('runSessionInfra', () => {
     expect(seen).toContain('targets');
   });
 
+  test("its callbacks see the session's start as their trigger", async () => {
+    defineConfig({
+      workspaceDir: ws,
+      serviceRootDir: 'packages',
+      infra: {
+        'docker-compose': {
+          services: {
+            db: {
+              beforeStart: ({ trigger, log }) => log(`beforeStart: ${trigger}`),
+              afterReady: ({ trigger, log }) => log(`afterReady: ${trigger}`),
+            },
+          },
+        },
+      },
+      services: { web: {} },
+    });
+    const printed: string[] = [];
+    await runSessionInfra(
+      (e) => {
+        if (e.type === 'output') {
+          printed.push(e.line);
+        }
+      },
+      { exec: docker({ State: 'running' }) },
+    );
+    expect(printed).toEqual(['beforeStart: session', 'afterReady: session']);
+  });
+
   test("carries a service's resolved urls, for the footer", async () => {
     defineConfig({
       workspaceDir: ws,

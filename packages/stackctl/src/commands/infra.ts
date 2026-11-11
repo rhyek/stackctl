@@ -69,7 +69,7 @@ export async function runInfraCommand(
     reporter.finish(summary, 'destroy');
     return summary.ok ? 0 : 1;
   }
-  const summary = await manager.up({ ...run, reset: command === 'reset' });
+  const summary = await manager.up({ ...run, trigger: command });
   reporter.finish(summary, 'up');
   return summary.ok ? 0 : 1;
 }

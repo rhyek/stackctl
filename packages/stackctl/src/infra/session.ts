@@ -34,11 +34,11 @@ export class InfraFailedError extends Error {
 }
 
 /**
- * The infra step of a dev session: bring every service up — no reset — and wait, exactly as
- * `stackctl infra start` does, before any package starts. What it prints goes out through
- * `onEvent`. Resolves with what the run phase needs (the services for the footer, with their
- * public origins, a live watch of their states and their memory), or `undefined` when the config
- * declares no `infra`. Throws {@link InfraFailedError} when a service doesn't make it: the
+ * The infra step of a dev session: bring every service up — no reset — and wait, as
+ * `stackctl infra start` does, before any package starts. Its callbacks get `session` as their
+ * `trigger`. What it prints goes out through `onEvent`. Resolves with what the run phase needs
+ * (the services for the footer, with their public origins, a live watch of their states and
+ * their memory), or `undefined` when the config declares no `infra`. Throws {@link InfraFailedError} when a service doesn't make it: the
  * packages must not start against infrastructure that isn't there.
  *
  * Nothing here stops the services again — quitting a session leaves them running.
@@ -56,6 +56,7 @@ export async function runSessionInfra(
   // Everything printed on the way up, where a failure's report takes its output from.
   const log: InfraLogLine[] = [];
   const summary = await manager.up({
+    trigger: 'session',
     onEvent: (event) => {
       if (event.type === 'targets') {
         const declared = infraServicesOf(config);

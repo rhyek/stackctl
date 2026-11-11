@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0
+
+### Features
+
+- **Infra callbacks get `trigger`, the run that called them**: a session's start, `start`,
+  `restart`, `reset` or `destroy`. See
+  [docs/config/infra.md](docs/config/infra.md#what-started-the-run).
+
+### Breaking changes
+
+- **The infra callbacks' `reset` is gone**: test `trigger === 'reset'` instead.
+- **Only Docker Compose's callback types have `compose`**: type a callback with
+  `DockerComposeDestroyContext`, `DockerComposeStartContext` or `DockerComposeReadyContext` in
+  place of `InfraCallbackContext` or `InfraReadyContext`, and a services map with
+  `DockerComposeServiceInput` and `DockerComposeServicesInput` in place of `InfraServiceInput`
+  and `InfraServicesInput`.
+
 ## 0.2.0
 
 ### Features

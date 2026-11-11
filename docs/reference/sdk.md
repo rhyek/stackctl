@@ -186,8 +186,10 @@ logging.nodejs.winston.formatter(config?);
 
 The types used by the config are exported for
 [splitting it across files](../config/config-file.md#splitting-the-config-across-files):
-`ServiceInput`, `InfraServiceInput`, `InfraServicesInput`, `ReverseProxyRoute`,
-`ReverseProxyInput` and `DockerComposeInfraInput`. With
+`ServiceInput`, `DockerComposeServiceInput`, `DockerComposeServicesInput`,
+`DockerComposeDestroyContext`, `DockerComposeStartContext`, `DockerComposeReadyContext`,
+`DockerComposeCallbackContext`, `ReverseProxyRoute`, `ReverseProxyInput` and
+`DockerComposeInfraInput`. With
 [typed service names](../config/config-file.md#typed-service-names), `ServiceName`,
 `InfraServiceName` and `ServiceConfig` are your own. `ControlClient` and `SessionStatus`
 describe the [control API client](./control-api.md#the-client).
