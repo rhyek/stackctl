@@ -158,7 +158,7 @@ test('--kill-others takes over: the running session quits with exit 0, the new o
 
   const b = await CliProcess.start(['--headless', '-s', 'api', '--kill-others'], { cwd: ws() });
   expect(await a.waitForExit()).toEqual({ code: 0, signal: null });
-  expect(a.stdout).toMatch(/\[dt:control\] \[INFO\] quit/);
+  expect(a.stdout).toMatch(/\[control \] \[INFO\] quit/);
   await b.waitForOutput(/\[api\s*\] api listening on 21081/);
   expect(b.stdout).toContain('closing previous session');
   expect(sessionRecord(ws())?.pid).toBe(b.owned.pid);

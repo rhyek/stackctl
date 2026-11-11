@@ -1,9 +1,10 @@
 import fs from 'node:fs';
+import stringWidth from 'string-width';
 import { stripAnsi } from '../format.js';
 import { normalize } from '../tui/text-cells.js';
 import { callEach } from '../util.js';
 import { expandTabs } from '../wrap-rows.js';
-import { countRows, wrapLineRows } from './log-layout.js';
+import { countRows, labelGutter, wrapLineRows } from './log-layout.js';
 import type { LogFilter, LogLine, TimestampMode, WrappedRow } from './types.js';
 
 /** What the log viewport reads: the visible lines, their layout, and a change signal. */
@@ -104,6 +105,8 @@ export class LogStore implements LogSource {
   /** Per filter key, the entry its next continuation joins. */
   private readonly entries = new Map<string, Entry>();
   private version = 0;
+  /** The width every label is padded to: see {@link labelWidth}. */
+  private width = 0;
   private notifying = false;
   private readonly listeners = new Set<() => void>();
 
@@ -132,7 +135,9 @@ export class LogStore implements LogSource {
       filterKey: input.filterKey,
       continues,
     };
-    this.write(`${line.ts} ${stripAnsi(line.label)} ${stripAnsi(input.text)}\n`);
+    this.write(
+      `${line.ts} ${labelGutter({ name: line.label.name }, this.width)} ${stripAnsi(input.text)}\n`,
+    );
 
     let entry = open;
     if (!continues || !entry) {
@@ -209,11 +214,35 @@ export class LogStore implements LogSource {
   }
 
   countRows(line: LogLine, cols: number, mode: TimestampMode): number {
-    return countRows(line, cols, mode);
+    return countRows(line, cols, mode, this.width);
   }
 
   wrapLineRows(line: LogLine, cols: number, mode: TimestampMode): WrappedRow[] {
-    return wrapLineRows(line, cols, mode);
+    return wrapLineRows(line, cols, mode, this.width);
+  }
+
+  /**
+   * The width every line's label is padded to when it is drawn: the longest name among
+   * stackctl's own labels, the session's services and its infra services so far. A label
+   * appended without being counted is never cut, and overflows.
+   */
+  get labelWidth(): number {
+    return this.width;
+  }
+
+  /**
+   * Counts `names` (as their labels read: `stackctl`, `api`, `infra:db`) in
+   * {@link labelWidth}. A wider one re-pads every line, drawn or not; the logfile pads from then on.
+   */
+  addLabels(names: Iterable<string>): void {
+    let width = this.width;
+    for (const name of names) {
+      width = Math.max(width, stringWidth(name));
+    }
+    if (width !== this.width) {
+      this.width = width;
+      this.bump();
+    }
   }
 
   private write(text: string): void {

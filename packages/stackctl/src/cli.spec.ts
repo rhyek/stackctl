@@ -958,7 +958,7 @@ describe('sessions', () => {
     ])(
       '%s starts a headless session of web',
       async (_, args) => {
-        const { child } = await startSession(args, '[web] started');
+        const { child } = await startSession(args, '[web     ] started');
         expect(JSON.parse(fs.readFileSync(recordOf('development'), 'utf8'))).toMatchObject({ pid: child.pid }); // oxfmt-ignore
         await endSession(child);
       },
@@ -972,7 +972,7 @@ describe('sessions', () => {
     ])(
       '--mode %s runs the session in that mode',
       async (_, args) => {
-        const { child } = await startSession(args, '[web] started');
+        const { child } = await startSession(args, '[web     ] started');
         expect(records()).toEqual(['test/running.json']);
         expect(JSON.parse(fs.readFileSync(recordOf('test'), 'utf8'))).toMatchObject({ pid: child.pid }); // oxfmt-ignore
         await endSession(child);
@@ -1025,14 +1025,14 @@ describe('sessions', () => {
 
     test('a session of -s web leaves it as it was', async () => {
       const mtime = saveWorker();
-      await runSession(['--headless', '-s', 'web'], '[web] started');
+      await runSession(['--headless', '-s', 'web'], '[web     ] started');
       expect(JSON.parse(fs.readFileSync(selectionFile(), 'utf8'))).toEqual(['worker']);
       expect(fs.statSync(selectionFile()).mtimeMs).toBe(mtime);
     }, 30_000);
 
     test('a session of --last-answers runs it, and leaves it as it was', async () => {
       const mtime = saveWorker();
-      await runSession(['--headless', '--last-answers'], '[worker] started');
+      await runSession(['--headless', '--last-answers'], '[worker  ] started');
       expect(JSON.parse(fs.readFileSync(selectionFile(), 'utf8'))).toEqual(['worker']);
       expect(fs.statSync(selectionFile()).mtimeMs).toBe(mtime);
     }, 30_000);
@@ -1683,17 +1683,18 @@ describe('what a command loads', () => {
 
   test('a --headless session loads no TUI, no prompt library and no TypeScript', async () => {
     const { output, packages } = await tracedPlainSession(['app']);
-    expect(output).toMatch(/\[app\] started/);
+    expect(output).toMatch(/\[app {5}\] started/);
     expectNotLoaded(packages, ['ink', 'react', '@clack/prompts', 'typescript']);
   }, 30_000);
 
   test('a --headless session still wraps a long line to the terminal width, gutter on every row', async () => {
     const { output, packages } = await tracedPlainSession(['wide'], 'done');
-    const rows = output.split('\n').filter((line) => /\[wide\] x+$/.test(line));
-    // Piped, the terminal is taken as 120 columns: a 20-column timestamp, `[wide] `, the text.
-    expect(rows.map((row) => row.length)).toEqual([120, 84]);
-    expect(rows.map((row) => /x+$/.exec(row)![0].length)).toEqual([93, 57]);
-    expect(output).toMatch(/\[wide\] glyphs \u2713 \u4e2d\u6587 done/);
+    const rows = output.split('\n').filter((line) => /\[wide {4}\] x+$/.test(line));
+    // Piped, the terminal is taken as 120 columns: a 20-column timestamp, `[wide    ] ` (padded
+    // to `stackctl`), the text.
+    expect(rows.map((row) => row.length)).toEqual([120, 92]);
+    expect(rows.map((row) => /x+$/.exec(row)![0].length)).toEqual([89, 61]);
+    expect(output).toMatch(/\[wide {4}\] glyphs \u2713 \u4e2d\u6587 done/);
     expect(packages.has('string-width')).toBe(true);
   }, 30_000);
 

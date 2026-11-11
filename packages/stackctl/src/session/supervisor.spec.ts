@@ -9,6 +9,7 @@ import { STACKCTL_LABEL_COLOR, PACKAGE_PALETTE } from '../colors.js';
 import { type AnyServiceConfig, defineConfig } from '../config.js';
 import type { EnvWatch, WatchTarget } from '../env-watch.js';
 import { stripAnsi } from '../format.js';
+import { labelGutter } from './log-layout.js';
 import { LogStore } from './log-store.js';
 import { buildSessionPlan } from './plan.js';
 import { type Clock, Readiness } from './readiness.js';
@@ -321,7 +322,10 @@ function setup(opts: {
     proc: (name: string) => of(name).at(-1)!,
     state: (name: string): ServiceState | undefined => supervisor.states().get(name)?.state,
     /** Every buffered line as `label text`, colors stripped and the label's padding kept. */
-    lines: () => logs.getVisibleLines().map((l) => `${stripAnsi(l.label)} ${stripAnsi(l.text)}`),
+    lines: () =>
+      logs
+        .getVisibleLines()
+        .map((l) => `${labelGutter(l.label, logs.labelWidth)} ${stripAnsi(l.text)}`),
     /** A service's own lines, text only, colors stripped. */
     said: (name: string) =>
       logs
@@ -345,7 +349,8 @@ async function withColors<T>(fn: () => Promise<T> | T): Promise<T> {
   }
 }
 
-const label = (line: LogLine) => line.label;
+/** A line's label as it is drawn: padded to the store's width now, painted. */
+const drawn = (logs: LogStore, line: LogLine) => labelGutter(line.label, logs.labelWidth);
 
 describe('publicStatus', () => {
   test('held services wait, spawning reads running, a crash reads stopped', () => {
@@ -815,17 +820,19 @@ describe('shutdown', () => {
 });
 
 describe('labels and colors', () => {
-  test('a service label is padded to the longest name and colored by its position', async () => {
+  test("a service label is padded to the longest label, stackctl's included, and colored by its position", async () => {
     await withColors(async () => {
       const t = setup({ services: { api: {}, 'web-app': {}, worker: {} } });
       t.supervisor.launchAll();
       await until(() => expect(t.procs).toHaveLength(3));
-      const labels = new Map(t.logs.getVisibleLines().map((l) => [l.service, label(l)] as const));
+      const labels = new Map(
+        t.logs.getVisibleLines().map((l) => [l.service, drawn(t.logs, l)] as const),
+      );
       const order = t.plan.sortedPackages.map((p) => p.name);
       for (const name of ['api', 'web-app', 'worker']) {
         const index = order.indexOf(name);
         expect(labels.get(name)).toBe(
-          chalk.hex(PACKAGE_PALETTE[index]!)(`[${name.padEnd('web-app'.length)}]`),
+          chalk.hex(PACKAGE_PALETTE[index]!)(`[${name.padEnd('stackctl'.length)}]`),
         );
       }
     });
@@ -839,7 +846,7 @@ describe('labels and colors', () => {
       await until(() => expect(t.procs).toHaveLength(names.length));
       const last = t.plan.sortedPackages.at(-1)!.name;
       const line = t.logs.getVisibleLines().find((l) => l.service === last)!;
-      expect(line.label).toBe(chalk.hex(PACKAGE_PALETTE[0]!)(`[${last}]`));
+      expect(drawn(t.logs, line)).toBe(chalk.hex(PACKAGE_PALETTE[0]!)(`[${last.padEnd(8)}]`));
     });
   });
 
@@ -864,44 +871,53 @@ describe('labels and colors', () => {
       t.supervisor.launchAll();
       await until(() => expect(t.procs).toHaveLength(11));
       const labelOf = (name: string) =>
-        t.logs.getVisibleLines().find((l) => l.service === name)!.label;
-      expect(labelOf('a')).toBe(chalk.hex('#af87ff')('[a]'));
-      expect(labelOf('b')).toBe(chalk.hex('#af87ff')('[b]'));
-      expect(labelOf('c')).toBe(chalk.hex('#aabbcc')('[c]'));
-      expect(labelOf('d')).toBe(chalk.rgb(175, 135, 255)('[d]'));
-      expect(labelOf('e')).toBe(chalk.ansi256(140)('[e]'));
-      expect(labelOf('f')).toBe(chalk.magentaBright('[f]'));
-      expect(labelOf('g')).toBe(chalk.grey('[g]'));
+        drawn(
+          t.logs,
+          t.logs.getVisibleLines().find((l) => l.service === name)!,
+        );
+      expect(labelOf('a')).toBe(chalk.hex('#af87ff')('[a       ]'));
+      expect(labelOf('b')).toBe(chalk.hex('#af87ff')('[b       ]'));
+      expect(labelOf('c')).toBe(chalk.hex('#aabbcc')('[c       ]'));
+      expect(labelOf('d')).toBe(chalk.rgb(175, 135, 255)('[d       ]'));
+      expect(labelOf('e')).toBe(chalk.ansi256(140)('[e       ]'));
+      expect(labelOf('f')).toBe(chalk.magentaBright('[f       ]'));
+      expect(labelOf('g')).toBe(chalk.grey('[g       ]'));
       for (const name of ['h', 'i', 'j', 'k']) {
-        expect(labelOf(name)).toBe(`[${name}]`);
+        expect(labelOf(name)).toBe(`[${name.padEnd(8)}]`);
       }
     });
   });
 
-  test("an added service takes its position's color; a longer name isn't padded, nor are the others re-padded", async () => {
+  test("an added service takes its position's color, and a longer name re-pads every line", async () => {
     await withColors(async () => {
       const t = setup({ services: { api: {}, 'billing-worker': {} }, selected: ['api'] });
       t.supervisor.launchAll();
+      await until(() => expect(t.logs.getVisibleLines().some((l) => l.service === 'api')).toBe(true)); // oxfmt-ignore
+      const first = t.logs.getVisibleLines().find((l) => l.service === 'api')!;
+      expect(drawn(t.logs, first)).toBe(chalk.hex(PACKAGE_PALETTE[0]!)('[api     ]'));
       await t.supervisor.add('billing-worker');
       const labelOf = (name: string) =>
-        t.logs.getVisibleLines().findLast((l) => l.service === name)!.label;
+        drawn(
+          t.logs,
+          t.logs.getVisibleLines().findLast((l) => l.service === name)!,
+        );
       expect(labelOf('billing-worker')).toBe(chalk.hex(PACKAGE_PALETTE[1]!)('[billing-worker]'));
-      expect(labelOf('api')).toBe(chalk.hex(PACKAGE_PALETTE[0]!)('[api]'));
-      expect(t.supervisor.labelWidth).toBe(3);
+      expect(labelOf('api')).toBe(chalk.hex(PACKAGE_PALETTE[0]!)('[api           ]'));
+      expect(drawn(t.logs, first)).toBe(labelOf('api'));
     });
   });
 
-  test("stackctl's labels are gold, padded to the longest service name and never cut", async () => {
+  test("stackctl's labels are gold, and count in the width like the services'", async () => {
     await withColors(() => {
       const gold = chalk.hex(STACKCTL_LABEL_COLOR);
       const wide = setup({ services: { 'payments-worker': {} } });
       wide.supervisor.log.system.warn('shutting down...');
       wide.supervisor.log.control.info({ service: 'payments-worker' }, 'restart');
       const lines = wide.logs.getVisibleLines();
-      expect(lines.map(label)).toEqual([
+      expect(lines.map((l) => drawn(wide.logs, l))).toEqual([
         gold('[stackctl       ]'),
-        gold('[dt:control     ]'),
-        gold('[dt:control     ]'),
+        gold('[control        ]'),
+        gold('[control        ]'),
       ]);
       expect(lines.map((l) => stripAnsi(l.text))).toEqual([
         '[WARN] shutting down...',
@@ -911,9 +927,9 @@ describe('labels and colors', () => {
       const narrow = setup({ services: { api: {} } });
       narrow.supervisor.log.system.info('hello');
       narrow.supervisor.log.control.info('quit');
-      expect(narrow.logs.getVisibleLines().map(label)).toEqual([
+      expect(narrow.logs.getVisibleLines().map((l) => drawn(narrow.logs, l))).toEqual([
         gold('[stackctl]'),
-        gold('[dt:control]'),
+        gold('[control ]'),
       ]);
     });
   });
@@ -928,10 +944,10 @@ describe('labels and colors', () => {
     expect(lines.map((l) => [l.filterKey, l.service, l.showTs, l.continues])).toEqual([
       ['api', 'api', false, false],
       ['api', 'api', false, true],
-      ['dt:control', null, true, false],
-      ['dt:control', null, true, true],
-      ['dt:control', null, true, false],
-      ['dt:control', null, true, true],
+      ['control', null, true, false],
+      ['control', null, true, true],
+      ['control', null, true, false],
+      ['control', null, true, true],
       ['system', null, true, false],
     ]);
     expect(lines.map((l) => l.isError)).toEqual([false, false, false, false, false, false, true]);

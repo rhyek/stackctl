@@ -387,7 +387,7 @@ function samplePicker(count: number): PickerInput {
 
 type LogLine = {
   /** Index into {@link SERVICES}, or one of stackctl's own two channels. */
-  source: number | 'stackctl' | 'dt:control';
+  source: number | 'stackctl' | 'control';
   ts: string;
   /** The line after its prefix, already styled the way the run screen would style it. */
   text: string;
@@ -477,7 +477,7 @@ function mockLog(count: number): LogLine[] {
     if (roll < 0.04) {
       emit('stackctl', [`${SERVICES[pick(sources)]!.name} is ready`]);
     } else if (roll < 0.07) {
-      emit('dt:control', [`restart ${SERVICES[pick(sources)]!.name}`]);
+      emit('control', [`restart ${SERVICES[pick(sources)]!.name}`]);
     } else {
       emit(pick(sources), pick(SERVICE_BURSTS));
     }

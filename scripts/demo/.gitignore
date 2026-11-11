@@ -1,3 +1,4 @@
-# Raw VHS render before downscale/crop (see record.sh)
+# What record.sh renders from, before the GIF it keeps
+demo.cast
 demo.raw.gif
 .frames/

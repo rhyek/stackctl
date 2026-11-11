@@ -20,7 +20,7 @@ hero:
       link: https://github.com/rhyek/stackctl
 
 demo:
-  src: /demo-1794347779.gif
+  src: /casts/demo-1794363459.cast
   alt: stackctl's terminal UI running the example monorepo
 
 config:

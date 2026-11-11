@@ -200,7 +200,8 @@ async function startSession(mode: string, service: string, extra: string[] = [])
   void child.then(() => ended.add(child));
   let output = '';
   child.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()));
-  const until = `[${service}] started`;
+  // Labels are padded to the longest in the session: `stackctl`, in these fixtures.
+  const until = `[${service.padEnd('stackctl'.length)}] started`;
   await new Promise<void>((resolve, reject) => {
     const giveUp = setTimeout(
       () => reject(new Error(`never printed ${until}:\n${output}`)),

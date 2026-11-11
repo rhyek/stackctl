@@ -62,8 +62,8 @@ It works on a session **you** started too. An agent can restart the API in the t
 you have open, and you see it happen in your log:
 
 ```
-16:41:22 [dt:control]  [INFO] restart
-16:41:22 [dt:control]    service: api
+16:41:22 [control ] [INFO] restart
+16:41:22 [control ]   service: api
 ```
 
 Without a session, [`stackctl show-config`](../reference/cli.md#stackctl-show-config) prints

@@ -230,7 +230,6 @@ export class Session implements ControlManager, DevReverseProxyManager {
     string,
     { provider: string; state: SessionInfraState; detail?: string }
   >();
-  private infraWidth: number;
   private branch: GitBranchWatch | null = null;
   /** The branch read before any watch begins (the first frame), or for a session without one. */
   private branchBeforeStart: string | null | undefined;
@@ -282,11 +281,13 @@ export class Session implements ControlManager, DevReverseProxyManager {
       createProcess: this.seams.createProcess,
     });
     this.supervisor.on('change', () => this.changed());
-    this.infraWidth = Math.max(
-      this.supervisor.labelWidth,
-      'infra'.length,
-      ...infraServicesOf(getLoadedConfig()).map((s) => `infra:${s.name}`.length),
-    );
+    // Infra's labels count in the width from the start, so a service's text and an infra
+    // service's start in one column; a service the provider reports beyond the config's joins
+    // them once infra names its targets.
+    const config = getLoadedConfig();
+    if (config?.infra) {
+      this.logs.addLabels(['infra', ...infraServicesOf(config).map((s) => `infra:${s.name}`)]);
+    }
   }
 
   /** stackctl's own channel, `[stackctl]` in the log. The proxy prints its route table through it. */
@@ -671,10 +672,7 @@ export class Session implements ControlManager, DevReverseProxyManager {
       return;
     }
     if (event.type === 'targets') {
-      this.infraWidth = Math.max(
-        this.infraWidth,
-        ...event.services.map((name) => `infra:${name}`.length),
-      );
+      this.logs.addLabels(event.services.map((name) => `infra:${name}`));
       for (const name of event.services) {
         this.infraStartup.set(name, { provider: event.provider, state: 'pending' });
       }
@@ -716,7 +714,7 @@ export class Session implements ControlManager, DevReverseProxyManager {
       at: Date.now(),
       ts: logTimestamp(),
       showTs: this.plan.logTimestamps ?? true,
-      label: gold(`[${name.padEnd(this.infraWidth)}]`),
+      label: { name, paint: gold },
       filterKey: 'infra',
     });
   }

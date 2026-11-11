@@ -40,7 +40,7 @@ import {
   type ServiceProcessEvents,
   type ServiceProcessOptions,
 } from './service-process.js';
-import type { SessionPlan } from './types.js';
+import type { LogLabel, SessionPlan } from './types.js';
 
 /** Where a service is in its life, as the session sees it. */
 export type ServiceState =
@@ -178,11 +178,6 @@ function paintFor(color: string | undefined, index: number): Paint {
   return unpainted;
 }
 
-/** `[text]`, the text padded with spaces to `width` (never cut), painted whole. */
-function label(text: string, width: number, paint: Paint): string {
-  return paint(`[${text.padEnd(width)}]`);
-}
-
 /**
  * A command line `/bin/sh -c` runs as `spec` would spawn: a script's own text as it is, anything
  * else (a make target, the shell that reports a missing script) as its words, each quoted.
@@ -200,8 +195,8 @@ function shellQuote(word: string): string {
 
 interface Service {
   readonly config: AnyServiceConfig;
-  /** The gutter label, padded and painted when the service joined. */
-  readonly label: string;
+  /** The gutter label, painted by the service's position when it joined. */
+  readonly label: LogLabel;
   /** The filter key: the name, lowercased. */
   readonly key: string;
   /** Whether its lines show their timestamp on screen. */
@@ -239,13 +234,11 @@ interface Service {
 export class Supervisor extends EventEmitter<SupervisorEvents> {
   /**
    * stackctl's own records: `system` lines go under `[stackctl]`, `control` lines under
-   * `[dt:control]`, filed under the service a `service` attribute names when it is in the session.
+   * `[control]`, filed under the service a `service` attribute names when it is in the session.
    */
   readonly log: InternalLoggers;
   /** The session's child records, which every process it spawns is added to. */
   readonly records: ChildRecords;
-  /** The width every label is padded to: the longest service name the session started with. */
-  readonly labelWidth: number;
 
   private readonly plan: SessionPlan;
   private readonly logs: LogStore;
@@ -258,8 +251,8 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   private readonly services = new Map<string, Service>();
   /** Every process still running, dev and one-off alike, by the service it belongs to. */
   private readonly live = new Map<SupervisedProcess, string>();
-  private readonly stackctlLabel: string;
-  private readonly controlLabel: string;
+  private readonly stackctlLabel: LogLabel;
+  private readonly controlLabel: LogLabel;
   private readonly firstRead: Promise<void>;
   private envRead = false;
   private warnTimer: unknown;
@@ -288,10 +281,10 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     this.root = this.plan.cwd ?? process.cwd();
     this.envFiles = this.plan.envFiles ?? envFileOrder();
     this.records = new ChildRecords(this.root);
-    this.labelWidth = Math.max(0, ...this.plan.sortedPackages.map((p) => p.name.length));
     const gold = chalk.hex(STACKCTL_LABEL_COLOR);
-    this.stackctlLabel = label('stackctl', this.labelWidth, gold);
-    this.controlLabel = label('dt:control', this.labelWidth, gold);
+    this.stackctlLabel = { name: 'stackctl', paint: gold };
+    this.controlLabel = { name: 'control', paint: gold };
+    this.logs.addLabels([this.stackctlLabel.name, this.controlLabel.name]);
     this.log = createInternalLogger((line) => this.internal(line));
 
     this.plan.sortedPackages.forEach((config, index) => this.join(config, index));
@@ -536,11 +529,15 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     return groups;
   }
 
-  /** A service joins: its label by its position now, `pending`, and tracked for readiness. */
+  /**
+   * A service joins: its label by its position now, counted in the log's label width, `pending`,
+   * and tracked for readiness.
+   */
   private join(config: AnyServiceConfig, index: number): Service {
+    this.logs.addLabels([config.name]);
     const svc: Service = {
       config,
-      label: label(config.name, this.labelWidth, paintFor(config.color, index)),
+      label: { name: config.name, paint: paintFor(config.color, index) },
       key: config.name.toLowerCase(),
       showTs: config.logs?.timestamps ?? this.plan.logTimestamps ?? true,
       state: 'pending',
@@ -976,7 +973,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
         ts: logTimestamp(),
         showTs: scoped ? scoped.showTs : (this.plan.logTimestamps ?? true),
         label: control ? this.controlLabel : this.stackctlLabel,
-        filterKey: scoped ? scoped.key : control ? 'dt:control' : 'system',
+        filterKey: scoped ? scoped.key : control ? 'control' : 'system',
         continues: i > 0,
       });
     });

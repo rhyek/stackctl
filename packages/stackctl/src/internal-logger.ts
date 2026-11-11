@@ -8,7 +8,7 @@ import { logging } from './log-formatter.js';
 export interface InternalLoggers {
   /** stackctl's own lifecycle events (the mode, shutdown, …); rendered under `[stackctl]`. */
   system: Logger;
-  /** Control-API command notices: the command is the message, its variables are attrs; `[dt:control]`. */
+  /** Control-API command notices: the command is the message, its variables are attrs; `[control]`. */
   control: Logger;
 }
 
@@ -42,7 +42,7 @@ const ERROR_LEVEL = 50;
 export interface RenderedInternalRecord {
   /** The formatted `[LEVEL] message` (+ indented props) text; may span multiple lines. */
   text: string;
-  /** Which channel emitted it — picks the `[stackctl]` vs `[dt:control]` prefix. */
+  /** Which channel emitted it — picks the `[stackctl]` vs `[control]` prefix. */
   component: 'system' | 'control';
   /** The package a control command targeted, if any (scopes the line for filtering/grouping). */
   packageName?: string;

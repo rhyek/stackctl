@@ -83,6 +83,11 @@ the README and `assets/skill.md` for the affected names and reconcile every hit.
   (the site's `slugify` matches). `pnpm docs:build` fails on a dead link, and
   `scripts/package-docs.ts` on a packaged link that leads nowhere.
 - **A new page** goes in the sidebar in `docs/.vitepress/config.ts`, with a `description`.
+- **A screen of the terminal UI is a recording**, not a hand-drawn block: a `<TerminalPlayer>`
+  the site plays, beside the text copy llms.txt reads. Each is a scene in `scripts/demo/scenes.ts`,
+  with the files that can change it; when the screen it shows changes, re-record it with
+  `./scripts/demo/record.sh <scene>`, which the `/commit` skill does for you. See
+  [`scripts/demo/CLAUDE.md`](scripts/demo/CLAUDE.md).
 - **Only the current surface, no history:** see
   [`.claude/rules/docs-no-history.md`](.claude/rules/docs-no-history.md), which loads whenever
   one of these files is read or edited.

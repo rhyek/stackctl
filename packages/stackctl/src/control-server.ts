@@ -58,7 +58,7 @@ export interface ControlManager {
   runInfra(service: string, action: InfraAction): InfraRunOutcome;
   quit(): void;
   /**
-   * Emit a `[dt:control]` log line noting a mutating command arrived over the control API (as
+   * Emit a `[control]` log line noting a mutating command arrived over the control API (as
    * opposed to the same action triggered by a UI hotkey). `attrs` carries the variables the
    * command was called with (e.g. `{ service: 'web' }`), rendered as indented properties; an
    * `attrs.service` naming a known service also scopes the line to it for output filtering.

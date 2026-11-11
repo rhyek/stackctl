@@ -10,6 +10,7 @@ import { stripAnsi } from '../format.js';
 import { InfraFailedError } from '../infra/session.js';
 import type { InfraEvent } from '../infra/types.js';
 import type { ServiceGroups, ServiceUsage, UsageReader } from '../service-usage.js';
+import { labelGutter } from './log-layout.js';
 import { buildSessionPlan } from './plan.js';
 import type {
   ProcessExit,
@@ -100,6 +101,8 @@ const until = (check: () => void) => vi.waitFor(check, { timeout: 5000, interval
 function setup(opts: {
   services: Record<string, Record<string, unknown>>;
   selected?: string[];
+  /** The config's `infra`, as written. */
+  infra?: Record<string, unknown>;
   /** The services whose processes don't end on a stop. */
   holdStops?: string[];
   seams?: Partial<SessionSeams>;
@@ -121,6 +124,7 @@ function setup(opts: {
     workspaceDir: root,
     serviceRootDir: 'packages',
     services: opts.services,
+    ...(opts.infra ? { infra: opts.infra } : {}),
   } as unknown as Parameters<typeof defineConfig>[0]);
   const all = Object.values(config.services) as AnyServiceConfig[];
   const selected = all.filter((s) =>
@@ -237,7 +241,9 @@ function setup(opts: {
     closedCode: () => closedCode,
     /** Every buffered line as `label text`, colors stripped and the label's padding kept. */
     lines: () =>
-      session.logs.getVisibleLines().map((l) => `${stripAnsi(l.label)} ${stripAnsi(l.text)}`),
+      session.logs
+        .getVisibleLines()
+        .map((l) => `${labelGutter(l.label, session.logs.labelWidth)} ${stripAnsi(l.text)}`),
   };
 }
 
@@ -262,8 +268,8 @@ describe('startup', () => {
     expect(t.lines()).toEqual([
       '[stackctl] [INFO] mode development (default)',
       '[stackctl] [INFO] freeing dev ports',
-      '[api] started',
-      '[web] started',
+      '[api     ] started',
+      '[web     ] started',
     ]);
   });
 
@@ -274,6 +280,35 @@ describe('startup', () => {
     });
     await t.session.start();
     expect(t.lines()[1]).toBe('[stackctl] [INFO] api: runtime dep of web');
+  });
+
+  test("every label is padded to one width: the services', and infra's from the config and the provider", async () => {
+    let finish!: (infra: SessionInfra) => void;
+    const t = setup({
+      services: { backend: {}, frontend: {} },
+      infra: { 'docker-compose': { services: { db: {}, mail: {} } } },
+      seams: {
+        runInfra: (onEvent) => {
+          // `queue` is in the compose file only: the provider names it with the targets.
+          onEvent({ type: 'targets', provider: 'docker-compose', action: 'up', services: ['db', 'mail', 'queue'] }); // oxfmt-ignore
+          onEvent({ type: 'output', line: 'Container db Started', isError: false });
+          onEvent({ type: 'output', service: 'db', line: 'migrated', isError: false });
+          onEvent({ type: 'output', service: 'queue', line: 'listening', isError: false });
+          return new Promise((resolve) => (finish = resolve));
+        },
+      },
+    });
+    // Before infra starts, the width is the config's: `infra:mail`.
+    expect(t.session.logs.labelWidth).toBe('infra:mail'.length);
+    void t.session.start();
+    await until(() => expect(t.lines()).toContain('[infra:queue] listening'));
+    // Every line so far is drawn at the new width, the ones from before `queue` was known too.
+    const labels = t.lines().map((line) => line.slice(0, line.indexOf(']') + 1));
+    expect(new Set(labels.map((l) => l.length))).toEqual(new Set(['[infra:queue]'.length]));
+    expect(labels).toEqual(
+      expect.arrayContaining(['[stackctl   ]', '[infra      ]', '[infra:db   ]']),
+    );
+    finish({ services: [] });
   });
 
   test('app services are pending until infra is ready, and bind nothing before', async () => {
@@ -323,7 +358,7 @@ describe('startup', () => {
     expect(snapshot.failure).toEqual({ message });
     const failure = t.session.logs.getVisibleLines().at(-1)!;
     expect(failure.isError).toBe(true);
-    expect(`${stripAnsi(failure.label)} ${stripAnsi(failure.text)}`).toBe(`[stackctl] [ERROR] ${message}`); // oxfmt-ignore
+    expect(`${labelGutter(failure.label, t.session.logs.labelWidth)} ${stripAnsi(failure.text)}`).toBe(`[stackctl] [ERROR] ${message}`); // oxfmt-ignore
     // Quitting after a failed startup exits 1.
     await t.session.shutdown('startup-failed');
     expect(await t.session.closed).toBe(1);
@@ -645,7 +680,7 @@ describe('snapshot', () => {
     expect(t.session.serviceStatuses()).toHaveProperty('extra');
     expect(t.session.runInfra('db', 'restart')).toBe('unknown');
     t.session.logControl('restart', { service: 'web' });
-    expect(t.lines().slice(-2)).toEqual(['[dt:control] [INFO] restart', '[dt:control]   service: web']); // oxfmt-ignore
+    expect(t.lines().slice(-2)).toEqual(['[control ] [INFO] restart', '[control ]   service: web']); // oxfmt-ignore
   });
 });
 
@@ -790,16 +825,16 @@ describe("the run screen's session", () => {
     await until(() => expect(t.procs).toHaveLength(2));
 
     t.session.applyFilter('web');
-    expect(t.lines()).toEqual(['[web] started']);
+    expect(t.lines()).toEqual(['[web     ] started']);
     t.session.applyFilter('  ');
-    expect(t.lines()).toContain('[api] started');
+    expect(t.lines()).toContain('[api     ] started');
     t.session.clearLog();
     expect(t.lines()).toEqual([]);
 
     void t.session.runOneOff('api', { shell: 'echo hi' });
     await until(() => expect(t.procs).toHaveLength(3));
     expect(t.procs[2]!.opts).toMatchObject({ name: 'api', command: 'echo hi' });
-    expect(t.lines()).toEqual(['[api] ▶ running: echo hi']);
+    expect(t.lines()).toEqual(['[api     ] ▶ running: echo hi']);
     expect(t.session.commands).toBe(t.plan.menuCommands);
   });
 

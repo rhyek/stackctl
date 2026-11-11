@@ -7,11 +7,15 @@ description: The combined log stream - filtering, timestamps, automatic JSON log
 Every service's output goes into one stream, each line labelled with its service:
 
 ```
-13:53:32 [api]     listening on 3001
-13:53:32 [web]     VITE ready in 431 ms
-13:53:33 [worker]  [INFO] job picked up
-13:53:33 [worker]    id: 42
+13:53:32 [api     ] listening on 3001
+13:53:32 [web     ] VITE ready in 431 ms
+13:53:33 [worker  ] [INFO] job picked up
+13:53:33 [worker  ]   id: 42
 ```
+
+Every label is padded to the longest one the session can show (its services, its infra
+services and stackctl's own), so every line's text starts in one column. A service added
+mid-session widens them all.
 
 stderr lines are red. In the terminal UI, `f` filters the stream by any text, ignoring case and
 accents: type a service's name to see only that service.
@@ -48,14 +52,14 @@ stackctl writes to the same stream, in gold, under labels of its own:
 | Label              | What it logs                                                                       |
 | ------------------ | ---------------------------------------------------------------------------------- |
 | `[stackctl]`       | The session: its mode, why each dependency runs, startup failures, shutting down.  |
-| `[dt:control]`     | Commands received over the [control API](../reference/control-api.md).              |
+| `[control]`        | Commands received over the [control API](../reference/control-api.md).             |
 | `[infra]`          | Docker Compose's output.                                                           |
 | `[infra:<service>]` | One [infra service](../config/infra.md)'s output, its callbacks included.         |
 
 ```
-16:41:20 [stackctl]    [INFO] api: runtime dep of web
-16:41:22 [dt:control]  [INFO] restart
-16:41:22 [dt:control]    service: api
+16:41:20 [stackctl] [INFO] api: runtime dep of web
+16:41:22 [control ] [INFO] restart
+16:41:22 [control ]   service: api
 ```
 
 ## Log files

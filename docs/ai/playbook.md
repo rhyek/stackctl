@@ -153,10 +153,11 @@ stackctl logs --path          # its path, to grep or tail
 grep -i error "$(stackctl logs --path)"
 ```
 
-Each line is `<timestamp> [<service>] <text>`. `[stackctl]` lines are the session's own,
-`[dt:control]` lines are commands received over the control API, and `[infra:<name>]` lines
-are an infra service's. Earlier sessions' logs are kept beside the current one. See
-[Logs](../guide/logs.md).
+Each line is `<timestamp> [<service>] <text>`, the label padded with spaces before its `]` so
+every line's text lines up: match one service's with `grep '\[api *\]'`. `[stackctl]` lines are
+the session's own, `[control]` lines are commands received over the control API, and
+`[infra:<name>]` lines are an infra service's. Earlier sessions' logs are kept beside the
+current one. See [Logs](../guide/logs.md).
 
 ## Onboard a service
 

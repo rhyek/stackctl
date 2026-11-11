@@ -13,21 +13,26 @@ screen with their combined log. Everything in it works with the keyboard or the 
 
 ## Choosing services
 
-```
-── example ⎇ main ──────────────────────────────────────── choose services ──
+<llm-exclude><TerminalPlayer src="/casts/picker-1794363481.cast" label="The service picker: picking the frontend selects the backend it needs, then the list is filtered" /></llm-exclude>
+<llm-only>
+
+```text
+── example ⎇ main ───────────────────────────────────── choose services ──
   space select   ↑↓ move   / filter   n none   ⏎ start   ^c quit
 
-  ❯ ◉ api       needed by web
-    ◉ web
-    ○ worker
+    ◉ backend     needed by frontend
+    ◉ frontend
+  ❯ ◉ worker
 
-─────────────────────────────────────────────────────────────────────────────
-  will start  web · api   │   infra: db · mail
+──────────────────────────────────────────────────────────────────────────
+  will start  frontend · worker · backend   │   infra: db · mail
 ```
 
+</llm-only>
+
 - **`space`** selects the service under the cursor. So does a click on its row.
-- **A dependency says what needs it** (`needed by web`), and stays selected while that service
-  is.
+- **A dependency says what needs it** (`needed by frontend`), and stays selected while that
+  service is.
 - **The "will start" line** is exactly what `⏎` starts: your picks, their deps and the infra.
 - **`/`** filters the list as you type. **`n`** clears the selection.
 - **`⏎`** starts the session and remembers the selection for next time.
@@ -39,13 +44,19 @@ selection.
 
 The log fills the screen, above a footer:
 
+<llm-exclude><TerminalPlayer src="/casts/run-screen-1794363510.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
+<llm-only>
+
+```text
+── example ⎇ main ────────────────────────────────────────────────────────
+● backend 63M   ● frontend 238M   ● worker 28M
+infra: ● db 14M   ● mail 13M
+←→ select   r restart   s stop   m commands   │   logs: f filter   c clear
+^c quit
+backend ↗   public ↗   frontend ↗   root ↗   inbox ↗   mail ↗
 ```
-── example ⎇ main ────────────────────────────────────────────────────────────
-● api 64M   ● web 219M
-infra: ● db 23M   ● mail 7M
-←→ select   r restart   s stop   m commands   │   logs: f filter   c clear   │   ^c quit
-api ↗   docs ↗   admin ↗
-```
+
+</llm-only>
 
 - **The rule line** names the workspace and its git branch.
 - **The services rows** list each application service, then the [infra](../config/infra.md)
