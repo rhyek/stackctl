@@ -117,6 +117,7 @@ when stackctl starts. Restart stackctl to pick those up.
   blocks a read of a Dropbox or iCloud folder until you allow access. The services show as
   `waiting`, the log names the file, and the session still answers its control API.
 - **Nested stackctl.** A process stackctl started also gets `STACKCTL_INJECTED_ENV`, the names
-  of the variables stackctl gave it. A stackctl started from that process (an e2e suite that
-  calls `startStack()`, say) drops them first, so its own `.env` files load as from a clean
-  shell. It stays in the outer mode unless `--mode` says otherwise.
+  of the variables stackctl gave it, and `STACKCTL_REPLACED_ENV`, the shell's values of those
+  it changed. A stackctl started from that process (an e2e suite that calls `startStack()`,
+  say) drops the first and restores the second, so its own `.env` files load as from the shell
+  the outer one was started in. It stays in the outer mode unless `--mode` says otherwise.

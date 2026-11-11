@@ -5,6 +5,7 @@ import primitives from '@dotenvx/primitives';
 import type { AnyServiceConfig } from './config.js';
 import {
   INJECTED_ENV_VAR,
+  REPLACED_ENV_VAR,
   RESOLVE_ENV_FD,
   assertOutsideCli,
   assertValidMode,
@@ -237,21 +238,31 @@ export function envCandidatePaths({
 /**
  * `layer` with {@link INJECTED_ENV_VAR} added: every variable of the child's environment — this
  * process's own, with `layer` merged over it — that the shell stackctl was started in didn't
- * set, or set to another value.
+ * set, or set to another value. Those it had set to another value go in
+ * {@link REPLACED_ENV_VAR} with the shell's value, itself listed.
  */
 function withInjectedList(layer: Record<string, string>): Record<string, string> {
   const shell = shellEnvironment();
   const child: NodeJS.ProcessEnv = { ...process.env, ...layer };
-  const injected = Object.keys(child)
-    .filter(
-      (key) =>
-        key !== INJECTED_ENV_VAR &&
-        key !== 'STACKCTL_MODE' &&
-        child[key] !== undefined &&
-        child[key] !== shell[key],
-    )
-    .sort();
-  return { ...layer, [INJECTED_ENV_VAR]: injected.join(',') };
+  const injected = Object.keys(child).filter(
+    (key) =>
+      key !== INJECTED_ENV_VAR &&
+      key !== REPLACED_ENV_VAR &&
+      key !== 'STACKCTL_MODE' &&
+      child[key] !== undefined &&
+      child[key] !== shell[key],
+  );
+  const replaced = Object.fromEntries(
+    injected.flatMap((key) => (shell[key] === undefined ? [] : [[key, shell[key]]])),
+  );
+  if (Object.keys(replaced).length === 0) {
+    return { ...layer, [INJECTED_ENV_VAR]: injected.sort().join(',') };
+  }
+  return {
+    ...layer,
+    [REPLACED_ENV_VAR]: JSON.stringify(replaced),
+    [INJECTED_ENV_VAR]: [...injected, REPLACED_ENV_VAR].sort().join(','),
+  };
 }
 
 /**

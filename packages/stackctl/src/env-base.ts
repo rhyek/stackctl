@@ -394,20 +394,57 @@ export function ambientEnv(): Record<string, string> {
 export const INJECTED_ENV_VAR = 'STACKCTL_INJECTED_ENV';
 
 /**
- * Drops what an outer stackctl listed in {@link INJECTED_ENV_VAR}, and the list itself. The CLI
- * calls it first, before anything reads the environment.
+ * The values, as a JSON object, that the shell stackctl was started in had for the variables
+ * stackctl gave a child another value for: a `.env` file that `env.override` lets append to the
+ * shell's `NODE_OPTIONS`, a `PORT` the shell had set. A stackctl started from such a child gives
+ * them these values back ({@link dropInjectedEnv}). Absent when stackctl replaced none.
+ */
+export const REPLACED_ENV_VAR = 'STACKCTL_REPLACED_ENV';
+
+/** What {@link REPLACED_ENV_VAR} holds: each name's string value, or nothing if it can't be read. */
+function replacedEnv(text: string | undefined): Record<string, string> {
+  if (text === undefined) {
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== 'object' || parsed === null) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Drops what an outer stackctl listed in {@link INJECTED_ENV_VAR}, and the list itself, and
+ * gives each variable in {@link REPLACED_ENV_VAR} the value the outer one's shell had for it:
+ * what is left is the environment the outer stackctl was started with. The CLI calls it first,
+ * before anything reads the environment.
  */
 export function dropInjectedEnv(env: NodeJS.ProcessEnv = process.env): void {
   const list = env[INJECTED_ENV_VAR];
   if (list === undefined) {
     return;
   }
+  const replaced = replacedEnv(env[REPLACED_ENV_VAR]);
   for (const key of list.split(',')) {
     if (key !== '' && key !== 'STACKCTL_MODE') {
       delete env[key];
     }
   }
   delete env[INJECTED_ENV_VAR];
+  delete env[REPLACED_ENV_VAR];
+  for (const [key, value] of Object.entries(replaced)) {
+    if (key !== 'STACKCTL_MODE') {
+      env[key] = value;
+    }
+  }
 }
 
 /** The environment stackctl was started with, once {@link captureShellEnv} has recorded it. */
