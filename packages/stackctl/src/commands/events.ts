@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { currentMode } from '../env-base.js';
-import { EventTail, currentEventsPath, fileSize } from '../event-log.js';
+import { EventTail, currentEventsPath } from '../event-log.js';
 
 // `stackctl events`: the event log of the mode's current session (the running one, else the
 // latest), as it is in the file (JSON Lines, for `jq`). Read-only: it never asks the session
@@ -34,23 +34,20 @@ export async function runEvents(opts: {
     console.error(`stackctl events: -n takes a whole number, not "${String(opts.lines)}".`);
     process.exit(1);
   }
-  let text = '';
-  try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch {
-    if (!opts.follow) {
-      console.error(`stackctl events: no event log yet at ${path.relative(root, file)}.`);
-      process.exit(0);
-    }
+  if (!opts.follow && !fs.existsSync(file)) {
+    console.error(`stackctl events: no event log yet at ${path.relative(root, file)}.`);
+    process.exit(0);
   }
-  const lines = text.split('\n').filter(Boolean);
+  // One reader for the lines already there and for those added after: `-f` goes on from the byte
+  // the first read ended at, so a line written in between is printed, not skipped.
+  const tail = new EventTail(file, 0);
+  const lines = tail.read();
   for (const line of count === Infinity ? lines : lines.slice(lines.length - count)) {
     console.log(line);
   }
   if (!opts.follow) {
     process.exit(0);
   }
-  const tail = new EventTail(file, fileSize(file));
   const timer = setInterval(() => {
     // Checked before reading, so the lines the session got before the next one started are printed.
     const followed = currentEventsPath(root, currentMode()) === file;
