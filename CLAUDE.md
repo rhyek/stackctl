@@ -92,6 +92,11 @@ the README and `assets/skill.md` for the affected names and reconcile every hit.
   [`.claude/rules/docs-no-history.md`](.claude/rules/docs-no-history.md), which loads whenever
   one of these files is read or edited.
 - **Hand-formatted.** Never run a Markdown formatter on the docs or the README.
+- **A `ts` snippet stays within 75 columns**, which is what the site's code block shows without
+  scrolling. `scripts/format-docs-snippets.ts` keeps it there: `pnpm format` and the pre-commit
+  hook rewrite a fence that overflows as oxfmt formats it at that width, and `pnpm lint` fails on
+  a line still over. oxfmt doesn't move comments, so a trailing comment that overflows goes on
+  its own line above the code, by hand. Shell, JSON and output blocks are left as written.
 - **One description everywhere.** The headline and the one-line description read the same in
   the README, the site, `package.json`, `stackctl --help` and the GitHub repo's settings:
   [`.claude/rules/project-wording.md`](.claude/rules/project-wording.md).

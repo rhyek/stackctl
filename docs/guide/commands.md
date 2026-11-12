@@ -61,7 +61,11 @@ in a pipeline. The exit code is the command's own. Each call also writes a
 import { exec, run } from 'stackctl';
 
 await exec({ target: 'api', command: ['node', 'src/migrate.ts'] });
-const { exitCode } = await run({ target: 'api', script: 'seed', mode: 'test' });
+const { exitCode } = await run({
+  target: 'api',
+  script: 'seed',
+  mode: 'test',
+});
 ```
 
 See the [SDK](../reference/sdk.md#exec-and-run).

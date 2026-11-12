@@ -76,9 +76,12 @@ export default defineConfig({
       deps: [{ service: 'api', wait: true }],
       // links in the footer
       urls: [
-        '', // web's own address, shown as "web ↗"
-        '/docs', // a path on it
-        { label: 'storybook', url: 'http://localhost:6006' }, // any URL, with a label
+        // web's own address, shown as "web ↗"
+        '',
+        // a path on it
+        '/docs',
+        // any URL, with a label
+        { label: 'storybook', url: 'http://localhost:6006' },
       ],
     },
   },

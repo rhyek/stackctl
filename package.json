@@ -7,11 +7,11 @@
   },
   "scripts": {
     "build": "pnpm --filter stackctl build && pnpm docs:package",
-    "lint": "oxlint --disable-nested-config && oxfmt --check --disable-nested-config",
+    "lint": "oxlint --disable-nested-config && oxfmt --check --disable-nested-config && node scripts/format-docs-snippets.ts --check",
     "focus": "pnpm --filter stackctl focus",
     "palette": "pnpm --filter stackctl palette",
     "test:types": "vitest --typecheck.only --run",
-    "format": "oxfmt --disable-nested-config",
+    "format": "oxfmt --disable-nested-config && node scripts/format-docs-snippets.ts",
     "prepare": "simple-git-hooks",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",

@@ -55,7 +55,8 @@ and `urls` paths, and frees it when taking over from an earlier session.
 
 ```ts
 api: { port: 3001 },
-web: { port: ({ envs }) => Number(envs.WEB_PORT) }, // from the service's .env files
+// from the service's .env files
+web: { port: ({ envs }) => Number(envs.WEB_PORT) },
 ```
 
 A callback that returns `NaN`, the usual sign of a missing variable, is an error naming the
@@ -104,7 +105,10 @@ web: { deps: [{ service: 'api', wait: true }, 'worker'] },
 that only runs in some modes:
 
 ```ts
-api: { deps: ({ mode }) => (mode === 'test' ? ['gateway'] : ['codegen', 'gateway']) },
+api: {
+  deps: ({ mode }) =>
+    mode === 'test' ? ['gateway'] : ['codegen', 'gateway'],
+},
 ```
 
 ## `command`
@@ -131,7 +135,11 @@ Links on the footer's links row.
 ```ts
 web: {
   port: 3000,
-  urls: ['', '/admin', { label: 'storybook', url: 'http://localhost:6006' }],
+  urls: [
+    '',
+    '/admin',
+    { label: 'storybook', url: 'http://localhost:6006' },
+  ],
 },
 ```
 
