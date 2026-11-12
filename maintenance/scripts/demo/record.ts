@@ -227,6 +227,19 @@ const stage: Stage = {
       await sleep(50);
     }
   },
+  async waitForExit(timeout = 180_000) {
+    const until = performance.now() + timeout;
+    // `exited` is set by the driver's exit event, between these sleeps.
+    for (;;) {
+      if (exited) {
+        return;
+      }
+      if (performance.now() > until) {
+        throw new Error(`the program never exited:\n${screen.dump()}`);
+      }
+      await sleep(50);
+    }
+  },
   copied: () => copied,
   rowOf: (text) => screen.find(text)?.row ?? null,
   text(value) {

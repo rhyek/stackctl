@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+### Fixes
+
+- **`stackctl events -f` no longer skips a line written as it starts.**
+
 ## 0.5.0
 
 ### Features

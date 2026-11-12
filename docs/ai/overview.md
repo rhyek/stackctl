@@ -25,7 +25,7 @@ outputs folded as Claude Code folds them. The agent has the rules file and the s
 **The app is down.** Someone restarted Postgres from another terminal, and the backend crashed.
 The agent finds who in the [event log](../reference/events.md):
 
-<llm-exclude><TerminalPlayer src="/casts/agent-restart-1794503803.cast" label="Claude Code finds the crashed backend, restarts it through stackctl and explains the crash" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/agent-restart-1794524629.cast" label="Claude Code finds the crashed backend, restarts it through stackctl and explains the crash" /></llm-exclude>
 <llm-only>
 
 ```text
@@ -87,7 +87,7 @@ The agent finds who in the [event log](../reference/events.md):
 **Running the tests.** They call the backend, so the agent runs them against a test-mode session
 of their own:
 
-<llm-exclude><TerminalPlayer src="/casts/agent-tests-1794505772.cast" label="Claude Code starts a test-mode session, runs the backend's tests in it and stops it" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/agent-tests-1794524604.cast" label="Claude Code starts a test-mode session, runs the backend's tests in it and stops it" /></llm-exclude>
 <llm-only>
 
 ```text

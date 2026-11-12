@@ -34,7 +34,7 @@ agents:
   details: It works from the config you wrote, so it knows what your stack is made of. It can start, stop and restart your services, check which are healthy, run your tests in a session of their own and read the logs when something breaks.
   linkText: stackctl for coding agents
   link: /ai/overview
-  src: /casts/agent-tests-1794505772.cast
+  src: /casts/agent-tests-1794524604.cast
   alt: Claude Code starts a test-mode session, runs the backend's tests in it and stops it
 
 features:
