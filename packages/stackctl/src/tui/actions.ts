@@ -1,6 +1,7 @@
 import type { DragSelection, LogViewport } from '../components/LogPane.js';
 import type { Toasts } from '../components/ToastStack.js';
 import { errorMessage } from '../errors.js';
+import type { EventBy } from '../event-log.js';
 import type { Session } from '../session/session.js';
 import type { Effect, EntryKey } from './ui-state.js';
 
@@ -53,15 +54,19 @@ export function guard(session: Session, what: string, fn: () => unknown): void {
   }
 }
 
+/** Who asked, for the event log: the run screen's key for that action. */
+const byKey = (key: string): EventBy => ({ kind: 'ui', key });
+
 function serviceAction(
   session: Session,
   action: 'restart' | 'stop' | 'start',
   entry: EntryKey,
 ): unknown {
+  const by = byKey(action === 'restart' ? 'r' : 's');
   if (entry.kind === 'app') {
-    return session.runPackage(entry.name, action);
+    return session.runPackage(entry.name, action, by);
   }
-  return session.runInfra(entry.name, action);
+  return session.runInfra(entry.name, action, by);
 }
 
 function describe(effect: Effect): string {
@@ -123,13 +128,13 @@ function runOne(effect: Effect, deps: ActionDeps): unknown {
         return;
       }
       deps.releaseMouse();
-      return session.shutdown('user');
+      return session.requestQuit(byKey('^c'), 'user');
     case 'restart':
     case 'stop':
     case 'start':
       return serviceAction(session, effect.type, effect.entry);
     case 'reset-infra':
-      return session.runInfra(effect.target, 'reset');
+      return session.runInfra(effect.target, 'reset', byKey('R'));
     case 'filter':
       session.applyFilter(effect.filter);
       // The rows reflow, so a selection would point at other text.
@@ -166,9 +171,9 @@ function runOne(effect: Effect, deps: ActionDeps): unknown {
       }
       return;
     case 'run-script':
-      return session.runOneOff(effect.service, effect.script);
+      return session.runOneOff(effect.service, effect.script, byKey('m'));
     case 'run-custom':
-      return session.runOneOff(effect.service, { shell: effect.command });
+      return session.runOneOff(effect.service, { shell: effect.command }, byKey('m'));
   }
 }
 

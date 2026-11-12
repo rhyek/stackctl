@@ -81,7 +81,7 @@ record=node_modules/.stackctl/modes/test/running.json
 until [ -f "$record" ]; do sleep 0.2; done
 port=$(node --input-type=module -e "import r from './$record' with { type: 'json' }; console.log(r.port)")
 curl -sN "http://127.0.0.1:$port/events" \
-  | grep -m1 -qE '"sessionReady":true|"type":"session","ready":true' || exit 1
+  | grep -m1 -qE '"sessionReady":true|"type":"session-state","ready":true' || exit 1
 
 pnpm test:e2e
 ```

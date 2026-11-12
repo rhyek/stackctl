@@ -1,14 +1,43 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, afterEach, test, vi } from 'vitest';
 import { createControlClient, type SessionEvent } from './control-client.js';
-import { startControlServer, type ControlManager } from './control-server.js';
+import { startControlServer as startServer, type ControlManager } from './control-server.js';
+import { EventLog, type InfraCommandEntry, cliEventLog, eventsFilePath } from './event-log.js';
 import { sessionId } from './running.js';
 
-let server: Awaited<ReturnType<typeof startControlServer>> | null = null;
+let server: Awaited<ReturnType<typeof startServer>> | null = null;
+let root: string | null = null;
 afterEach(async () => {
   vi.unstubAllEnvs();
   await server?.close();
   server = null;
+  if (root) {
+    fs.rmSync(root, { recursive: true, force: true });
+    root = null;
+  }
 });
+
+/** The server, writing to an event log in a workspace of its own. */
+function startControlServer(opts: Omit<Parameters<typeof startServer>[0], 'events'>) {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-control-'));
+  return startServer({
+    ...opts,
+    events: new EventLog({ root, mode: 'development', sessionId: () => sessionId() }),
+  });
+}
+
+/** Lets the server's state tracker write what a change it was told of brings. */
+const settled = () => new Promise((resolve) => setImmediate(resolve));
+
+/** The event log's lines so far. */
+const eventLines = () =>
+  fs
+    .readFileSync(eventsFilePath(root!, 'development'), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
 
 function fakeManager(overrides: Partial<ControlManager> = {}): ControlManager {
   return {
@@ -179,6 +208,29 @@ describe('control-server', () => {
       'stop api',
       'start api',
       'start nope',
+    ]);
+  });
+
+  test("hands each command who asked: the request, and the client's User-Agent", async () => {
+    server = await startControlServer({ quitHandler: () => {}, port: 0 });
+    const asked: unknown[] = [];
+    server.bindSession(
+      fakeManager({
+        runPackage: (_name, _action, by) => {
+          asked.push(by);
+          return Promise.resolve('accepted');
+        },
+        runInfra: (_service, _action, by) => {
+          asked.push(by);
+          return 'accepted';
+        },
+      }),
+    );
+    await createControlClient(server.port).command.service.restart('web');
+    await fetch(`http://127.0.0.1:${server.port}/command/infra/restart/db`, { method: 'POST', headers: { 'user-agent': 'curl/8.7.1' } }); // oxfmt-ignore
+    expect(asked).toEqual([
+      { kind: 'control-api', request: 'POST /command/service/restart/web', userAgent: expect.stringMatching(/^stackctl\//) }, // oxfmt-ignore
+      { kind: 'control-api', request: 'POST /command/infra/restart/db', userAgent: 'curl/8.7.1' },
     ]);
   });
 
@@ -395,6 +447,7 @@ describe('control-server', () => {
       server = await startControlServer({ quitHandler: () => {}, port: 0, configPath: '/ws/c.ts' });
       const { manager, change } = liveManager();
       server.bindSession(manager);
+      await settled();
       const events = createControlClient(server.port).events();
 
       const [snapshot] = await take(events, 1);
@@ -410,18 +463,18 @@ describe('control-server', () => {
         s.ready.web = true;
         s.infra.db = 'running';
       });
-      expect(await take(events, 2)).toEqual([
-        { type: 'service', service: 'web', status: 'running', ready: true },
-        { type: 'infra', service: 'db', status: 'running' },
+      expect(await take(events, 2)).toMatchObject([
+        { type: 'service-state', service: 'web', status: 'running', ready: true, previousStatus: 'running', previousReady: false }, // oxfmt-ignore
+        { type: 'infra-state', service: 'db', status: 'running', previousStatus: 'starting' },
       ]);
 
       change((s) => {
         s.services.api = 'running';
         s.ready.api = true;
       });
-      expect(await take(events, 2)).toEqual([
-        { type: 'service', service: 'api', status: 'running', ready: true },
-        { type: 'session', ready: true },
+      expect(await take(events, 2)).toMatchObject([
+        { type: 'service-state', service: 'api', status: 'running', ready: true, previousStatus: 'waiting', previousReady: false }, // oxfmt-ignore
+        { type: 'session-state', ready: true },
       ]);
 
       change((s) => {
@@ -429,10 +482,44 @@ describe('control-server', () => {
         s.ready.api = false;
         s.ready.web = false;
       });
-      expect(await take(events, 3)).toEqual([
-        { type: 'service', service: 'web', status: 'running', ready: false },
-        { type: 'service', service: 'api', status: 'stopped', ready: false },
-        { type: 'session', ready: false },
+      expect(await take(events, 3)).toMatchObject([
+        { type: 'service-state', service: 'web', status: 'running', ready: false },
+        { type: 'service-state', service: 'api', status: 'stopped', ready: false, previousStatus: 'running', previousReady: true }, // oxfmt-ignore
+        { type: 'session-state', ready: false },
+      ]);
+      await events.return(undefined);
+    });
+
+    test('writes each change to the event log, with what it was, whether a client listens or not', async () => {
+      server = await startControlServer({ quitHandler: () => {}, port: 0, configPath: '/ws/c.ts' });
+      const { manager, change } = liveManager();
+      server.bindSession(manager);
+      await settled();
+      change((s) => (s.ready.web = true));
+      await settled();
+      expect(eventLines()).toMatchObject([
+        // as it was when the session bound: nothing before it
+        { type: 'service-state', service: 'web', status: 'running', ready: false, previousStatus: null, previousReady: null }, // oxfmt-ignore
+        { type: 'service-state', service: 'api', status: 'waiting', ready: false, previousStatus: null, previousReady: null }, // oxfmt-ignore
+        { type: 'infra-state', service: 'db', status: 'starting', previousStatus: null },
+        { type: 'service-state', service: 'web', status: 'running', ready: true, previousStatus: 'running', previousReady: false, mode: 'development', sessionId: sessionId(), pid: process.pid }, // oxfmt-ignore
+      ]);
+    });
+
+    test("streams what another process writes to the event log, in the file's order", async () => {
+      server = await startControlServer({ quitHandler: () => {}, port: 0, configPath: '/ws/c.ts' });
+      const events = createControlClient(server.port).events();
+      await take(events, 1);
+      // a `stackctl infra restart` run from a terminal: its own process, its own log handle
+      cliEventLog(root!, 'development')
+        .begin<InfraCommandEntry>(
+          { type: 'infra-command', action: 'restart', requested: ['db'] },
+          { kind: 'cli', argv: ['infra', 'restart', '-s', 'db'], cwd: '.', agent: false },
+        ) // oxfmt-ignore
+        .end({ ok: true, services: ['db'], results: { db: 'ready' } });
+      expect(await take(events, 2)).toMatchObject([
+        { type: 'infra-command', phase: 'begin', action: 'restart', requested: ['db'], by: { kind: 'cli', agent: false } }, // oxfmt-ignore
+        { type: 'infra-command', phase: 'end', ok: true, results: { db: 'ready' } },
       ]);
       await events.return(undefined);
     });
@@ -441,12 +528,13 @@ describe('control-server', () => {
       server = await startControlServer({ quitHandler: () => {}, port: 0, configPath: '/ws/c.ts' });
       const { manager, change } = liveManager();
       server.bindSession(manager);
+      await settled();
       const events = createControlClient(server.port).events();
       await take(events, 1);
       change(() => {});
       change((s) => (s.ready.web = true));
-      expect(await take(events, 1)).toEqual([
-        { type: 'service', service: 'web', status: 'running', ready: true },
+      expect(await take(events, 1)).toMatchObject([
+        { type: 'service-state', service: 'web', status: 'running', ready: true },
       ]);
       await events.return(undefined);
     });

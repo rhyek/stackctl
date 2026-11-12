@@ -39,6 +39,19 @@ describe('skill rendering', () => {
     expect(frontmatter.some((l) => l.startsWith('description:'))).toBe(true);
   });
 
+  // Claude Code cuts a description at 1,536 characters in the listing it gives the model, and
+  // the Agent Skills spec other agents follow allows 1,024. A longer one loses its last triggers
+  // without any error. The body is a pointer: what an agent needs is in the docs it names.
+  test('has a description every agent shows whole, and a body that only points at the docs', () => {
+    const text = renderSkill('1.2.3');
+    const description = /^description: (.*)$/m.exec(text)![1]!;
+    expect(description.length).toBeLessThanOrEqual(1024);
+    expect(/^name: ([a-z0-9-]{1,64})$/m.exec(text)![1]).toBe('stackctl');
+    const body = text.slice(text.indexOf('\n---\n', 4));
+    expect(body).toContain('${CLAUDE_PROJECT_DIR}/node_modules/stackctl/docs/llms.txt');
+    expect(body.split('\n').length).toBeLessThan(40);
+  });
+
   test('re-rendering an already-managed file does not stack banners', () => {
     // `refreshSkillIfStale` re-renders in place on every version bump.
     const once = renderSkill('1.2.3');

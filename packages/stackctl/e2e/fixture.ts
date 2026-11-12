@@ -129,7 +129,19 @@ export function createWorkspace(): string {
   fs.mkdirSync(standIn, { recursive: true });
   fs.symlinkSync(path.join(packageDir, 'package.json'), path.join(standIn, 'package.json'));
   fs.symlinkSync(buildDir, path.join(standIn, 'dist'));
+  for (const dir of ['assets', 'skills']) {
+    fs.symlinkSync(path.join(buildDir, '..', dir), path.join(standIn, dir));
+  }
+  declineGuidance(ws);
   return ws;
+}
+
+/**
+ * Answers the offer of the agent guidance with a no, as a person who was already asked: a
+ * session started at a terminal then goes straight to its picker, whoever runs the suite.
+ */
+export function declineGuidance(ws: string): void {
+  writeJson(path.join(ws, 'node_modules', '.stackctl', 'agent-guidance.json'), { declined: true });
 }
 
 /** The session record of `mode` in `ws`, or `null` when there is none. */

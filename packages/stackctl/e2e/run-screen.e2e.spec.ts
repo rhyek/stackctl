@@ -119,3 +119,32 @@ test('Ctrl+C once asks for a second; twice quits with exit 0 and gives the termi
   expect(printed).toContain('■ stackctl exited after');
   expect(printed).toMatch(/logfile: node_modules\/\.stackctl\/modes\/development\/logs\/\S+\.log/);
 });
+
+test("writes the keys to the event log: r's restart and Ctrl+C's quit, each with the key that asked", async () => {
+  // oxfmt-ignore
+  const pty = await startEveryService(ws());
+  expect(pty.focusedService()).toBe('api');
+  pty.press('r');
+  await pty.waitUntil(() => logRows(pty).some((row) => /\[api\s*\] restarted/.test(row)), 'api restarted'); // oxfmt-ignore
+  pty.press('ctrl-c');
+  await pty.waitFor('Press Ctrl+C again to exit');
+  pty.press('ctrl-c');
+  expect(await pty.waitForExit()).toEqual({ code: 0, signal: null });
+
+  const all = fs
+    .readFileSync(path.join(ws(), 'node_modules/.stackctl/modes/development/events.log'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { type: string; phase?: string; by?: unknown });
+  // The file's other sessions are this file's earlier tests': this one's start from its own.
+  const lines = all.slice(all.findLastIndex((line) => line.type === 'session-start'));
+  const commands = lines.filter((line) => line.type.endsWith('-command'));
+  expect(commands).toMatchObject([
+    { type: 'service-command', phase: 'begin', action: 'restart', service: 'api', by: { kind: 'ui', key: 'r' } }, // oxfmt-ignore
+    { type: 'service-command', phase: 'end', action: 'restart', service: 'api', ok: true, outcome: 'done' }, // oxfmt-ignore
+    { type: 'session-command', phase: 'begin', action: 'quit', by: { kind: 'ui', key: '^c' } },
+    { type: 'session-command', phase: 'end', action: 'quit', ok: true },
+  ]);
+  expect(lines.at(-1)).toMatchObject({ type: 'session-end', cause: 'quit' });
+  expect(lines[0]).toMatchObject({ type: 'session-start', headless: false });
+});

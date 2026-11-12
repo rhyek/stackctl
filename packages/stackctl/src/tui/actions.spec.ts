@@ -13,12 +13,16 @@ function fakeSession(over: Partial<Record<string, unknown>> = {}) {
       calls.push(`shutdown ${reason}`);
       return Promise.resolve();
     }),
-    runPackage: vi.fn((name: string, action: string) => {
-      calls.push(`${action} ${name}`);
+    requestQuit: vi.fn((by: { key: string }, reason: string) => {
+      calls.push(`shutdown ${reason} by ${by.key}`);
+      return Promise.resolve();
+    }),
+    runPackage: vi.fn((name: string, action: string, by: { key: string }) => {
+      calls.push(`${action} ${name} by ${by.key}`);
       return Promise.resolve('busy');
     }),
-    runInfra: vi.fn((name: string, action: string) => {
-      calls.push(`infra ${action} ${name}`);
+    runInfra: vi.fn((name: string, action: string, by: { key: string }) => {
+      calls.push(`infra ${action} ${name} by ${by.key}`);
       return 'busy';
     }),
     clearLog: vi.fn(() => calls.push('clear')),
@@ -89,7 +93,7 @@ describe('runEffects', () => {
       deps(session, calls),
     );
     await settle();
-    expect(calls).toEqual(['infra stop db']);
+    expect(calls).toEqual(['infra stop db by s']);
     expect(errors).toEqual(['clear the log failed: full disk', 'restart api failed: gone']);
   });
 
@@ -103,14 +107,27 @@ describe('runEffects', () => {
       deps(session, calls),
     );
     await settle();
-    expect(calls).toEqual(['stop api', 'infra restart db']);
+    expect(calls).toEqual(['stop api by s', 'infra restart db by r']);
     expect(errors).toEqual([]);
+  });
+
+  test("tells the session which key asked, for the event log's `by`", () => {
+    const { session, calls } = fakeSession();
+    runEffects(
+      [
+        { type: 'restart', entry: { kind: 'app', name: 'api' } },
+        { type: 'stop', entry: { kind: 'infra', name: 'db' } },
+        { type: 'reset-infra', target: 'db' },
+      ],
+      deps(session, calls),
+    );
+    expect(calls).toEqual(['restart api by r', 'infra stop db by s', 'infra reset db by R']);
   });
 
   test('the shutdown releases the mouse first; the second request is the hard kill', () => {
     const first = fakeSession();
     runEffects([{ type: 'shutdown' }], deps(first.session, first.calls));
-    expect(first.calls).toEqual(['release mouse', 'shutdown user']);
+    expect(first.calls).toEqual(['release mouse', 'shutdown user by ^c']);
 
     const second = fakeSession({ getSnapshot: () => ({ phase: 'stopping' }) });
     runEffects([{ type: 'shutdown' }], deps(second.session, second.calls));

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0
+
+### Features
+
+- **`stackctl status` shows the mode's session and the last commands that acted on it.** See
+  [docs/reference/cli.md](docs/reference/cli.md#stackctl-status).
+- **Each mode keeps an event log of what acts on its stack**, by a key, a control API request or
+  a stackctl command, with who asked; `GET /events` streams the same lines and `stackctl events`
+  prints them. See [docs/reference/events.md](docs/reference/events.md).
+- **A session's first start offers a rules file for coding agents beside the skill**, so an
+  agent knows what stackctl runs in the repo without having to pick the skill, and
+  `stackctl init --agents-md` adds the same lines to `AGENTS.md`. See
+  [docs/ai/overview.md](docs/ai/overview.md#agent-guidance).
+- **The package ships its skill in `skills/`**, where `pnpm approve` can link it.
+
+### Breaking changes
+
+- **Installing stackctl no longer writes the agent skill**: a session's first start in a
+  terminal offers it, and `stackctl init -y` installs it from a script.
+- **`GET /events` streams the event log, whose state lines are `service-state`, `infra-state`
+  and `session-state`**: match `"type":"session-state","ready":true` where you matched
+  `"type":"session","ready":true`, and give a `switch` over `SessionEvent` a `default`.
+
 ## 0.3.0
 
 ### Features
@@ -10,6 +33,8 @@
 
 ### Breaking changes
 
+- **Installing stackctl no longer writes the agent skill**: a session's first start in a
+  terminal offers it, and `stackctl init -y` installs it from a script.
 - **The infra callbacks' `reset` is gone**: test `trigger === 'reset'` instead.
 - **Only Docker Compose's callback types have `compose`**: type a callback with
   `DockerComposeDestroyContext`, `DockerComposeStartContext` or `DockerComposeReadyContext` in
@@ -31,6 +56,8 @@
 
 ### Breaking changes
 
+- **Installing stackctl no longer writes the agent skill**: a session's first start in a
+  terminal offers it, and `stackctl init -y` installs it from a script.
 - **`stackctl infra` takes a session's verbs, with services named by `-s`**: `up` is `start`,
   `down` is `stop` and `up --reset` is `reset`. Change `stackctl infra up db` to
   `stackctl infra start -s db`, and the same for `destroy`. See

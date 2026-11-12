@@ -20,7 +20,7 @@ hero:
       link: https://github.com/rhyek/stackctl
 
 demo:
-  src: /casts/demo-1794405658.cast
+  src: /casts/demo-1794447068.cast
   alt: stackctl's terminal UI running the example monorepo
 
 config:
@@ -38,6 +38,10 @@ features:
     title: A terminal UI you'll keep open
     details: "One combined, filterable log, with each service's state and memory in the footer. Drive it with the keyboard or the mouse: click a service, a key hint or a script, and drag to copy."
     link: /guide/terminal-ui
+  - icon: 🤖
+    title: Built for coding agents
+    details: A headless mode, a localhost control API, an installable skill and llms.txt let an agent run your project the way you do.
+    link: /ai/overview
   - icon: 🐳
     title: Infra included
     details: Point it at your docker-compose.yaml. Databases and brokers come up, get healthy and get migrated before your services start.
@@ -58,10 +62,6 @@ features:
     title: An SDK for scripts and tests
     details: startStack(), exec(), run() and resolveEnv() give your own scripts and test suites what the CLI gives a shell, typed and with the same environment.
     link: /reference/sdk
-  - icon: 🤖
-    title: Built for coding agents
-    details: A headless mode, a localhost control API, an installable skill and llms.txt let an agent run your project the way you do.
-    link: /ai/overview
   - icon: 🛠️
     title: Any language
     details: A service is a dev script in package.json or a Makefile target, so Node, Go and Rust services run side by side.

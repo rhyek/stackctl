@@ -1,6 +1,7 @@
 import type { ResolvedReverseProxyRoute } from './config.js';
 import type { ServiceAction } from './control-server.js';
 import { DEFAULT_MODE, type ModeSource, isModeSource } from './env-base.js';
+import type { EventEnvelope, EventLine } from './event-log.js';
 import type { InfraAction, InfraStatus } from './infra/control.js';
 import type { ServiceName } from './register.js';
 import type { InstanceInfo } from './running.js';
@@ -9,6 +10,7 @@ import {
   SERVICE_START_REQUEST_TIMEOUT_MS,
   SERVICE_STOP_REQUEST_TIMEOUT_MS,
 } from './shutdown-timing.js';
+import { readOwnVersion } from './skill.js';
 
 /** An application service's status on `GET /query/status`. */
 export type SessionServiceStatus = 'running' | 'stopped' | 'waiting' | 'restarting';
@@ -79,22 +81,26 @@ export interface SessionStatus<P extends string = ServiceName> {
 }
 
 /**
- * A line of `GET /events`, each one JSON object with a `type`:
- *
- * - `snapshot`: the first line, the same as `GET /query/status`.
- * - `service`: a service's status or readiness changed, with both as they are now.
- * - `infra`: an infra service's status changed.
- * - `session`: the session became ready as a whole, or stopped being (see
- *   {@link SessionStatus.sessionReady}).
- * - `heartbeat`: sent every {@link EVENTS_HEARTBEAT_MS} whatever else happens, with the session's
- *   clock in ms.
+ * A line of `GET /events`, each one JSON object with a `type`: first `snapshot`, the same as
+ * `GET /query/status`; then every line of the mode's event log as it is written (an
+ * {@link EventLine}: a state change, a command, the session's own lifecycle), by the session or
+ * by another stackctl process; and a `heartbeat` every {@link EVENTS_HEARTBEAT_MS} whatever else
+ * happens, with the session's clock in ms. A client that switches on `type` ignores the ones it
+ * doesn't know.
  */
 export type SessionEvent<P extends string = ServiceName> =
   | ({ type: 'snapshot' } & SessionStatus<P>)
-  | { type: 'service'; service: P; status: SessionServiceStatus; ready: boolean }
-  | { type: 'infra'; service: string; status: InfraStatus }
-  | { type: 'session'; ready: boolean }
-  | { type: 'heartbeat'; at: number };
+  | { type: 'heartbeat'; at: number }
+  | (Omit<Extract<EventLine, { type: 'service-state' }>, 'service'> & { service: P })
+  | Exclude<EventLine, { type: 'service-state' }>;
+
+export type { EventEnvelope };
+
+/**
+ * What stackctl's own client says it is, so the event log can tell a stackctl command's request
+ * (`stackctl service restart`, `stop`, a takeover) from `curl`'s.
+ */
+const CLIENT_HEADERS = { 'user-agent': `stackctl/${readOwnVersion()}` };
 
 /** How often `GET /events` sends a heartbeat. */
 export const EVENTS_HEARTBEAT_MS = 5000;
@@ -171,6 +177,7 @@ export function createControlClient<P extends string = string>(
     try {
       const res = await fetch(`${base}${path}`, {
         method: 'POST',
+        headers: CLIENT_HEADERS,
         signal: AbortSignal.timeout(timeout),
       });
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean };
@@ -208,6 +215,7 @@ export function createControlClient<P extends string = string>(
   async function queryStatus(): Promise<SessionStatus<P> | null> {
     try {
       const res = await fetch(`${base}/query/status`, {
+        headers: CLIENT_HEADERS,
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) {
@@ -258,7 +266,10 @@ export function createControlClient<P extends string = string>(
     };
     try {
       arm();
-      const res = await fetch(`${base}/events`, { signal: controller.signal });
+      const res = await fetch(`${base}/events`, {
+        headers: CLIENT_HEADERS,
+        signal: controller.signal,
+      });
       if (!res.ok || !res.body) {
         throw new Error(`GET /events on port ${String(port)} answered ${String(res.status)}`);
       }
@@ -300,6 +311,7 @@ export function createControlClient<P extends string = string>(
       // not the short default. Returns true only on an explicit `ok` ack.
       const res = await fetch(`${base}/command/quit`, {
         method: 'POST',
+        headers: CLIENT_HEADERS,
         signal: AbortSignal.timeout(QUIT_REQUEST_TIMEOUT_MS),
       });
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean };

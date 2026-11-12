@@ -21,7 +21,7 @@ const immutableAssets: ServerMiddleware = async (req, next) => {
 
 // srvx logs its own "Listening on..." banner and installs graceful-shutdown handlers.
 serve({
-  port: Number(process.env.PORT) || 3000,
+  port: Number(process.env.PORT) || 21060,
   hostname: process.env.HOST || '0.0.0.0',
   middleware: [immutableAssets, staticMiddleware({ dir: 'dist/client' })],
   fetch: handler.fetch,

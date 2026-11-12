@@ -1,5 +1,5 @@
 ---
-description: Recipes for a coding agent - check whether an app is running, find a service's URL, start a stack in the background and wait for it, restart a service, run one-off commands, use infra, read logs and onboard a new service.
+description: Recipes for a coding agent - check whether an app is running, find a service's URL, start a stack in the background and wait for it, run tests in the test mode, restart a service, bring back one that is down, run one-off commands, use infra, read logs and onboard a new service.
 ---
 
 # Agent playbook
@@ -9,6 +9,8 @@ reference page with the details.
 
 ## Rules
 
+- **Run stackctl through the package manager:** `pnpm stackctl …` (or `npx`, `yarn`, `bunx`).
+  It is a dev dependency, not on your `PATH`. The recipes here write `stackctl` for short.
 - **Never `kill`, `pkill` or `lsof … | kill` a stackctl process or its port.** Stop a session
   with `POST /command/quit` or `stackctl stop`, and restart a service with
   `stackctl service restart -s <name>`. A killed session leaves its services running.
@@ -29,14 +31,10 @@ reference page with the details.
    directory. If there is none, see [Apps stackctl doesn't manage](#apps-stackctl-doesnt-manage).
 2. **Is the app one of its services?** `stackctl show-config | jq '.services | keys'`. The key
    is the name `-s` and the control API take. It need not match the directory.
-3. **Is a session live?** Read the mode's record and check it, as in
-   [Finding the port](../reference/control-api.md#finding-the-port). No record, or a dead
-   pid, means no session.
-4. **Read the service's state** from `GET /query/status`:
-
-```bash
-curl -s "http://127.0.0.1:$port/query/status" | jq '{ services, ready, sessionReady }'
-```
+3. **Ask stackctl:** `stackctl status` says whether the mode's session runs, each service's
+   state and readiness, and the last commands that acted on it. `stackctl status --json` has
+   the same for `jq`: `.status.services`, `.status.ready`. See
+   [`stackctl status`](../reference/cli.md#stackctl-status).
 
 | `services.<name>` | Meaning                                                                    |
 | ----------------- | -------------------------------------------------------------------------- |
@@ -46,7 +44,7 @@ curl -s "http://127.0.0.1:$port/query/status" | jq '{ services, ready, sessionRe
 | `stopped`         | Not running: it exited, crashed or was never started.                      |
 | not a key         | Configured, but not part of this session.                                  |
 
-`services: null` means the session is still starting its infra. Check again in a few seconds.
+No services yet means the session is still starting its infra. Check again in a few seconds.
 
 ## Reach a service
 
@@ -82,7 +80,7 @@ stackctl --headless -s web
 
 ```bash
 curl -sN "http://127.0.0.1:$port/events" \
-  | grep -m1 -E '"sessionReady":true|"type":"session","ready":true|"status":"stopped"'
+  | grep -m1 -E '"sessionReady":true|"type":"session-state","ready":true|"status":"stopped"'
 ```
 
    A line with `"status":"stopped"` means a service crashed while starting. Read the log.
@@ -92,6 +90,21 @@ The config's infra comes up first on its own, and stays up after the session end
 e2e suite, call [`startStack()`](../guide/testing.md#in-a-test-runner) from its global setup
 instead. For a CI workflow you are asked to write, use
 [`stackctl start --detach`](../guide/testing.md#in-ci).
+
+## Run tests
+
+Tests that call the services need them running, in the test mode: its own ports and its own
+database, so a test never writes to the data you develop with.
+
+1. **Find the test mode:** a `.env.test` beside `stackctl.config.ts`. Without one, ask.
+2. **Start a test session** of the services the tests call, as in [Start a stack](#start-a-stack):
+   `stackctl --mode test --headless -s api`. It runs beside a development session when the
+   services it starts have ports of their own in the test mode.
+3. **Run the tests in its environment:** `stackctl --mode test run api test`.
+4. **Stop it:** `POST /command/quit` to the port in `node_modules/.stackctl/modes/test/running.json`.
+
+A suite that calls [`startStack()`](../guide/testing.md#in-a-test-runner) starts its own session:
+just run it. Never run tests against the development session.
 
 ## Drive a running session
 
@@ -108,6 +121,23 @@ Or over the [control API](../reference/control-api.md):
 
 `stackctl stop` ends the whole session, including one a person started. Run it only when
 asked.
+
+## A service is down
+
+1. **Read its state**, as in [Is it running?](#is-it-running): `stopped`, or `running` but
+   not ready. A dev script that watches its files, such as `node --watch`, outlives its app:
+   when the app exits it stays `running` and waits for an edit.
+2. **Find why it stopped:** `stackctl logs | grep '\[api *\]' | grep -iE 'error|exception'`.
+   A crash prints its error first, then its stack and anything it dumps, so its last lines
+   rarely say why.
+3. **Find what acted on it.** The [event log](../reference/events.md) records every command that
+   changed the stack, by a key, the control API or a stackctl command, and who ran it. `stackctl
+   status` lists the last ones; `stackctl events -n 50` has them all, with each service's state
+   changes: an infra service restarted just before the crash is the likely cause.
+4. **Restart it:** `stackctl service restart -s api` waits until it is ready again.
+5. **Read its lines again**, to see it come up or why it failed again.
+
+Don't run the service's command yourself while the session runs it: your copy takes its port.
 
 ## After editing code
 
@@ -151,9 +181,12 @@ A session starts its infra itself. In a running session, restart one infra servi
 
 ```bash
 stackctl logs                 # the current session's whole log
-stackctl logs --path          # its path, to grep or tail
-grep -i error "$(stackctl logs --path)"
+stackctl logs | grep -i error
+stackctl logs --path          # its path, to read or tail
 ```
+
+Pipe `stackctl logs` rather than substituting `$(stackctl logs --path)`: a harness can't check a
+command substitution before it runs, so it asks the user.
 
 Each line is `<timestamp> [<service>] <text>`, the label padded with spaces before its `]` so
 every line's text lines up: match one service's with `grep '\[api *\]'`. `[stackctl]` lines are

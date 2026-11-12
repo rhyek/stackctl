@@ -100,7 +100,7 @@ export default defineConfig({
     frontend: {
       // At http://app.localhost:21050, and every path the bare http://localhost:21050 doesn't send
       // to the backend. Vite HMR rides the proxied connection (see vite.config.ts).
-      port: 3000,
+      port: 21060,
       // A longer probe deadline: a dev server compiling on first request can exceed the 1500ms default.
       healthcheck: { url: '/', timeout: 5000 },
       urls: [

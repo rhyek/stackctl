@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import { readAgentsBlock, readInstalledRules, rulesInstallPath } from './agent-rules.js';
 import { runInit } from './init.js';
 import { readInstalledSkill, readOwnVersion } from './skill.js';
 
@@ -18,6 +19,36 @@ describe('runInit --yes (non-interactive)', () => {
     expect(fs.existsSync(path.join(cwd, 'stackctl.config.ts'))).toBe(true);
     expect(fs.existsSync(path.join(cwd, 'tsconfig.json'))).toBe(true);
     expect(fs.existsSync(path.join(cwd, '.claude/skills/stackctl/SKILL.md'))).toBe(true);
+  });
+
+  test('installs the rules file with the skill, and leaves AGENTS.md alone', async () => {
+    fs.writeFileSync(path.join(cwd, 'AGENTS.md'), '# Mine\n');
+    await runInit({ cwd, yes: true });
+    expect(readInstalledRules(rulesInstallPath(cwd))).toEqual({ version: readOwnVersion(), unedited: true }); // oxfmt-ignore
+    expect(fs.readFileSync(path.join(cwd, 'AGENTS.md'), 'utf8')).toBe('# Mine\n');
+  });
+
+  test('adds the AGENTS.md section when asked to (`agentsMd`), once, after what the file says', async () => {
+    fs.writeFileSync(path.join(cwd, 'AGENTS.md'), '# Mine\n\nA rule.\n');
+    await runInit({ cwd, yes: true, agentsMd: true });
+    await runInit({ cwd, yes: true, agentsMd: true });
+    const text = fs.readFileSync(path.join(cwd, 'AGENTS.md'), 'utf8');
+    expect(text.startsWith('# Mine\n\nA rule.\n\n<!-- BEGIN:stackctl ')).toBe(true);
+    expect(text.match(/BEGIN:stackctl/g)).toHaveLength(1);
+  });
+
+  test('rewrites a section already in AGENTS.md without being asked to', async () => {
+    await runInit({ cwd, yes: true, agentsMd: true });
+    fs.writeFileSync(path.join(cwd, 'AGENTS.md'), fs.readFileSync(path.join(cwd, 'AGENTS.md'), 'utf8').replace(/BEGIN:stackctl v\S+/, 'BEGIN:stackctl v0.0.1')); // oxfmt-ignore
+    await runInit({ cwd, yes: true });
+    expect(readAgentsBlock(cwd)).toEqual({ version: readOwnVersion() });
+  });
+
+  test('installs none of it when told to (`guidance: false`)', async () => {
+    await runInit({ cwd, yes: true, guidance: false, agentsMd: true });
+    expect(fs.existsSync(path.join(cwd, 'stackctl.config.ts'))).toBe(true);
+    expect(fs.existsSync(path.join(cwd, '.claude'))).toBe(false);
+    expect(fs.existsSync(path.join(cwd, 'AGENTS.md'))).toBe(false);
   });
 
   test('is idempotent: keeps the existing config and does not duplicate the tsconfig include', async () => {

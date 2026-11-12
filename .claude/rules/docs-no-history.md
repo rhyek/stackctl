@@ -6,14 +6,16 @@ paths:
   - "docs/config/*.md"
   - "docs/reference/*.md"
   - "docs/ai/*.md"
-  - "packages/stackctl/assets/skill.md"
+  - "packages/stackctl/skills/stackctl/SKILL.md"
+  - "packages/stackctl/assets/agent-rules.md"
 ---
 
 # User-facing docs — the current surface only, no history
 
 **Describe what stackctl does today, and nothing about what it did before.** This covers
 `README.md`, the site's pages in `docs/` (`guide/`, `config/`, `reference/`, `ai/`) and the
-installed skill, `packages/stackctl/assets/skill.md`. An agent reads these pages to use
+installed skill and rules file, `packages/stackctl/skills/stackctl/SKILL.md` and
+`packages/stackctl/assets/agent-rules.md`. An agent reads these pages to use
 stackctl, so history costs it tokens each time, and a reader who never saw the old behavior can
 only be confused by a description of it.
 

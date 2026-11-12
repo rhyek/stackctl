@@ -496,15 +496,15 @@ function apply(
       Object.assign(state.ready, event.ready ?? {});
       Object.assign(state.infra, event.infra ?? {});
       return true;
-    case 'service':
+    case 'service-state':
       state.services[event.service] = event.status;
       state.ready[event.service] = event.ready;
       return true;
-    case 'infra':
+    case 'infra-state':
       state.infra[event.service] = event.status;
       return true;
-    case 'session':
-    case 'heartbeat':
+    default:
+      // `session-state`, `heartbeat`, and the event log's commands and lifecycle: no state to fold.
       return false;
   }
 }

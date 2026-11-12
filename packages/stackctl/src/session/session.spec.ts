@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { type AnyServiceConfig, defineConfig } from '../config.js';
 import type { ControlManager } from '../control-server.js';
 import type { DevReverseProxyManager, DevReverseProxyServer } from '../dev-reverse-proxy.js';
+import { EventLog, type EventBy, eventsFilePath } from '../event-log.js';
 import { stripAnsi } from '../format.js';
 import { InfraFailedError } from '../infra/session.js';
 import type { InfraEvent } from '../infra/types.js';
@@ -66,11 +67,16 @@ class StubProcess extends EventEmitter<ServiceProcessEvents> implements Supervis
     this.exit({ code: null, signal: 'SIGKILL' });
   }
 
+  /** Exits on its own, with `code`: a crash nothing asked for. */
+  crash(code: number): void {
+    this.exit({ code, signal: null });
+  }
+
   private exit(exit: ProcessExit): void {
     if (this.state === 'exited') {
       return;
     }
-    this.exitCode = exit.signal === 'SIGKILL' ? 137 : 143;
+    this.exitCode = exit.code ?? (exit.signal === 'SIGKILL' ? 137 : 143);
     this.set('exited');
     this.resolveExit(exit);
     this.emit('exit', exit);
@@ -81,6 +87,9 @@ class StubProcess extends EventEmitter<ServiceProcessEvents> implements Supervis
     this.emit('state', state);
   }
 }
+
+/** Who asked, as a test's control API request would say. */
+const BY = { kind: 'control-api', request: 'POST /command/test', userAgent: null } as const;
 
 const cleanups: (() => void | Promise<void>)[] = [];
 
@@ -163,17 +172,21 @@ function setup(opts: {
     /** The port the session asked it to listen on. */
     askedFor: null as number | null,
     attached: null as ControlManager | null,
-    quitHandler: null as (() => void) | null,
+    quitHandler: null as ((by: EventBy) => void) | null,
     acks: 0,
+    flushes: 0,
     closed: false,
     bindSession(manager: ControlManager) {
       this.attached = manager;
     },
-    setQuitHandler(fn: () => void) {
+    setQuitHandler(fn: (by: EventBy) => void) {
       this.quitHandler = fn;
     },
     ackQuit() {
       this.acks++;
+    },
+    flush() {
+      this.flushes++;
     },
     close() {
       this.closed = true;
@@ -211,6 +224,7 @@ function setup(opts: {
     watchBranch: () => ({ branch: 'main', stop: () => {} }),
     signalGroup: (pid, signal) => signalled.push([pid, signal]),
     installSignals: () => () => {},
+    events: new EventLog({ root, mode: 'development', sessionId: () => 'session-test' }),
     ...opts.seams,
   };
   const session = new Session({ plan, configPath: path.join(root, 'stackctl.config.ts'), logFile, forked: opts.forked ?? false, interactive: opts.interactive, seams }); // oxfmt-ignore
@@ -568,7 +582,11 @@ describe('shutdown', () => {
     await until(() => expect(t.server.quitHandler).not.toBeNull());
     await until(() => expect(t.order).toContain('infra'));
     // `/command/quit` runs the one shutdown path, without waiting for infra.
-    t.server.quitHandler!();
+    t.server.quitHandler!({
+      kind: 'control-api',
+      request: 'POST /command/quit',
+      userAgent: 'curl/8.7.1',
+    });
     expect(await t.session.closed).toBe(0);
     expect(t.session.getSnapshot().phase).toBe('stopping');
     expect(t.server.acks).toBe(1);
@@ -578,6 +596,45 @@ describe('shutdown', () => {
     expect(t.session.getSnapshot().services.map((s) => s.state)).toEqual(['stopped']);
     // Nothing to wait on: no shutdown line.
     expect(t.lines()).not.toContain('[stackctl] [WARN] shutting down...');
+  });
+
+  test('writes what acts on it to the event log: its start, each command and who asked, the quit, its end', async () => {
+    const t = setup({ services: { api: {}, web: {} } });
+    await t.session.start();
+    await until(() => expect(t.procs).toHaveLength(2));
+    expect(await t.session.runPackage('api', 'stop', BY)).toBe('done');
+    const curl = { kind: 'control-api', request: 'POST /command/quit', userAgent: 'curl/8.7.1' } as const; // oxfmt-ignore
+    t.server.quitHandler!(curl);
+    expect(await t.session.closed).toBe(0);
+    const lines = fs
+      .readFileSync(eventsFilePath(t.root, 'development'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines.map((l) => [l.type, l.phase ?? null])).toEqual([
+      ['session-start', null],
+      ['service-command', 'begin'],
+      ['service-command', 'end'],
+      ['session-command', 'begin'],
+      ['session-command', 'end'],
+      ['session-end', null],
+    ]);
+    expect(lines[0]).toMatchObject({ services: ['api', 'web'], headless: true, replaced: null, sessionId: 'session-test' }); // oxfmt-ignore
+    expect(lines[2]).toMatchObject({ action: 'stop', service: 'api', by: BY, ok: true, outcome: 'done' }); // oxfmt-ignore
+    expect(lines[3]).toMatchObject({ action: 'quit', by: curl });
+    expect(lines[5]).toMatchObject({ cause: 'quit' });
+    // written before the server closed, and flushed to its streams
+    expect(t.server.flushes).toBeGreaterThan(0);
+  });
+
+  test('writes a service whose process exits on its own, with how', async () => {
+    const t = setup({ services: { api: {} } });
+    await t.session.start();
+    await until(() => expect(t.procs).toHaveLength(1));
+    t.procs[0]!.crash(3);
+    await until(() => expect(fs.readFileSync(eventsFilePath(t.root, 'development'), 'utf8')).toContain('service-exit')); // oxfmt-ignore
+    const exit = fs.readFileSync(eventsFilePath(t.root, 'development'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.type === 'service-exit'); // oxfmt-ignore
+    expect(exit).toMatchObject({ type: 'service-exit', service: 'api', exitCode: 3, signal: null });
   });
 
   test('a shutdown stops every process, then SIGKILLs the groups they led', async () => {
@@ -651,8 +708,8 @@ describe('snapshot', () => {
     expect(t.session.getSnapshot()).toBe(before);
     let calls = 0;
     t.session.subscribe(() => calls++);
-    void t.session.runPackage('api', 'stop');
-    void t.session.runPackage('web', 'stop');
+    void t.session.runPackage('api', 'stop', BY);
+    void t.session.runPackage('web', 'stop', BY);
     expect(calls).toBe(0);
     await Promise.resolve();
     expect(calls).toBe(1);
@@ -671,14 +728,14 @@ describe('snapshot', () => {
     await until(() => expect(t.session.getAllReadiness()).toEqual({ api: true, web: true }));
     expect(t.session.serviceStatuses()).toEqual({ api: 'running', web: 'running' });
     expect(t.session.getStatus('nope')).toBeNull();
-    expect(await t.session.runPackage('nope', 'start')).toBe('unknown');
-    expect(await t.session.runPackage('extra', 'stop')).toBe('done');
-    expect(await t.session.runPackage('extra', 'restart')).toBe('unknown');
-    expect(await t.session.runPackage('api', 'restart')).toBe('accepted');
-    expect(await t.session.runPackage('api', 'stop')).toBe('busy');
-    expect(await t.session.runPackage('extra', 'start')).toBe('done');
+    expect(await t.session.runPackage('nope', 'start', BY)).toBe('unknown');
+    expect(await t.session.runPackage('extra', 'stop', BY)).toBe('done');
+    expect(await t.session.runPackage('extra', 'restart', BY)).toBe('unknown');
+    expect(await t.session.runPackage('api', 'restart', BY)).toBe('accepted');
+    expect(await t.session.runPackage('api', 'stop', BY)).toBe('busy');
+    expect(await t.session.runPackage('extra', 'start', BY)).toBe('done');
     expect(t.session.serviceStatuses()).toHaveProperty('extra');
-    expect(t.session.runInfra('db', 'restart')).toBe('unknown');
+    expect(t.session.runInfra('db', 'restart', BY)).toBe('unknown');
     t.session.logControl('restart', { service: 'web' });
     expect(t.lines().slice(-2)).toEqual(['[control ] [INFO] restart', '[control ]   service: web']); // oxfmt-ignore
   });
@@ -831,7 +888,7 @@ describe("the run screen's session", () => {
     t.session.clearLog();
     expect(t.lines()).toEqual([]);
 
-    void t.session.runOneOff('api', { shell: 'echo hi' });
+    void t.session.runOneOff('api', { shell: 'echo hi' }, BY);
     await until(() => expect(t.procs).toHaveLength(3));
     expect(t.procs[2]!.opts).toMatchObject({ name: 'api', command: 'echo hi' });
     expect(t.lines()).toEqual(['[api     ] ▶ running: echo hi']);

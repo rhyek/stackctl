@@ -79,7 +79,7 @@ almost always a **port clash**: a previous run or another session still holds
 the dev/control port. Check and clear:
 
 ```bash
-lsof -iTCP -sTCP:LISTEN -P | grep -E ':(3000|3001|3002)'   # stackctl example ports
+lsof -iTCP -sTCP:LISTEN -P | grep -E ':(21060|3001|3002)'   # stackctl example ports
 pgrep -fl "stackctl/dist/cli.js"
 ```
 

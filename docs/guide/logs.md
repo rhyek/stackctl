@@ -86,3 +86,14 @@ sctl logs --mode test   # the test session's
 
 Ctrl+C stops the following, never the session. With no session running, it shows the last
 one's log. See [`sctl logs`](../reference/cli.md#stackctl-logs).
+
+## What acted on the session
+
+The log holds what the services print. What acted on them, a key pressed, a control API request,
+a `sctl infra restart` from another terminal, goes to the mode's
+[event log](../reference/events.md) instead, with who did it:
+
+```bash
+sctl status       # the session now, and the last commands
+sctl events -f    # every line, as it is written
+```

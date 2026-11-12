@@ -28,7 +28,9 @@ function banner(version: string, hash: string): string {
 }
 
 /**
- * Reads the shipped `assets/skill.md` template and renders it with the managed banner.
+ * Reads the shipped `skills/stackctl/SKILL.md` and renders it with the managed banner. The file
+ * sits where pnpm looks for a dependency's skills (`skills/<name>/SKILL.md`), so `pnpm approve`
+ * can link it as it is; this copy, with its banner, is what stackctl writes itself.
  *
  * The banner goes INSIDE the frontmatter, as a YAML comment on the line after the opening `---`.
  * That keeps it the first thing a human sees when they open the file — which is the whole point of
@@ -41,11 +43,11 @@ function banner(version: string, hash: string): string {
  * file alone says which version wrote it and whether anyone has edited it since.
  */
 export function renderSkill(version: string): string {
-  const templatePath = path.join(import.meta.dirname, '../assets/skill.md');
+  const templatePath = path.join(import.meta.dirname, '../skills/stackctl/SKILL.md');
   const template = fs.readFileSync(templatePath, 'utf8').replace(BANNER_RE, '');
 
   if (!template.startsWith('---\n')) {
-    throw new Error('assets/skill.md must open with YAML frontmatter on line 1');
+    throw new Error('skills/stackctl/SKILL.md must open with YAML frontmatter on line 1');
   }
   const unbannered = template;
   const hash = contentHash(unbannered);
@@ -90,7 +92,7 @@ export function readOwnVersion(): string {
 }
 
 /** `true` when `a` is an older semver-ish (`x.y.z`) version than `b`. */
-function isOlder(a: string, b: string): boolean {
+export function isOlder(a: string, b: string): boolean {
   const pa = a.split('.').map(Number);
   const pb = b.split('.').map(Number);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
@@ -189,26 +191,6 @@ export function installSkill(opts: { cwd?: string; version: string }): string[] 
   writeSkillFile(skillInstallPath(cwd), content);
   const optional = optionalTargets(cwd).filter((target) => existingCopy(target) !== 'own');
   return [skillInstallPath(cwd), ...writeOptional(optional, content)];
-}
-
-/**
- * Writes the rendered skill only where a copy is missing: `.claude/skills/stackctl/SKILL.md`, and
- * under `.agents/` / `.cursor/` where those exist (best-effort). Returns the files written.
- */
-export function installMissingSkill(opts: { cwd?: string; version: string }): string[] {
-  const cwd = opts.cwd ?? process.cwd();
-  let content: string | undefined;
-  const written: string[] = [];
-  if (existingCopy(skillInstallPath(cwd)) === 'missing') {
-    content = renderSkill(opts.version);
-    writeSkillFile(skillInstallPath(cwd), content);
-    written.push(skillInstallPath(cwd));
-  }
-  const missing = optionalTargets(cwd).filter((target) => existingCopy(target) === 'missing');
-  if (missing.length > 0) {
-    written.push(...writeOptional(missing, content ?? renderSkill(opts.version)));
-  }
-  return written;
 }
 
 /**

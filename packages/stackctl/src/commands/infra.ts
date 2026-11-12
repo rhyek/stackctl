@@ -1,9 +1,18 @@
 import chalk from 'chalk';
+import { startedByAgent } from '../agent-detection.js';
 import { getLoadedConfig } from '../config.js';
+import {
+  type ComposeCommandEntry,
+  type InfraCommandEntry,
+  cliEventLog,
+  commandBy,
+  isReadOnlyCompose,
+  maskSecrets,
+} from '../event-log.js';
 import type { InfraAction } from '../infra/control.js';
 import { InfraManager } from '../infra/manager.js';
 import { createInfraReporter, type InfraReporter } from '../infra/report.js';
-import { InfraError } from '../infra/types.js';
+import { InfraError, type InfraRunSummary } from '../infra/types.js';
 import { loadConfigOrExit } from './workspace.js';
 
 // `stackctl infra …`: the services the packages need but that aren't packages. Every subcommand
@@ -28,17 +37,30 @@ async function loadInfraOrExit(): Promise<{ manager: InfraManager; mode: string 
  * Runs an infra command to its exit code. An {@link InfraError} is a message for the user —
  * an unknown service, Docker not running — so it prints as one line, not a stack trace.
  */
-async function infraExitCode(run: () => Promise<number>): Promise<number> {
+async function infraExitCode(
+  run: () => Promise<number>,
+  onError: (message: string) => void = () => {},
+): Promise<number> {
   try {
     return await run();
   } catch (err) {
     if (err instanceof InfraError) {
       console.error(chalk.red(err.message));
+      onError(err.message);
       return 1;
     }
     throw err;
   }
 }
+
+/** What a service that came through a lifecycle command is now. */
+const DONE: Record<InfraCommand, 'ready' | 'stopped' | 'destroyed'> = {
+  start: 'ready',
+  restart: 'ready',
+  reset: 'ready',
+  stop: 'stopped',
+  destroy: 'destroyed',
+};
 
 /** The `stackctl infra` lifecycle commands: a session's infra actions, and `destroy`. */
 export type InfraCommand = InfraAction | 'destroy';
@@ -74,11 +96,48 @@ export async function runInfraCommand(
   return summary.ok ? 0 : 1;
 }
 
-/** `stackctl infra <command>`: runs it with the plain reporter, and exits with its code. */
-export async function runInfra(command: InfraCommand, services: string[]): Promise<never> {
+/**
+ * `stackctl infra <command>`: runs it with the plain reporter, writes it to the mode's event log
+ * (`begin`, then `end` with each service's result), and exits with its code.
+ */
+export async function runInfra(
+  command: InfraCommand,
+  services: string[],
+  invocationCwd: string,
+): Promise<never> {
   const { manager, mode } = await loadInfraOrExit();
-  const reporter = createInfraReporter({ mode });
-  process.exit(await infraExitCode(() => runInfraCommand(manager, command, services, reporter)));
+  const root = process.cwd();
+  const entry = cliEventLog(root, mode).begin<InfraCommandEntry>(
+    { type: 'infra-command', action: command, requested: services },
+    commandBy(root, { agent: startedByAgent(), invocationCwd }),
+  );
+  const plain = createInfraReporter({ mode });
+  let summary: InfraRunSummary | null = null;
+  let error: string | undefined;
+  const reporter: InfraReporter = {
+    ...plain,
+    finish: (finished, action) => {
+      summary = finished;
+      plain.finish(finished, action);
+    },
+  };
+  const code = await infraExitCode(
+    () => runInfraCommand(manager, command, services, reporter),
+    (message) => (error = message),
+  );
+  const ran = summary as InfraRunSummary | null;
+  entry.end({
+    ok: code === 0,
+    ...(ran
+      ? {
+          services: ran.services.map((s) => s.service),
+          results: Object.fromEntries(ran.services.map((s) => [s.service, s.ok ? DONE[command] : ('failed' as const)])), // oxfmt-ignore
+        }
+      : {}),
+    ...(command === 'destroy' && services.length === 0 ? { everything: true } : {}),
+    ...(error !== undefined ? { error } : code !== 0 && !ran ? { error: `exited with code ${String(code)}` } : {}), // oxfmt-ignore
+  });
+  process.exit(code);
 }
 
 /**
@@ -91,6 +150,16 @@ export async function runInfraPassthrough(
   args: string[],
   invocationCwd: string,
 ): Promise<never> {
-  const { manager } = await loadInfraOrExit();
-  process.exit(await infraExitCode(() => manager.passthrough(provider, args, invocationCwd)));
+  const { manager, mode } = await loadInfraOrExit();
+  // What only reads (`ps`, `logs`) leaves no line.
+  const root = process.cwd();
+  const entry = isReadOnlyCompose(args)
+    ? null
+    : cliEventLog(root, mode).begin<ComposeCommandEntry>(
+        { type: 'compose-command', args: maskSecrets(args) },
+        commandBy(root, { agent: startedByAgent(), invocationCwd }),
+      );
+  const code = await infraExitCode(() => manager.passthrough(provider, args, invocationCwd));
+  entry?.end({ ok: code === 0, exitCode: code });
+  process.exit(code);
 }

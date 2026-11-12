@@ -7,6 +7,7 @@ import {
 } from './control-client.js';
 import type { DevReverseProxyServer } from './dev-reverse-proxy.js';
 import { currentMode, currentModeSource } from './env-base.js';
+import { EventTail, fileSize, type EventBy, type EventLog, type StateEntry } from './event-log.js';
 import {
   INFRA_ACTIONS,
   type InfraAction,
@@ -19,6 +20,9 @@ import { sessionId } from './running.js';
 export type ServiceAction = 'start' | 'stop' | 'restart';
 
 export const SERVICE_ACTIONS: readonly ServiceAction[] = ['start', 'stop', 'restart'];
+
+/** How often an open `/events` stream reads the event log for lines other processes wrote. */
+const EVENTS_POLL_MS = 250;
 
 /** What a request's path is parsed against: any fixed origin will do, only the path is read. */
 const REQUEST_URL_BASE = 'http://localhost';
@@ -45,8 +49,11 @@ export interface ControlManager {
   getConfig(): unknown;
   /** Absolute path to the logfile currently being written (rotation-aware). */
   getLogFile(): string;
-  /** Runs an action on an application service; a `stop` resolves once its process has exited. */
-  runPackage(pkg: string, action: ServiceAction): Promise<ServiceRunOutcome>;
+  /**
+   * Runs an action on an application service, for `by`; a `stop` resolves once its process has
+   * exited.
+   */
+  runPackage(pkg: string, action: ServiceAction, by: EventBy): Promise<ServiceRunOutcome>;
   /** Every infra service's status, or `null` for a session without infra. */
   getInfraStatuses(): Record<string, InfraStatus> | null;
   /**
@@ -54,8 +61,8 @@ export interface ControlManager {
    * compares, so a call with nothing changed costs nothing). Returns the unsubscribe.
    */
   subscribeState(fn: () => void): () => void;
-  /** Starts an action on an infra service; returns at once (see `InfraControl.run`). */
-  runInfra(service: string, action: InfraAction): InfraRunOutcome;
+  /** Starts an action on an infra service, for `by`; returns at once (see `InfraControl.run`). */
+  runInfra(service: string, action: InfraAction, by: EventBy): InfraRunOutcome;
   quit(): void;
   /**
    * Emit a `[control]` log line noting a mutating command arrived over the control API (as
@@ -67,8 +74,14 @@ export interface ControlManager {
 }
 
 export async function startControlServer(opts: {
-  quitHandler: () => void;
+  /** Called for `POST /command/quit`, with who asked. */
+  quitHandler: (by: EventBy) => void;
   port: number;
+  /**
+   * The mode's event log: the server writes the session's state changes to it, and `/events`
+   * streams its lines, whoever wrote them.
+   */
+  events: EventLog;
   /** Absolute path to the config this session started with; surfaced on `/query/status` for handoff. */
   configPath?: string;
   /**
@@ -90,7 +103,7 @@ export async function startControlServer(opts: {
    * this — without it, a quit request during that phase would still hit the
    * original (e.g. hard-exit) handler it was constructed with.
    */
-  setQuitHandler(fn: () => void): void;
+  setQuitHandler(fn: (by: EventBy) => void): void;
   /**
    * Send `200 { ok: true }` to any `POST /command/quit` request currently being
    * held open (see the handler), releasing a blocked caller. The graceful
@@ -98,6 +111,8 @@ export async function startControlServer(opts: {
    * is waiting (e.g. a Ctrl+C quit, which never went through the HTTP handler).
    */
   ackQuit(): void;
+  /** Sends every open `/events` stream the event log's lines it hasn't sent yet. */
+  flush(): void;
   close(): Promise<void>;
   port: number;
 }> {
@@ -122,11 +137,15 @@ export async function startControlServer(opts: {
     }
   };
 
-  // `GET /events` responses, each with what it last told its client.
-  const streams = new Set<{ res: http.ServerResponse; last: LiveState }>();
+  // `GET /events` responses: each gets the snapshot, then every line the event log gets.
+  const streams = new Set<http.ServerResponse>();
   let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let poll: ReturnType<typeof setInterval> | null = null;
   let unsubscribe: (() => void) | null = null;
-  let publishScheduled = false;
+  let trackScheduled = false;
+  /** What the event log was last told of the session's state; `null` before the session binds. */
+  let logged: LiveState | null = null;
+  const tail = new EventTail(opts.events.file, fileSize(opts.events.file));
 
   const liveState = (): LiveState => {
     const services = manager ? (manager.serviceStatuses() as Record<string, string>) : null;
@@ -157,51 +176,70 @@ export async function startControlServer(opts: {
   const writeEvent = (res: http.ServerResponse, event: SessionEvent) => {
     res.write(`${JSON.stringify(event)}\n`);
   };
-  // Changes come in bursts (every logged line is one): one comparison per turn of the loop.
-  const schedulePublish = () => {
-    if (publishScheduled || streams.size === 0) {
+  /** The event log's lines since the last call, to every open stream, as they are in the file. */
+  const flush = () => {
+    const lines = tail.read();
+    for (const res of streams) {
+      for (const line of lines) {
+        res.write(`${line}\n`);
+      }
+    }
+  };
+  // Changes come in bursts (every logged line is one): one comparison per turn of the loop, and
+  // one line per change for the event log, whether a client listens or not.
+  const scheduleTrack = () => {
+    if (trackScheduled || !manager) {
       return;
     }
-    publishScheduled = true;
+    trackScheduled = true;
     setImmediate(() => {
-      publishScheduled = false;
+      trackScheduled = false;
       const next = liveState();
-      for (const stream of streams) {
-        for (const event of stateChanges(stream.last, next)) {
-          writeEvent(stream.res, event);
-        }
-        stream.last = next;
+      const changes = stateChanges(logged, next);
+      logged = next;
+      for (const change of changes) {
+        opts.events.write(change);
       }
     });
   };
+  const stopWritten = opts.events.onWrite(flush);
   const openStream = (req: http.IncomingMessage, res: http.ServerResponse) => {
     res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
-    const body = statusBody();
-    const stream = { res, last: liveState() };
-    streams.add(stream);
-    writeEvent(res, { type: 'snapshot', ...body } as SessionEvent);
+    // What came before the snapshot goes to the streams already open; this one starts here.
+    flush();
+    streams.add(res);
+    writeEvent(res, { type: 'snapshot', ...statusBody() } as SessionEvent);
     heartbeat ??= setInterval(() => {
-      for (const { res: open } of streams) {
+      for (const open of streams) {
         writeEvent(open, { type: 'heartbeat', at: Date.now() });
       }
     }, EVENTS_HEARTBEAT_MS).unref();
+    // Other processes' lines (a CLI's `infra restart`), read when this one writes and in between.
+    poll ??= setInterval(flush, EVENTS_POLL_MS).unref();
     req.on('close', () => {
-      streams.delete(stream);
-      if (streams.size === 0 && heartbeat) {
-        clearInterval(heartbeat);
-        heartbeat = null;
+      streams.delete(res);
+      if (streams.size === 0) {
+        stopTimers();
       }
     });
   };
-  const endStreams = () => {
-    for (const { res } of streams) {
-      res.end();
-    }
-    streams.clear();
+  const stopTimers = () => {
     if (heartbeat) {
       clearInterval(heartbeat);
       heartbeat = null;
     }
+    if (poll) {
+      clearInterval(poll);
+      poll = null;
+    }
+  };
+  const endStreams = () => {
+    flush();
+    for (const res of streams) {
+      res.end();
+    }
+    streams.clear();
+    stopTimers();
   };
 
   // Localhost-only convenience API: HTTP methods are intentionally not enforced.
@@ -221,6 +259,12 @@ export async function startControlServer(opts: {
     if (pathname === '/events') {
       return openStream(req, res);
     }
+    /** Who asked: this request, by its path and its client. */
+    const by: EventBy = {
+      kind: 'control-api',
+      request: `${req.method ?? 'GET'} ${pathname}`,
+      userAgent: req.headers['user-agent'] ?? null,
+    };
     if (pathname === '/command/quit') {
       manager?.logControl('quit');
       // Blocking quit: hold the response open and let the graceful shutdown path
@@ -232,7 +276,7 @@ export async function startControlServer(opts: {
       // caller falls back to polling this pid.
       res.setHeader('Connection', 'close');
       pendingQuits.push(res);
-      return quitHandler();
+      return quitHandler(by);
     }
     if (pathname === '/') {
       return send(res, 200, { ok: true, pid: process.pid, attached: Boolean(manager) });
@@ -252,7 +296,7 @@ export async function startControlServer(opts: {
         return send(res, 404, { ok: false, error: `unknown service action "${parts[2]}"` });
       }
       manager.logControl(action, { service: name });
-      void manager.runPackage(name, action).then(
+      void manager.runPackage(name, action, by).then(
         (outcome) => {
           switch (outcome) {
             case 'done':
@@ -291,7 +335,7 @@ export async function startControlServer(opts: {
         return send(res, 404, { error: `unknown infra action "${parts[2]}"` });
       }
       manager.logControl(`infra ${action}`, { infraService: parts[3] });
-      const outcome = manager.runInfra(parts[3], action);
+      const outcome = manager.runInfra(parts[3], action, by);
       return outcome === 'accepted'
         ? send(res, 202, { ok: true })
         : outcome === 'busy'
@@ -311,19 +355,21 @@ export async function startControlServer(opts: {
   return {
     bindSession: (m) => {
       manager = m;
-      unsubscribe = m.subscribeState(schedulePublish);
-      schedulePublish();
+      unsubscribe = m.subscribeState(scheduleTrack);
+      scheduleTrack();
     },
     setQuitHandler: (fn) => {
       quitHandler = fn;
     },
     ackQuit: flushQuits,
+    flush,
     close: () => {
       // Answer any still-held quit request before closing, so server.close()
       // never blocks waiting on an un-responded socket.
       flushQuits();
       // An open `/events` stream would hold `server.close()` for as long as its client listens.
       endStreams();
+      stopWritten();
       unsubscribe?.();
       unsubscribe = null;
       const stopped = new Promise<void>((settle) => {
@@ -367,22 +413,28 @@ function isSessionReady(
   );
 }
 
-/** The `/events` lines that take a client from `prev` to `next`. */
-function stateChanges(prev: LiveState, next: LiveState): SessionEvent[] {
-  const events: SessionEvent[] = [];
+/**
+ * The state lines that take the event log from `prev` (`null`: nothing written yet) to `next`, each
+ * with what it was. The first call writes every service and infra service as it is.
+ */
+function stateChanges(prev: LiveState | null, next: LiveState): StateEntry[] {
+  const entries: StateEntry[] = [];
   for (const [service, status] of Object.entries(next.services ?? {})) {
     const ready = next.ready?.[service] === true;
-    if (prev.services?.[service] !== status || (prev.ready?.[service] === true) !== ready) {
-      events.push({ type: 'service', service, status: status as SessionServiceStatus, ready });
+    const previousStatus = (prev?.services?.[service] ?? null) as SessionServiceStatus | null;
+    const previousReady = prev?.services?.[service] === undefined ? null : prev.ready?.[service] === true; // oxfmt-ignore
+    if (previousStatus !== status || previousReady !== ready) {
+      entries.push({ type: 'service-state', service, status: status as SessionServiceStatus, ready, previousStatus, previousReady }); // oxfmt-ignore
     }
   }
   for (const [service, status] of Object.entries(next.infra ?? {})) {
-    if (prev.infra?.[service] !== status) {
-      events.push({ type: 'infra', service, status });
+    const previousStatus = prev?.infra?.[service] ?? null;
+    if (previousStatus !== status) {
+      entries.push({ type: 'infra-state', service, status, previousStatus });
     }
   }
-  if (prev.sessionReady !== next.sessionReady) {
-    events.push({ type: 'session', ready: next.sessionReady });
+  if ((prev?.sessionReady ?? false) !== next.sessionReady) {
+    entries.push({ type: 'session-state', ready: next.sessionReady });
   }
-  return events;
+  return entries;
 }

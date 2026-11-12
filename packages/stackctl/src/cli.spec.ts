@@ -399,6 +399,21 @@ describe('stackctl exec', () => {
     expect((await stackctl(['exec', 'app', '--', 'sh', '-c', 'exit 5'])).exitCode).toBe(5);
   });
 
+  test("writes its two lines to the mode's event log: where, what (a URL's password masked), its exit", async () => {
+    // oxfmt-ignore
+    const log = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'events.log');
+    fs.rmSync(log, { force: true });
+    const asked = ['sh', '-c', 'exit 3', 'postgres://app:s3cret@db/app'];
+    await stackctl(['exec', 'app', '--', ...asked], { env: { STACKCTL_STARTED_BY_AGENT: '0' } });
+    const lines = fs.readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>); // oxfmt-ignore
+    const command = ['sh', '-c', 'exit 3', 'postgres://app:***@db/app'];
+    expect(lines).toMatchObject([
+      { type: 'one-off-command', phase: 'begin', kind: 'exec', service: 'app', command, by: { kind: 'cli', cwd: '.', agent: false } }, // oxfmt-ignore
+      { type: 'one-off-command', phase: 'end', kind: 'exec', service: 'app', command, ok: false, exitCode: 3, signal: null }, // oxfmt-ignore
+    ]);
+    expect(JSON.stringify(lines)).not.toContain('s3cret');
+  });
+
   test('fails when no command is given', async () => {
     const result = await stackctl(['exec', 'app']);
     expect(result.exitCode).toBe(1);
@@ -761,12 +776,17 @@ describe('finding the workspace', () => {
     expect(version.stdout).toBe(expected);
     expect((await stackctl(['--help'], { cwd: empty })).exitCode).toBe(0);
     expect((await stackctl(['show-config', '--help'], { cwd: empty })).exitCode).toBe(0);
-    // The compiled copy looks for the skill's asset beside its own directory's parent.
-    const assets = path.join(buildDir, '..', 'assets');
-    fs.cpSync(path.join(packageDir, 'assets'), assets, { recursive: true });
-    const init = await stackctl(['init', '-y'], { cwd: empty }).finally(() =>
-      fs.rmSync(assets, { recursive: true, force: true }),
-    );
+    // The compiled copy looks for the rules file's text and the skill beside its own
+    // directory's parent.
+    const beside = ['assets', 'skills'].map((dir) => path.join(buildDir, '..', dir));
+    for (const dir of beside) {
+      fs.cpSync(path.join(packageDir, path.basename(dir)), dir, { recursive: true });
+    }
+    const init = await stackctl(['init', '-y'], { cwd: empty }).finally(() => {
+      for (const dir of beside) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
     expect(init.exitCode).toBe(0);
     expect(fs.existsSync(path.join(empty, 'stackctl.config.ts'))).toBe(true);
   });
@@ -1689,10 +1709,11 @@ describe('what a command loads', () => {
     await stackctl(['exec', 'app', '--', 'true']);
     const { result, packages, evaluatedConfig } = await traced(['--mode', 'development', 'reset']);
     expect(result.stdout).toBe(
-      'No development stackctl session is running.\nRemoved node_modules/.stackctl/modes/development/',
+      'No development stackctl session is running.\nRemoved node_modules/.stackctl/modes/development/; its events.log starts again with this reset.',
     );
     expect(result.exitCode).toBe(0);
-    expect(fs.existsSync(path.join(ws, 'node_modules', '.stackctl', 'modes', 'development'))).toBe(false); // oxfmt-ignore
+    // Nothing of the mode's state is left but the event log the reset opened with its own line.
+    expect(fs.readdirSync(path.join(ws, 'node_modules', '.stackctl', 'modes', 'development'))).toEqual(['events.log']); // oxfmt-ignore
     expect(evaluatedConfig).toBe(false);
     expectNotLoaded(packages, HEAVY);
   });

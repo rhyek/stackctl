@@ -1,5 +1,5 @@
 ---
-description: Every stackctl command and flag - start, stop, reset, service, show-config, exec, run, logs, infra and init - plus global options, taking over a session and where state is kept.
+description: Every stackctl command and flag - start, stop, reset, service, status, events, show-config, exec, run, logs, infra and init - plus global options, taking over a session and where state is kept.
 ---
 
 # CLI
@@ -28,6 +28,8 @@ above the current one, that holds `stackctl.config.ts`. Without one, every comma
 | [`stop`](#stackctl-stop)                       | Stop the mode's session.                                  |
 | [`reset`](#stackctl-reset)                     | Stop it, then delete the mode's state.                    |
 | [`service`](#stackctl-service)                 | Start, stop or restart services in a running session.     |
+| [`status`](#stackctl-status)                   | The session now, and the last commands that acted on it.  |
+| [`events`](#stackctl-events)                   | Print or follow the mode's event log.                     |
 | [`show-config`](#stackctl-show-config)         | Print the resolved config as JSON.                        |
 | [`exec`](#stackctl-exec-and-stackctl-run)      | Run a command with a service's environment.               |
 | [`run`](#stackctl-exec-and-stackctl-run)       | Run a script with a service's environment.                |
@@ -61,6 +63,10 @@ Starts a session. `stackctl` with no command is `stackctl start`, so `stackctl -
 | `--wait-timeout <s>`     | How long `--detach` waits for the session to be ready. Default `300`.                |
 | `--kill-others`          | Quit a session already running in this mode without asking.                          |
 | `--log-dir <dir>`        | Where to write the session log. Default `node_modules/.stackctl/modes/<mode>/logs/`. |
+
+The first time a person starts a session in a terminal, stackctl offers to install the
+[agent guidance](../ai/overview.md#agent-guidance). It asks once, and never asks an agent, a
+script or CI.
 
 ### `--headless`
 
@@ -147,8 +153,9 @@ stackctl --mode development reset
 ```
 
 Runs `stop`, then deletes the mode's state, `node_modules/.stackctl/modes/<mode>/`: its
-session record, saved selection and default logs. `--mode` is required. Infra, other modes
-and logs written to a custom `--log-dir` are left alone.
+session record, saved selection, default logs and event log. `--mode` is required. Infra, other
+modes and logs written to a custom `--log-dir` are left alone. The reset writes its own lines to a
+new event log.
 
 ## `stackctl service`
 
@@ -170,6 +177,47 @@ Drives application services in the mode's **running** session, through its
 All take `-s, --service <name>`, repeatable. `start` and `restart` wait until the services
 are ready, up to `--wait-timeout <s>` (default `300`), and exit `1` if one isn't. For infra
 services, use [`stackctl infra`](#stackctl-infra).
+
+## `stackctl status`
+
+```bash
+stackctl status          # the mode's session, and what last acted on it
+stackctl status --json   # the same, as JSON
+```
+
+```
+development session: running since today 13:21:57 (pid 86046, control port 14037), started by a person
+services  backend   running, not ready
+          frontend  running, not ready
+          worker    running, ready
+infra     db        running
+          mail      running
+log       node_modules/.stackctl/modes/development/logs/1794424917144-86046-1.log
+events    node_modules/.stackctl/modes/development/events.log
+
+last commands
+  today 13:21:57  session-start  backend, frontend, worker, headless
+  today 13:21:57  infra-command  start every service                  ok, 646ms  by the session
+  today 13:22:12  infra-command  restart db                           ok, 2.2s   by cli: infra restart -s db (a person)
+```
+
+- **The session** is the mode's running one, checked as
+  [Finding the port](./control-api.md#finding-the-port) does. Without one it says so.
+- **The last commands** are the event log's last 10 commands and lifecycle entries, each command's
+  two lines as one row. See [Events](./events.md).
+- **Read-only, and exits `0`** with a session or without.
+
+## `stackctl events`
+
+```bash
+stackctl events          # the mode's event log, one JSON object per line
+stackctl events -n 20    # its last 20 lines
+stackctl events -f       # print them, then follow
+stackctl events --path   # print its path
+```
+
+The lines are [the event log's](./events.md), as they are in the file, for `jq`. It reads the
+file, a session running or not, and never asks the session anything.
 
 ## `stackctl show-config`
 
@@ -283,9 +331,32 @@ stackctl init        # interactive
 stackctl init -y     # accept the defaults
 ```
 
-Creates `stackctl.config.ts` if there is none, adds it to the root `tsconfig.json`, and
-installs the [agent skill](../ai/overview.md#the-skill) if you agree. Safe to run again.
-`--workspace-dir <dir>` creates the config in that directory.
+Creates `stackctl.config.ts` if there is none, adds it to the root `tsconfig.json`, and offers
+the [agent guidance](../ai/overview.md#agent-guidance). Safe to run again.
+
+| Flag                    | What it does                                                         |
+| ----------------------- | -------------------------------------------------------------------- |
+| `-y`, `--yes`           | No questions: the config, and the rules file and the skill.          |
+| `--agents-md`           | Also adds a stackctl section to `AGENTS.md`.                         |
+| `--workspace-dir <dir>` | Creates the config in that directory.                                |
+
+What the agent guidance is, on disk:
+
+| File                               | Read by                                                        |
+| ---------------------------------- | -------------------------------------------------------------- |
+| `.claude/rules/stackctl.md`        | Claude Code, at the start of every session.                    |
+| `.claude/skills/stackctl/SKILL.md` | Agents that load skills. Also under `.agents/` and `.cursor/` when those exist. |
+| A section of `AGENTS.md`           | Agents that read that file: Codex, Cursor, Copilot. Only with `--agents-md`. |
+
+- **The rules file and the skill are stackctl's own**: a copy you edited is left alone, and
+  `init` rewrites it.
+- **The `AGENTS.md` section sits between two markers**, `<!-- BEGIN:stackctl -->` and
+  `<!-- END:stackctl -->`, in a new file if there is none. Everything outside them is yours.
+- **Claude Code reads `AGENTS.md` only in a repo with no `CLAUDE.md`**, which is why it gets a
+  rules file of its own.
+- **pnpm can link the skill itself.** The package ships it in `skills/`, where `pnpm approve`
+  finds it (pnpm 12.11 and later). Where pnpm's link is there, stackctl keeps no copy of the
+  skill.
 
 ## State
 
@@ -297,6 +368,7 @@ node_modules/.stackctl/
   modes/<mode>/
     running.json        the session record: pid, control-API port, log file
     selection.json      the selection --last-answers reuses
+    events.log          the event log: what acted on the stack (see Events)
     trusted.pem         the NODE_EXTRA_CA_CERTS bundle
     logs/               session and one-off command logs
 ```

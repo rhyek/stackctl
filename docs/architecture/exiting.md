@@ -31,10 +31,10 @@ Related: the rendering model (alternate screen, why the shutdown frame collapses
 
 | Trigger                                   | Path                                                                                                                                   |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| **Ctrl+C, or a click on `^c quit`**       | `keymap` → `ui-state` `quit`: while the phase is `running`, the first press arms a 2 s confirmation (`QUIT_CONFIRM_MS`) and its toast; a second within it emits `shutdown` → `actions.ts` → `session.shutdown('user')` |
+| **Ctrl+C, or a click on `^c quit`**       | `keymap` → `ui-state` `quit`: while the phase is `running`, the first press arms a 2 s confirmation (`QUIT_CONFIRM_MS`) and its toast; a second within it emits `shutdown` → `actions.ts` → `session.requestQuit({ kind: 'ui', key: '^c' }, 'user')`, which writes the quit's `begin` line and runs `shutdown('user')` |
 | **Ctrl+C during startup or after a failed startup** | `ui-state` `quit` with the phase not `running`: `shutdown` at once, no confirmation                                          |
 | **`SIGHUP` / `SIGINT` / `SIGTERM`**       | `installShutdownSignals`, installed at the very start of `Session.start()` (before the takeover) → `shutdown('signal')`                |
-| **Control API `/command/quit`**           | the control server's `quitHandler` → `shutdown('quit')`; the response is held until the session acks it                               |
+| **Control API `/command/quit`**           | the control server's `quitHandler`, with the request as `by` → `requestQuit(by, 'quit')`; the response is held until the session acks it |
 | **Headless startup failure**              | `runHeadless` sees the phase `failed` after `start()` → `shutdown('startup-failed')`                                                   |
 | **A second request while shutting down**  | any of the above re-entering `shutdown()` → the hard kill (below)                                                                     |
 
@@ -74,13 +74,15 @@ In order:
    flight (takeover, proxy, control server — not infra), bounded by that step's own deadlines, and
    closes what it produced below.
 7. **Close the proxy** (bounded by `CLOSE_STEP_MS`).
-8. **Ack a held quit, then close the control server.** `server.ackQuit()` answers a blocking
+8. **Write the end to the event log**: a quit's `end` line, then `session-end`, and
+   `server.flush()` sends them to the open `/events` streams before they close.
+9. **Ack a held quit, then close the control server.** `server.ackQuit()` answers a blocking
    `POST /command/quit` with `200` now that the services are down and their ports freed — so a
    newer session taking over knows the ports are clear *before* this server closes. Then
    `server.close()`, bounded.
-9. **Release** the signal handlers and the `process.on('exit')` hook, and close the logfile,
+10. **Release** the signal handlers and the `process.on('exit')` hook, and close the logfile,
    bounded.
-10. **Settle `closed`** with **0**, or **1** after a hard kill, after a failed startup, or for a
+11. **Settle `closed`** with **0**, or **1** after a hard kill, after a failed startup, or for a
     `startup-failed` reason.
 
 Every close step is bounded, so one stalled close can't keep the session from settling. The

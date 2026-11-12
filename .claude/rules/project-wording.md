@@ -61,10 +61,11 @@ them, in the same change:
 | An iPhone's home screen                 | `apple-touch-icon.png` (180 px, square: iOS rounds it) | `head`                 |
 | The site's nav bar                      | `logo.svg`                         | `themeConfig.logo`                         |
 | The home page, beside the headline      | `logo.svg`                         | `hero.image` in `docs/index.md`            |
+| A link's preview (Slack, X, …)          | `og-image.png` (512 px, square corners: Slack rounds it) | `og:image` in `head`   |
 
-- **The PNGs are renders of the SVG.** Re-render both when it changes, at their sizes, from a
-  browser (headless Chrome with a transparent background; the touch icon from the SVG with the
-  tile's corners squared).
+- **The PNGs are renders of the SVG.** Re-render all three when it changes, at their sizes, from
+  a browser (headless Chrome with a transparent background; the touch icon and the preview from
+  the SVG with the tile's corners squared).
 - **Every URL to them carries a hash of the file** (`versioned()` in the site config), so a
   changed icon is a new URL and no browser or CDN keeps the old one. Reference a public file
   through it, never by its bare path.

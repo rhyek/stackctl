@@ -1,6 +1,8 @@
 import fs from 'node:fs';
+import { startedByAgent } from '../agent-detection.js';
 import { createControlClient } from '../control-client.js';
 import { type ModeSource, currentMode, currentModeSource } from '../env-base.js';
+import { type SessionCommandEntry, cliEventLog, commandBy } from '../event-log.js';
 import { type FoundSession, findSession } from '../find-session.js';
 import { modeStateDir } from '../log-files.js';
 import { canSignal } from '../process-info.js';
@@ -300,6 +302,7 @@ export async function runReset(
   root: string,
   opts: StopOptions = {},
   target: StopTarget = activeTarget(),
+  invocationCwd: string = root,
 ): Promise<number> {
   if (target.source !== 'flag') {
     console.error(RESET_NEEDS_MODE);
@@ -307,7 +310,16 @@ export async function runReset(
   }
   const { session, deleted } = await resetMode(root, target.mode, opts);
   const dir = `node_modules/.stackctl/modes/${target.mode}/`;
-  if (session && !report(session, opts)) {
+  // The reset took the event log with the rest, so its lines open the new one; one that left the
+  // mode's state in place lands in the old.
+  const ok = !session || report(session, opts);
+  cliEventLog(root, target.mode)
+    .begin<SessionCommandEntry>(
+      { type: 'session-command', action: 'reset' },
+      commandBy(root, { agent: startedByAgent(), invocationCwd }),
+    )
+    .end({ ok });
+  if (!ok && session) {
     console.error(
       session.outcome === 'still-running'
         ? `Left ${dir} in place: the session is still running.`
@@ -320,6 +332,10 @@ export async function runReset(
   if (!session) {
     console.log(noSessionLine(target));
   }
-  console.log(deleted ? `Removed ${dir}` : `Nothing to remove: ${dir} doesn't exist.`);
+  console.log(
+    deleted
+      ? `Removed ${dir}; its events.log starts again with this reset.`
+      : `Nothing to remove: ${dir} doesn't exist.`,
+  );
   return 0;
 }

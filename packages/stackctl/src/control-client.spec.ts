@@ -215,8 +215,8 @@ describe('events()', () => {
   test('yields each line as an object, and ends when the stream does', async () => {
     const lines = [
       { type: 'snapshot', ...SNAPSHOT },
-      { type: 'service', service: 'web', status: 'running', ready: true },
-      { type: 'session', ready: true },
+      { type: 'service-state', service: 'web', status: 'running', ready: true },
+      { type: 'session-state', ready: true },
     ];
     const port = await eventsServer(lines);
     expect(await collect(createControlClient(port).events())).toEqual(lines);

@@ -39,6 +39,9 @@ importers:
       simple-git-hooks:
         specifier: ^2.14.0
         version: 2.14.0
+      stackctl:
+        specifier: workspace:*
+        version: link:packages/stackctl
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
