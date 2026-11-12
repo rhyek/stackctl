@@ -65,7 +65,10 @@ routes: [
   { subdomain: ['admin', 'backoffice'], service: 'admin' }, // either host
   { subdomain: 'mail', service: 'mail' }, // an infra service
   // every other host, the bare domain included, by path
-  { subdomain: '*', paths: { '/docs/**': 'docs', '/api/**': 'api', '/**': 'web' } },
+  {
+    subdomain: '*',
+    paths: { '/docs/**': 'docs', '/api/**': 'api', '/**': 'web' },
+  },
 ],
 ```
 
@@ -119,7 +122,10 @@ that domain to the proxy is up to DNS or a terminator.
 are aliases that route the same way.
 
 ```ts
-publicAddress: { domain: ['myproject.test', 'myproject.localhost'], scheme: 'https' },
+publicAddress: {
+  domain: ['myproject.test', 'myproject.localhost'],
+  scheme: 'https',
+},
 ```
 
 ## `tls`

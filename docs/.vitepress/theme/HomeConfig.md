@@ -6,8 +6,10 @@ export default defineConfig({
   reverseProxy: {
     port: 4000,
     routes: [
-      { subdomain: 'api', service: 'backend' }, // http://api.localhost:4000
-      { subdomain: 'app', service: 'frontend' }, // http://app.localhost:4000
+      // http://api.localhost:4000
+      { subdomain: 'api', service: 'backend' },
+      // http://app.localhost:4000
+      { subdomain: 'app', service: 'frontend' },
     ],
   },
   services: {

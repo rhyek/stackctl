@@ -49,10 +49,14 @@ services: {
   web: {
     port: 3000,
     urls: [
-      '', // the origin itself, shown as "web ↗"
-      { label: 'admin', url: '/admin' }, // a path on the origin, with a label
-      { label: 'storybook', url: 'http://localhost:6006' }, // any URL, with a label
-      ({ port }) => `http://localhost:${port}/debug`, // a callback
+      // the origin itself, shown as "web ↗"
+      '',
+      // a path on the origin, with a label
+      { label: 'admin', url: '/admin' },
+      // any URL, with a label
+      { label: 'storybook', url: 'http://localhost:6006' },
+      // a callback
+      ({ port }) => `http://localhost:${port}/debug`,
     ],
   },
 },
@@ -88,8 +92,10 @@ reverseProxy: {
   routes: [{ subdomain: '*', paths: { '/api/**': 'api', '/**': 'web' } }],
 },
 services: {
-  web: { port: 3000, publicOrigin: { subdomain: 'app' }, urls: [''] }, // https://app.example.test
-  api: { port: 3001, publicOrigin: { subdomain: null } }, // https://example.test
+  // https://app.example.test
+  web: { port: 3000, publicOrigin: { subdomain: 'app' }, urls: [''] },
+  // https://example.test
+  api: { port: 3001, publicOrigin: { subdomain: null } },
 },
 ```
 
@@ -108,9 +114,12 @@ starting from the service's public origin, replacing the parts you pass:
 web: {
   port: 3000, // routed at web.<domain>
   urls: ({ buildAddress }) => [
-    buildAddress(), // https://web.<domain>
-    buildAddress({ subdomain: 'admin' }), // https://admin.<domain>
-    buildAddress({ subdomain: null, path: '/api' }), // https://<domain>/api
+    // https://web.<domain>
+    buildAddress(),
+    // https://admin.<domain>
+    buildAddress({ subdomain: 'admin' }),
+    // https://<domain>/api
+    buildAddress({ subdomain: null, path: '/api' }),
   ],
 },
 ```

@@ -47,8 +47,14 @@ on the environment is a plain function of it instead, which your editor type-che
 services: {
   api: {
     port: ({ envs }) => Number(envs.API_PORT),
-    healthcheck: '/health', // a path needs no callback: it is probed on the service's port
-    urls: [{ label: 'debug', url: ({ port }) => `http://localhost:${port + 1}` }],
+    // a path needs no callback: it is probed on the service's port
+    healthcheck: '/health',
+    urls: [
+      {
+        label: 'debug',
+        url: ({ port }) => `http://localhost:${port + 1}`,
+      },
+    ],
   },
 },
 ```
@@ -170,7 +176,10 @@ A function shared by several phases takes `DockerComposeCallbackContext`.
 ```ts
 import type { DockerComposeReadyContext } from 'stackctl';
 
-export async function afterReady({ exec, fresh }: DockerComposeReadyContext) {
+export async function afterReady({
+  exec,
+  fresh,
+}: DockerComposeReadyContext) {
   await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
   if (fresh) {
     await exec('pnpm', ['seed'], { cwd: 'libs/db' });

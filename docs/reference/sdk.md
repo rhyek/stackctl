@@ -9,7 +9,14 @@ migration script, a launcher. It does from a script what the CLI does from a she
 same workspace, modes and environment. Everything is a named export of `stackctl`:
 
 ```ts
-import { defineConfig, exec, logging, resolveEnv, run, startStack } from 'stackctl';
+import {
+  defineConfig,
+  exec,
+  logging,
+  resolveEnv,
+  run,
+  startStack,
+} from 'stackctl';
 ```
 
 stackctl is ESM only. It has no CommonJS entry, so `require('stackctl')` fails.
@@ -97,7 +104,10 @@ otherwise leak into every service: `npm_*`, `INIT_CWD`, `NODE`, `NODE_PATH`,
 `startStack`'s default `env`. To add a variable:
 
 ```ts
-await startStack({ services: ['web'], env: { ...stackEnvironment(), FEATURE_X: '1' } });
+await startStack({
+  services: ['web'],
+  env: { ...stackEnvironment(), FEATURE_X: '1' },
+});
 ```
 
 ## `exec` and `run`

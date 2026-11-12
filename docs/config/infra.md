@@ -113,7 +113,8 @@ services:
   db:
     image: postgres:18.6
     ports:
-      - '${DB_PORT}:5432' # from .env.development, or .env.test under --mode test
+      # from .env.development, or .env.test under --mode test
+      - '${DB_PORT}:5432'
     healthcheck:
       test: ['CMD', 'pg_isready', '-h', '127.0.0.1']
 ```
@@ -178,9 +179,11 @@ stackctl, and they are applied. So what it runs must be idempotent. To skip it o
 ```ts
 db: {
   afterReady: async ({ exec, fresh }) => {
-    await exec('pnpm', ['migrate'], { cwd: 'libs/db' }); // every time
+    // every time
+    await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
     if (fresh) {
-      await exec('pnpm', ['seed'], { cwd: 'libs/db' }); // only into a new database
+      // only into a new database
+      await exec('pnpm', ['seed'], { cwd: 'libs/db' });
     }
   },
 },

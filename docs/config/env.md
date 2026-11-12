@@ -12,9 +12,13 @@ option reference.
 export default defineConfig({
   serviceRootDir: 'apps',
   env: {
-    vars: ({ envs }) => ({ UPLOADS_DIR: `${envs.STACKCTL_WORKSPACE_DIR}/.data/uploads` }),
+    vars: ({ envs }) => ({
+      UPLOADS_DIR: `${envs.STACKCTL_WORKSPACE_DIR}/.data/uploads`,
+    }),
     override: ['NODE_OPTIONS'],
-    additionalFiles: ({ mode }) => [{ file: `.env.${mode}.pre`, before: 'mode' }],
+    additionalFiles: ({ mode }) => [
+      { file: `.env.${mode}.pre`, before: 'mode' },
+    ],
   },
   services: {/* … */},
 });
