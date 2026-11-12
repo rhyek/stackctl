@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
+import tty from 'node:tty';
 import { execa } from 'execa';
-import { logTimestamp, stripAnsi } from '../format.js';
+import { startedByAgent } from '../agent-detection.js';
+import { maskSecrets } from '../event-log.js';
+import { commandLine, formatDuration, logTimestamp, stripAnsi } from '../format.js';
 import { getDefaultLogFile } from '../log-files.js';
 
 // Running a one-off command, once it is resolved: shared by the CLI's `exec`/`run` and the SDK's
@@ -91,13 +94,27 @@ function untrack(child: LiveChild): void {
   process.off('exit', onExit);
 }
 
+/** A stream stackctl may hand to the command: stdout (1) or stderr (2). */
+type OutputFd = 1 | 2;
+
+const STREAM_NAME = { 1: 'stdout', 2: 'stderr' } as const;
+
+/** How long a one-off command ran, for its log's last line. */
+function tookFor(ms: number): string {
+  return ms < 60_000 ? `${(ms / 1000).toFixed(1)} seconds` : formatDuration(ms);
+}
+
 /**
  * Runs `spec` to completion and resolves with how it ended. stdin is inherited, so the command
- * stays interactive. With `stdio: 'inherit'` its output streams to this process's stdout and
- * stderr raw (colors intact); with `'pipe'` it is collected into the result instead. Either way it
- * is teed to a fresh log file in `logDir` (default: the mode's log directory) — line-buffered,
- * timestamped and ANSI-stripped, as a session logs. SIGTERM and SIGHUP sent to this process are
- * forwarded to the command while it runs, and so is SIGINT, unless the command shares this
+ * stays interactive. With `stdio: 'pipe'` its output is collected into the result. With
+ * `'inherit'` each of stdout and stderr that is a terminal is handed to the command as it is, so
+ * the command sees a terminal there, as it would run bare; one that isn't (a pipe, a file), or any
+ * stream when a coding agent started this process, is piped and copied to this process's own.
+ * A log file in `logDir` (a session's `commands/` folder) records every run: a first line with the
+ * command (secrets masked) and its directory, what was piped (line-buffered, timestamped and
+ * ANSI-stripped, as a session logs), a line for each stream that went to the terminal instead,
+ * and a last line with how it ended and how long it took. SIGTERM and SIGHUP sent to this process
+ * are forwarded to the command while it runs, and so is SIGINT, unless the command shares this
  * process's terminal; the listeners are removed once no command runs. Never exits the process.
  * Rejects with a {@link CommandStartError} when the command can't start.
  */
@@ -105,21 +122,36 @@ export async function runOneOff(
   spec: OneOffSpec,
   opts: {
     stdio: 'inherit' | 'pipe';
-    logDir?: string;
-    /** Whether stdin is a terminal; a seam for tests. Default: `process.stdin.isTTY`. */
-    isTerminal?: () => boolean;
+    logDir: string;
+    /** Whether file descriptor `fd` is a terminal; a seam for tests. Default: `tty.isatty`. */
+    isTerminal?: (fd: 0 | OutputFd) => boolean;
+    /** Whether a coding agent started this process; a seam for tests. Default: {@link startedByAgent}. */
+    agent?: boolean;
   },
 ): Promise<OneOffResult> {
+  const isTerminal = opts.isTerminal ?? ((fd) => tty.isatty(fd));
+  const agent = opts.agent ?? startedByAgent();
+  // A terminal is handed over, so the command behaves as it would run bare: a prompt, colors, a
+  // watch mode's keys. Never to an agent, whose log then holds everything, as in CI.
+  const toTerminal = (fd: OutputFd) => opts.stdio === 'inherit' && !agent && isTerminal(fd);
+  const handed = ([1, 2] as const).filter(toTerminal);
   const logFile = getDefaultLogFile(opts.logDir);
   let logFd: number | undefined;
   let tracked: LiveChild | undefined;
   try {
     const fd = fs.openSync(logFile, 'w');
     logFd = fd;
+    const log = (text: string) => fs.writeSync(fd, `${logTimestamp()} ${text}\n`);
+    const startedAt = Date.now();
+    log(`▶ running: ${commandLine(spec.command, maskSecrets(spec.args))} (in ${spec.cwd})`);
+    if (handed.length > 0) {
+      const names = handed.map((n) => STREAM_NAME[n]).join(' and ');
+      log(`${names} went to the terminal, not to this log`);
+    }
     const collected = { stdout: '', stderr: '' };
-    // Tee one child stream: to the terminal or the result, then line-buffered timestamped and
-    // stripped lines to the logfile. One decoder per stream, so a character split across chunks
-    // stays whole. Returns a flush for what is left once the stream ends.
+    // Tee one piped child stream: to the terminal or the result, then line-buffered timestamped
+    // and stripped lines to the logfile. One decoder per stream, so a character split across
+    // chunks stays whole. Returns a flush for what is left once the stream ends.
     const tee = (src: NodeJS.ReadableStream | null, name: 'stdout' | 'stderr'): (() => void) => {
       if (!src) {
         return () => {};
@@ -133,7 +165,7 @@ export async function runOneOff(
         buf += text;
         let nl: number;
         while ((nl = buf.indexOf('\n')) !== -1) {
-          fs.writeSync(fd, `${logTimestamp()} ${stripAnsi(buf.slice(0, nl))}\n`);
+          log(stripAnsi(buf.slice(0, nl)));
           buf = buf.slice(nl + 1);
         }
       };
@@ -146,7 +178,7 @@ export async function runOneOff(
       return () => {
         take(decoder.end());
         if (buf.length > 0) {
-          fs.writeSync(fd, `${logTimestamp()} ${stripAnsi(buf)}\n`);
+          log(stripAnsi(buf));
           buf = '';
         }
       };
@@ -157,8 +189,8 @@ export async function runOneOff(
       env: spec.env,
       extendEnv: false,
       stdin: 'inherit',
-      stdout: 'pipe',
-      stderr: 'pipe',
+      stdout: toTerminal(1) ? 'inherit' : 'pipe',
+      stderr: toTerminal(2) ? 'inherit' : 'pipe',
       buffer: false,
       reject: false,
       // execa's own cleanup answers a signal to this process by sending the command SIGTERM,
@@ -167,8 +199,7 @@ export async function runOneOff(
     });
     tracked = {
       kill: (signal) => void child.kill(signal),
-      sharesTerminal:
-        opts.stdio === 'inherit' && (opts.isTerminal ?? (() => process.stdin.isTTY))(),
+      sharesTerminal: opts.stdio === 'inherit' && isTerminal(0),
     };
     track(tracked);
     const flushOut = tee(child.stdout, 'stdout');
@@ -176,8 +207,18 @@ export async function runOneOff(
     const result = await child;
     flushOut();
     flushErr();
+    const took = tookFor(Date.now() - startedAt);
     if (result.exitCode === undefined && result.signal === undefined) {
-      throw new CommandStartError(result.shortMessage);
+      const why = result.shortMessage ?? `couldn't start ${spec.command}`;
+      log(`✘ couldn't start: ${stripAnsi(why.split('\n')[0]!)}`);
+      throw new CommandStartError(why);
+    }
+    if (result.signal) {
+      log(`✘ ended by ${result.signal} after ${took}`);
+    } else if (result.exitCode === 0) {
+      log(`✔ finished in ${took}`);
+    } else {
+      log(`✘ exited with code ${String(result.exitCode)} after ${took}`);
     }
     return {
       exitCode: result.exitCode ?? null,

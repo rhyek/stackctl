@@ -161,6 +161,17 @@ describe('runServiceCommand', () => {
     expect(wait).toHaveBeenCalledWith(expect.anything(), ['web'], expect.anything());
   });
 
+  test('a start or restart of a service waiting for its deps fails with that reason', async () => {
+    for (const action of ['start', 'restart'] as const) {
+      const { found } = runningSession({ api: 'running', web: 'waiting' }, ['web']);
+      const { ctx, out } = context(found);
+      expect(await runServiceCommand(action, { services: ['web'] }, ctx)).toBe(1);
+      expect(out).toEqual([
+        `error: couldn't ${action} web: it is waiting for its dependencies, and starts once they're ready`,
+      ]);
+    }
+  });
+
   test('services that never get ready fail the command with why', async () => {
     const { found } = runningSession({ api: 'stopped' });
     const { ctx, out } = context(

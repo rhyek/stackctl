@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { SessionStatus } from '../control-client.js';
 import { currentMode } from '../env-base.js';
-import { type EventBy, type EventLine, eventsFilePath, localTime } from '../event-log.js';
+import { type EventBy, type EventLine, currentEventsPath, localTime } from '../event-log.js';
 import { findSession } from '../find-session.js';
 
 // `stackctl status`: the mode's session as it is now, and what last acted on it, from its event
@@ -13,10 +13,10 @@ import { findSession } from '../find-session.js';
 const RECENT = 10;
 
 /** The event log's lines, oldest first; the ones that don't parse are skipped. */
-export function readEventLines(file: string): EventLine[] {
+export function readEventLines(file: string | null): EventLine[] {
   let text: string;
   try {
-    text = fs.readFileSync(file, 'utf8');
+    text = fs.readFileSync(file ?? '', 'utf8');
   } catch {
     return [];
   }
@@ -133,6 +133,8 @@ export function describeBy(by: EventBy): string {
       return `control API${by.userAgent ? ` (${by.userAgent})` : ''}`;
     case 'cli':
       return `cli: ${by.argv.join(' ')} (${by.agent ? 'an agent' : 'a person'})`;
+    case 'sdk':
+      return `sdk: node ${by.argv.join(' ')} (${by.agent ? 'an agent' : 'a person'})`;
     case 'session':
       return 'the session';
   }
@@ -205,7 +207,7 @@ export async function runStatus(opts: { json?: boolean }): Promise<never> {
   const root = process.cwd();
   const mode = currentMode();
   const found = await findSession({ workspaceDir: root, mode });
-  const file = eventsFilePath(root, mode);
+  const file = currentEventsPath(root, mode);
   const lines = readEventLines(file);
   const status = found.kind === 'running' ? found.status : null;
   if (opts.json) {
@@ -217,7 +219,7 @@ export async function runStatus(opts: { json?: boolean }): Promise<never> {
           port: found.kind === 'running' ? found.client.port : null,
           unresponsive: found.kind === 'unresponsive' ? { pid: found.pid, reason: found.reason } : null, // oxfmt-ignore
           status,
-          eventsFile: path.relative(root, file),
+          eventsFile: file === null ? null : path.relative(root, file),
           recent: lines.filter((l) => !['service-state', 'infra-state', 'session-state'].includes(l.type)).slice(-RECENT * 2), // oxfmt-ignore
         },
         null,
@@ -234,7 +236,7 @@ export async function runStatus(opts: { json?: boolean }): Promise<never> {
   } else {
     out.push(`No ${mode} session is running.`);
   }
-  out.push(`events    ${path.relative(root, file)}${lines.length === 0 ? ' (empty)' : ''}`);
+  out.push(file === null ? 'events    none yet' : `events    ${path.relative(root, file)}${lines.length === 0 ? ' (empty)' : ''}`); // oxfmt-ignore
   const rows = recentRows(lines);
   if (rows.length > 0) {
     out.push('', 'last commands', ...formatRows(rows).map((row) => `  ${row}`));

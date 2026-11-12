@@ -86,7 +86,6 @@ describe('needsNoWorkspace', () => {
     [['exec', '--', 'init'], false],
     [['--headless', '-s', 'init'], false],
     [['--service', 'init', 'start'], false],
-    [['--log-dir', 'init', 'start'], false],
     [['--workspace-dir', 'init', 'logs'], false],
   ])('%j', (args, expected) => {
     expect(needsNoWorkspace(['node', 'cli', ...args])).toBe(expected);

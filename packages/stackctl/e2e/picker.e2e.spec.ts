@@ -1,11 +1,22 @@
 /**
  * The service picker, by key and by click, and the step from it into the run screen.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { expect, test } from 'vitest';
 import { Pty } from './pty.js';
 import { allRunning, expectTerminalRestored, fixtureWorkspace } from './suite.js';
 
 const ws = fixtureWorkspace();
+
+/** The development session folders there are now. */
+const sessionFolders = (): string[] => {
+  try {
+    return fs.readdirSync(path.join(ws(), 'node_modules/.stackctl/modes/development/sessions'));
+  } catch {
+    return [];
+  }
+};
 
 /** Moves the picker's cursor down (it wraps) until it is on `name`'s row. */
 async function cursorOn(pty: Pty, name: string): Promise<void> {
@@ -45,9 +56,9 @@ test('the picker starts what was chosen, and the run screen shows the startup, t
   await pty.waitFor('r restart');
   await pty.waitUntil(() => allRunning(pty), 'every service running');
 
-  // The footer during startup: every service pending, in gray, and only the log's keys.
+  // The footer during startup: every service pending, in gray, and the keys api will have, dim.
   expect(
-    pty.everShown(/○ api {3}○ web {3}○ worker\nlogs: f filter {3}c clear {2}│ {2}\^c quit/),
+    pty.everShown(/○ api {3}○ web {3}○ worker\n←→ select {3}r restart {3}s stop {3}m commands/),
   ).toBe(true);
   expect(pty.everDots('api:90 web:90 worker:90')).toBe(true);
   // api isn't ready for a second, its dot yellow, and web waits for it, its dot cyan.
@@ -77,6 +88,7 @@ test('the picker starts what was chosen, and the run screen shows the startup, t
 });
 
 test('picker clicks toggle a row and explain a locked dependency; n clears; / filters', async () => {
+  const before = sessionFolders();
   const pty = await emptyPicker();
 
   // A click on a row toggles it.
@@ -116,8 +128,9 @@ test('picker clicks toggle a row and explain a locked dependency; n clears; / fi
   expect(pty.text()).toMatch(/○ web/);
   expect(pty.text()).toContain('◉ worker');
 
-  // ^c quits the picker at once.
+  // ^c quits the picker at once, with no session started: no session folder is left.
   pty.press('ctrl-c');
   expect(await pty.waitForExit()).toEqual({ code: 0, signal: null });
   expect(expectTerminalRestored(pty)).toContain('■ stackctl exited after');
+  expect(sessionFolders()).toEqual(before);
 });

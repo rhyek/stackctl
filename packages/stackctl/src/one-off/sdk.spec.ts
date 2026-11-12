@@ -32,6 +32,27 @@ async function inDir<T>(dir: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** A `one-off-command` line of the event log, as these tests read it. */
+interface OneOffEvent {
+  phase: 'begin' | 'end';
+  command?: string[];
+  args?: string[];
+  ok?: boolean;
+  [field: string]: unknown;
+}
+
+/** Every `one-off-command` line in the workspace's development sessions' event logs. */
+function oneOffEvents(): OneOffEvent[] {
+  const sessions = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+  return fs
+    .readdirSync(sessions)
+    .map((id) => path.join(sessions, id, 'events.jsonl'))
+    .filter((file) => fs.existsSync(file))
+    .flatMap((file) => fs.readFileSync(file, 'utf8').trim().split('\n'))
+    .map((line) => JSON.parse(line) as OneOffEvent & { type: string })
+    .filter((line) => line.type === 'one-off-command');
+}
+
 beforeAll(async () => {
   // TypeScript 7 exports no `bin/tsc`, so it's found next to the package.json it does export.
   const tsPackage = fileURLToPath(import.meta.resolve('typescript/package.json'));
@@ -199,15 +220,42 @@ describe('exec()', () => {
     }
   });
 
-  test("tees to a log file in the workspace's log directory", async () => {
-    const logDir = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'logs');
-    const before = new Set(fs.existsSync(logDir) ? fs.readdirSync(logDir) : []);
+  test("tees to a log file in the latest session's commands/", async () => {
+    const sessions = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+    const latest = String(Date.now() + 60_000);
+    const logDir = path.join(sessions, latest, 'commands');
+    fs.mkdirSync(path.join(sessions, latest), { recursive: true });
+    const before = new Set<string>();
     await inDir('/', () =>
       sdk.exec({ workspaceDir: ws, command: ['echo', 'logged-by-sdk'], stdio: 'pipe' }),
     );
     const added = fs.readdirSync(logDir).filter((name) => !before.has(name));
     expect(added).toHaveLength(1);
     expect(fs.readFileSync(path.join(logDir, added[0]!), 'utf8')).toContain('logged-by-sdk');
+  });
+
+  test('writes its one-off-command begin and end to the event log, with the script as `by`', async () => {
+    await inDir(apiDir, () =>
+      sdk.exec({ target: 'api', command: ['sh', '-c', 'exit 2', 'evented-exec'], stdio: 'pipe' }),
+    );
+    const lines = oneOffEvents().filter((line) => line.command?.includes('evented-exec'));
+    expect(lines.map((line) => line.phase)).toEqual(['begin', 'end']);
+    expect(lines[0]).toMatchObject({
+      kind: 'exec',
+      service: 'api',
+      command: ['sh', '-c', 'exit 2', 'evented-exec'],
+      by: { kind: 'sdk', cwd: 'apps/api', agent: false },
+    });
+    expect(lines[1]).toMatchObject({ ok: false, exitCode: 2, signal: null });
+  });
+
+  test("a command that can't start still ends its event", async () => {
+    await expect(
+      inDir(ws, () => sdk.exec({ command: ['stackctl-no-such-evented'], stdio: 'pipe' })),
+    ).rejects.toThrow('stackctl-no-such-evented');
+    const lines = oneOffEvents().filter((line) => line.command?.[0] === 'stackctl-no-such-evented');
+    expect(lines.map((line) => [line.phase, line.ok])).toEqual([['begin', undefined], ['end', false]]); // oxfmt-ignore
+    expect(lines[0]).toMatchObject({ dir: '.' });
   });
 
   test.each(['api', 'apps/api', 'scripts', '.'])(
@@ -267,6 +315,16 @@ describe('run()', () => {
       sdk.run({ target: 'api', script: 'where', stdio: 'pipe' }),
     );
     expect(result.stdout).toBe(`${apiDir}\n`);
+  });
+
+  test('writes its script and arguments to the event log', async () => {
+    await inDir(ws, () =>
+      sdk.run({ target: 'api', script: 'where', args: ['evented-run'], stdio: 'pipe' }),
+    );
+    const lines = oneOffEvents().filter((line) => line.args?.includes('evented-run'));
+    expect(lines.map((line) => line.phase)).toEqual(['begin', 'end']);
+    expect(lines[0]).toMatchObject({ kind: 'run', service: 'api', script: 'where', by: { kind: 'sdk', cwd: '.' } }); // oxfmt-ignore
+    expect(lines[1]).toMatchObject({ ok: true, exitCode: 0 });
   });
 
   test('run rejects a missing script', async () => {

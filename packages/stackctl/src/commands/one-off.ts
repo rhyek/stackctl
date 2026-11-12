@@ -6,10 +6,10 @@ import { proxyTlsFor } from '../dev-tls.js';
 import { currentMode } from '../env-base.js';
 import { RESOLVE_ENV_FD } from '../env.js';
 import { type OneOffCommandEntry, cliEventLog, commandBy, maskSecrets } from '../event-log.js';
-import { getLogDir } from '../log-files.js';
 import {
   type OneOffResolution,
   type OneOffSpec,
+  type OneOffWhere,
   ScriptNotFoundError,
   oneOffEnvLayer,
   oneOffEnvResolution,
@@ -19,6 +19,7 @@ import {
 } from '../one-off/resolve.js';
 import { CommandStartError, runOneOff } from '../one-off/run.js';
 import { exitCodeOf } from '../scripts.js';
+import { oneOffLogDir } from '../session-files.js';
 import { type ResolvedTarget, TargetNotFoundError } from '../target.js';
 import { loadedConfigOrExit } from './workspace.js';
 
@@ -31,8 +32,6 @@ export interface OneOffContext {
   invocationCwd: string;
   /** Whether `--workspace-dir` was given: a relative target then resolves against the root. */
   workspaceDirGiven: boolean;
-  /** The `--log-dir` override, if any. */
-  logDir?: string;
 }
 
 /** A one-off command as the command line gave it. */
@@ -52,6 +51,14 @@ async function loadForOneOff(): Promise<string> {
     await proxyTlsFor(config, root);
   }
   return root;
+}
+
+/** Where a one-off command running in `cwd` runs, for its event-log lines: a service, or a directory. */
+function whereOf(root: string, cwd: string): OneOffWhere {
+  const service = getRegisteredPackages().find(
+    (pkg) => path.resolve(pkg.absoluteDir) === path.resolve(cwd),
+  )?.name;
+  return service ? { service } : { dir: path.relative(root, cwd) || '.' };
 }
 
 /** Prints what a one-off command can't start for, and exits 1; rethrows anything else. */
@@ -85,15 +92,13 @@ export async function runOneOffCommand(
   } catch (err) {
     exitOnOneOffError(err);
   }
-  // Written to the mode's event log: the service (or directory) it ran in, what it ran, its exit.
-  const service = getRegisteredPackages().find(
-    (pkg) => path.resolve(pkg.absoluteDir) === path.resolve(spec.cwd),
-  )?.name;
+  // Written to the session's event log: the service (or directory) it ran in, what it ran, its
+  // exit. Its log goes in the same session's folder.
   const entry = cliEventLog(root, currentMode()).begin<OneOffCommandEntry>(
     {
       type: 'one-off-command',
       kind: command.kind,
-      ...(service ? { service } : { dir: path.relative(root, spec.cwd) || '.' }),
+      ...whereOf(root, spec.cwd),
       ...(command.kind === 'exec'
         ? { command: maskSecrets(command.command) }
         : { script: command.script, args: maskSecrets(command.args) }),
@@ -101,7 +106,10 @@ export async function runOneOffCommand(
     commandBy(root, { agent: startedByAgent(), invocationCwd: context.invocationCwd }),
   );
   try {
-    const result = await runOneOff(spec, { stdio: 'inherit', logDir: context.logDir });
+    const result = await runOneOff(spec, {
+      stdio: 'inherit',
+      logDir: oneOffLogDir(root, currentMode()),
+    });
     entry.end({ ok: result.exitCode === 0, exitCode: result.exitCode ?? null, signal: result.signal ?? null }); // oxfmt-ignore
     process.exit(
       exitCodeOf({ exitCode: result.exitCode ?? undefined, signal: result.signal ?? undefined }),
@@ -150,7 +158,10 @@ export async function printOneOffResolution(opts: ResolveOneOffRequest): Promise
   const result: OneOffResolution = {
     spec,
     ...oneOffEnvResolution(target, root, layer),
-    logDir: getLogDir(),
+    logDir: oneOffLogDir(root, currentMode()),
+    root,
+    mode: currentMode(),
+    where: whereOf(root, spec?.cwd ?? target.dir),
   };
   fs.writeSync(RESOLVE_ENV_FD, JSON.stringify(result));
   process.exit(0);

@@ -50,8 +50,15 @@ sctl --mode test exec -- vitest
 ## Output and exit code
 
 The command's output goes to your terminal and nothing else is printed, so both commands work
-in a pipeline. The exit code is the command's own. Each call also writes a
-[log file](./logs.md#log-files).
+in a pipeline. The exit code is the command's own.
+
+- **On a terminal, the command gets the terminal**: prompts, colors and a watch mode's keys
+  work as they do when you run it bare. stdout and stderr are decided one by one, so with
+  `| grep` only stdout is piped.
+- **A coding agent's command is always piped**, terminal or not.
+- **Each call writes a [log file](./logs.md#log-files)**: the command and its directory, every
+  line that was piped, and how it ended and how long it took. Output that went to a terminal
+  isn't in it.
 
 ## From a script
 

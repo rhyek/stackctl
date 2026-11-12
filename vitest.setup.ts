@@ -4,3 +4,7 @@
 // about CI sets `CI` itself.
 delete process.env.CI;
 delete process.env.CONTINUOUS_INTEGRATION;
+
+// Nor as a coding agent's, when a coding agent runs the suite: an agent's commands must name the
+// mode, which the specs leave to the default. A spec about agents sets the variable itself.
+process.env.STACKCTL_STARTED_BY_AGENT = '0';

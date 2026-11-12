@@ -117,7 +117,9 @@ test('Ctrl+C once asks for a second; twice quits with exit 0 and gives the termi
   expect(await pty.waitForExit()).toEqual({ code: 0, signal: null });
   const printed = expectTerminalRestored(pty);
   expect(printed).toContain('■ stackctl exited after');
-  expect(printed).toMatch(/logfile: node_modules\/\.stackctl\/modes\/development\/logs\/\S+\.log/);
+  expect(printed).toMatch(
+    /logfile: node_modules\/\.stackctl\/modes\/development\/sessions\/\d+\/logs\.txt/,
+  );
 });
 
 test("writes the keys to the event log: r's restart and Ctrl+C's quit, each with the key that asked", async () => {
@@ -131,13 +133,18 @@ test("writes the keys to the event log: r's restart and Ctrl+C's quit, each with
   pty.press('ctrl-c');
   expect(await pty.waitForExit()).toEqual({ code: 0, signal: null });
 
-  const all = fs
-    .readFileSync(path.join(ws(), 'node_modules/.stackctl/modes/development/events.log'), 'utf8')
+  // Each session has a file of its own: this one is the latest.
+  const sessions = path.join(ws(), 'node_modules/.stackctl/modes/development/sessions');
+  const latest = fs
+    .readdirSync(sessions)
+    .sort((a, b) => Number(a) - Number(b))
+    .at(-1)!;
+  const lines = fs
+    .readFileSync(path.join(sessions, latest, 'events.jsonl'), 'utf8')
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as { type: string; phase?: string; by?: unknown });
-  // The file's other sessions are this file's earlier tests': this one's start from its own.
-  const lines = all.slice(all.findLastIndex((line) => line.type === 'session-start'));
+  expect(lines[0]).toMatchObject({ type: 'session-start' });
   const commands = lines.filter((line) => line.type.endsWith('-command'));
   expect(commands).toMatchObject([
     { type: 'service-command', phase: 'begin', action: 'restart', service: 'api', by: { kind: 'ui', key: 'r' } }, // oxfmt-ignore

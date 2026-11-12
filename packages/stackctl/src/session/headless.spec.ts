@@ -8,6 +8,7 @@ import { type AnyServiceConfig, defineConfig } from '../config.js';
 import type { DevReverseProxyServer } from '../dev-reverse-proxy.js';
 import { EventLog } from '../event-log.js';
 import { logTimestamp } from '../format.js';
+import { sessionEventsPath } from '../session-files.js';
 import { createHeadlessPrinter, runHeadless } from './headless.js';
 import { LogStore } from './log-store.js';
 import { buildSessionPlan } from './plan.js';
@@ -136,7 +137,11 @@ function setup(seams: Partial<SessionSeams>) {
       readBranch: () => null,
       signalGroup: () => {},
       installSignals: () => () => {},
-      events: new EventLog({ root, mode: 'development', sessionId: () => 'headless-test' }),
+      events: new EventLog({
+        file: sessionEventsPath(root, 'development', '1'),
+        mode: 'development',
+        sessionId: () => 'headless-test',
+      }),
       ...seams,
     },
   });

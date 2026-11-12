@@ -5,6 +5,14 @@ Monorepo for the published `stackctl` npm package.
 - `packages/stackctl/` — the package source.
 - `example/` — a self-contained example monorepo that consumes the package via
   `stackctl: link:../packages/stackctl` (see `example/package.json`).
+- `maintenance/` — the project's own notes and tooling. See [Maintenance](#maintenance).
+
+## No worktrees — work in the main checkout
+
+Never create a git worktree for this repo, and never work in one. Work in the main checkout
+(`~/Dev/personal/published/stackctl`), switching branches there. Other projects on this machine
+use stackctl through `link:` to this checkout's `packages/stackctl`, so a change is only testable
+in them once it is built here; a build in a worktree reaches none of them.
 
 ## NEVER commit personal content — hard rule
 
@@ -36,8 +44,9 @@ The documentation is one set of Markdown pages in `docs/`, read three ways:
   frontmatter `description` is its line in the index, so write it for an agent choosing what
   to read.
 - **Inside the npm package.** `pnpm docs:package` (run by `pnpm build`) builds the site and
-  copies `llms.txt` and the pages into `packages/stackctl/docs/` (`scripts/package-docs.ts`),
-  which is generated and gitignored. The installed agent guidance points at them in
+  copies `llms.txt` and the pages into `packages/stackctl/docs/`
+  (`maintenance/scripts/package-docs.ts`), which is generated and gitignored. The installed
+  agent guidance points at them in
   `node_modules/stackctl/docs/`, so an agent gets the docs of the installed version. Projects
   that `link:` this package read the same folder: run `pnpm docs:package` after a docs edit.
 
@@ -68,8 +77,8 @@ Two files in `packages/stackctl/` are what stackctl offers to install for agents
   uses stackctl pays for each line of it.
 - **Both name the same scope**, and `llms.txt` opens by sending an agent to the playbook
   (`docs/.vitepress/config.ts`), so each of them points at one file.
-- **Measure a change to either**, or to the playbook, with `scripts/agent-eval/` (its README has
-  the commands).
+- **Measure a change to either**, or to the playbook, with `maintenance/scripts/agent-eval/`
+  (its README has the commands).
   [`maintenance/docs/agent-guidance-experiment.md`](maintenance/docs/agent-guidance-experiment.md)
   has the research, the experiment and the decision.
 
@@ -97,21 +106,22 @@ reconcile every hit.
 - **Links between pages are relative and end in `.md`** (`../config/infra.md#callbacks`), so
   they work on the site, on GitHub and in the packaged copies. Heading anchors are GitHub's
   (the site's `slugify` matches). `pnpm docs:build` fails on a dead link, and
-  `scripts/package-docs.ts` on a packaged link that leads nowhere.
+  `maintenance/scripts/package-docs.ts` on a packaged link that leads nowhere.
 - **A new page** goes in the sidebar in `docs/.vitepress/config.ts`, with a `description`.
 - **A screen of the terminal UI is a recording**, not a hand-drawn block: a `<TerminalPlayer>`
-  the site plays, beside the text copy llms.txt reads. Each is a scene in `scripts/demo/scenes.ts`,
-  with the files that can change it; when the screen it shows changes, re-record it with
-  `./scripts/demo/record.sh <scene>`, which the `/commit` skill does for you. See
-  [`scripts/demo/CLAUDE.md`](scripts/demo/CLAUDE.md).
+  the site plays, beside the text copy llms.txt reads. Each is a scene in
+  `maintenance/scripts/demo/scenes.ts`, with the files that can change it; when the screen it
+  shows changes, re-record it with `./maintenance/scripts/demo/record.sh <scene>`, which the
+  `/commit` skill does for you. See
+  [`maintenance/scripts/demo/CLAUDE.md`](maintenance/scripts/demo/CLAUDE.md).
 - **Only the current surface, no history:** see
   [`.claude/rules/docs-no-history.md`](.claude/rules/docs-no-history.md), which loads whenever
   one of these files is read or edited.
 - **Hand-formatted.** Never run a Markdown formatter on the docs or the README.
 - **A `ts` snippet stays within 75 columns**, which is what the site's code block shows without
-  scrolling. `scripts/format-docs-snippets.ts` keeps it there: `pnpm format` and the pre-commit
-  hook rewrite a fence that overflows as oxfmt formats it at that width, and `pnpm lint` fails on
-  a line still over. oxfmt doesn't move comments, so a trailing comment that overflows goes on
+  scrolling. `maintenance/scripts/format-docs-snippets.ts` keeps it there: `pnpm format` and
+  the pre-commit hook rewrite a fence that overflows as oxfmt formats it at that width, and
+  `pnpm lint` fails on a line still over. oxfmt doesn't move comments, so a trailing comment that overflows goes on
   its own line above the code, by hand. Shell, JSON and output blocks are left as written.
 - **One description everywhere.** The headline and the one-line description read the same in
   the README, the site, `package.json`, `stackctl --help` and the GitHub repo's settings:
@@ -141,10 +151,30 @@ A merged pull request whose `CHANGELOG.md` has a new top `## X.Y.Z` heading **is
   stackctl would notice: one sentence with a bold summary, grouped as RELEASING.md shows.
 - **A released version takes no new entries.** If the top heading is already released (it has
   a `v<version>` tag), add a new heading above it rather than appending; CI's
-  `node scripts/changelog.ts check` fails the pull request otherwise. Rewording a released
-  entry, or fixing its link, is fine.
+  `node maintenance/scripts/changelog.ts check` fails the pull request otherwise. Rewording a
+  released entry, or fixing its link, is fine.
 - **No entry means no release.** A change nobody using stackctl would notice (docs, tests,
   refactors, CI) adds none, and merging it publishes nothing.
+
+## Maintenance
+
+`maintenance/` holds the project's own notes and tooling: what keeps stackctl in shape, shipped
+with neither the package nor the site.
+
+| Path                                          | What it is                                       |
+| --------------------------------------------- | ------------------------------------------------ |
+| `maintenance/docs/agent-guidance-experiment.md` | How stackctl tells coding agents about itself: the research, the eval and the decision. Read it before changing the skill, the rules file or the playbook. |
+| `maintenance/scripts/agent-eval/`             | The agent eval: Claude Code under each guidance setup, graded. Its README has the commands. |
+| `maintenance/scripts/demo/`                   | The docs' terminal recordings and the agent conversations they replay. See its `CLAUDE.md`. |
+| `maintenance/scripts/package-docs.ts`         | Copies the built site's `llms.txt` and pages into the package (`pnpm docs:package`). |
+| `maintenance/scripts/format-docs-snippets.ts` | Keeps the docs' `ts` snippets within 75 columns (`pnpm format`, `pnpm lint`). |
+| `maintenance/scripts/changelog.ts`            | Reads the release state out of `CHANGELOG.md`, for CI and `release.yaml`. |
+| `maintenance/scripts/check-source-maps.ts`    | Checks that the built source maps point into `src/`, in CI. |
+
+- **A note goes in `maintenance/docs/`, a script in `maintenance/scripts/`**, and each gets a
+  row here. A script runs from the repo root, as `node maintenance/scripts/<name>.ts`.
+- **What a run produces stays out of the repo**: transcripts and reports go in
+  `.local/agent-runs/`, since they hold the machine's paths.
 
 ## Type-level tests — assert types, not "some error"
 
@@ -211,7 +241,8 @@ a temp workspace (`fixture.ts`) with three plain Node services, `api`, `web` (wh
 It covers the picker (keys, clicks, a locked dependency's toast, the filter) and the step into the
 run screen with its startup footer; footer clicks and the commands menu; the log filter; Ctrl+C
 once and twice; a SIGTERM at the first frame; a failed startup; a crash; and, without a TTY, a
-headless run, `start --detach` + `stop`, and a `--kill-others` takeover. Each exit is checked for
+headless run, `start --detach` + `stop`, and a `--kill-others` takeover; and `exec` handing its
+terminal to the command, or piping it without one and for an agent. Each exit is checked for
 its code and for the terminal given back (mouse reporting off, the alternate screen left).
 
 Infra, the dev reverse proxy and the `R` reset stay manual: drive them through the PTY with the

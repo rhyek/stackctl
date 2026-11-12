@@ -136,7 +136,12 @@ function scriptsOf(ctx: UiContext, service: string): readonly string[] {
 
 /** What the key table reads for this state. */
 export function keyContext(state: UiState, ctx: UiContext): KeyContext {
-  const focused = focusedEntry(state, ctx);
+  // Starting up, the entry focused once the session runs: its keys are drawn dim until then, so
+  // the keys row doesn't change length when it does. The reducer acts on no entry meanwhile.
+  const focused = focusedEntry(
+    state,
+    ctx.phase === 'starting' ? { ...ctx, phase: 'running' } : ctx,
+  );
   const menu =
     state.mode === 'commands' && state.menu && focused
       ? {
@@ -335,7 +340,10 @@ function apply(d: Draft, action: Action, at: number, ctx: UiContext): void {
     case 'stop-start':
       if (focused && key) {
         if (focused.kind === 'app') {
-          d.effects.push({ type: isActive(focused.state) ? 'stop' : 'start', entry: key });
+          // A service waiting for its deps starts once they're ready, never before.
+          if (focused.state !== 'waiting') {
+            d.effects.push({ type: isActive(focused.state) ? 'stop' : 'start', entry: key });
+          }
         } else if (!isInfraBusy(focused.state)) {
           d.effects.push({ type: isInfraUp(focused.state) ? 'stop' : 'start', entry: key });
         }

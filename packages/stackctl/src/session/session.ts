@@ -45,6 +45,7 @@ import { pickRandomPort, readRunning, sessionId } from '../running.js';
 import { definesDevScript } from '../scripts.js';
 import { planSelection } from '../selection-plan.js';
 import { UsageSampler, type UsageReader, createUsageReader } from '../service-usage.js';
+import { sessionEventsPath } from '../session-files.js';
 import { acquireSession } from '../session-takeover.js';
 import { SHUTDOWN_GRACE_MS, SHUTDOWN_TIMEOUT_MS } from '../shutdown-timing.js';
 import { installShutdownSignals } from '../signals.js';
@@ -303,7 +304,11 @@ export class Session implements ControlManager, DevReverseProxyManager {
     this.supervisor.on('change', () => this.changed());
     this.events =
       this.seams.events ??
-      new EventLog({ root: process.cwd(), mode: currentMode(), sessionId: () => sessionId() });
+      new EventLog({
+        file: sessionEventsPath(process.cwd(), currentMode(), sessionId()),
+        mode: currentMode(),
+        sessionId: () => sessionId(),
+      });
     this.supervisor.on('exit', (service, exitCode, signal) => {
       this.events.write({ type: 'service-exit', service, exitCode, signal });
     });
@@ -629,6 +634,9 @@ export class Session implements ControlManager, DevReverseProxyManager {
       return action === 'stop' && getRegisteredPackages().some((p) => p.name === name)
         ? 'done'
         : 'unknown';
+    }
+    if (action !== 'stop' && status.state === 'waiting') {
+      return 'waiting';
     }
     if (action === 'restart') {
       void this.supervisor.restart(name);

@@ -18,7 +18,7 @@ import {
   envKeysFile,
   packageEnvLayer,
 } from '../env.js';
-import { logTimestamp } from '../format.js';
+import { commandLine, logTimestamp } from '../format.js';
 import {
   type InternalLoggers,
   createInternalLogger,
@@ -185,21 +185,6 @@ function paintFor(color: string | undefined, index: number): Paint {
   return unpainted;
 }
 
-/**
- * A command line `/bin/sh -c` runs as `spec` would spawn: a script's own text as it is, anything
- * else (a make target, the shell that reports a missing script) as its words, each quoted.
- */
-function commandLine(spec: ExecSpec): string {
-  if (spec.cmd === '/bin/sh' && spec.args.length === 2 && spec.args[0] === '-c') {
-    return spec.args[1]!;
-  }
-  return [spec.cmd, ...spec.args].map(shellQuote).join(' ');
-}
-
-function shellQuote(word: string): string {
-  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
-}
-
 interface Service {
   readonly config: AnyServiceConfig;
   /** The gutter label, painted by the service's position when it joined. */
@@ -334,8 +319,9 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   }
 
   /**
-   * Starts a service now, skipping any wait on its deps. Does nothing while shutting down, for a
-   * name not in the session, one already running or restarting, or one with no dev command.
+   * Starts a service now. Does nothing while shutting down, for a name not in the session, one
+   * already running or restarting, one with no dev command, or one waiting for its deps: it starts
+   * once they're ready, never before.
    * The start waits for the first `.env` read, and for a process a stop let go of to finish
    * exiting, so one service never runs two copies; it resolves once it has happened.
    */
@@ -346,6 +332,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       this.closing ||
       svc.proc ||
       svc.state === 'restarting' ||
+      svc.state === 'waiting' ||
       !definesDevScript(svc.config)
     ) {
       return Promise.resolve();
@@ -379,13 +366,13 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
 
   /**
    * Restarts a service: stops it (with its lines), reads the `.env` files again, starts it and
-   * logs `restarted`. A stopped or waiting service is just started, skipping any wait. A restart
-   * already under way is the one returned. Its start waits for a process an earlier stop let go of
+   * logs `restarted`. A stopped service is just started; one waiting for its deps is left waiting.
+   * A restart already under way is the one returned. Its start waits for a process an earlier stop let go of
    * to finish exiting; nothing starts once shutting down, or after a stop issued meanwhile.
    */
   restart(name: string): Promise<void> {
     const svc = this.services.get(name);
-    if (!svc || this.closing) {
+    if (!svc || this.closing || svc.state === 'waiting') {
       return Promise.resolve();
     }
     if (!svc.restart) {
@@ -435,7 +422,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       const env = this.envFor(svc.config);
       if (typeof command === 'string') {
         const exec = scriptExec(svc.config, command, [], env);
-        spec = { command: commandLine(exec), env: exec.env };
+        spec = { command: commandLine(exec.cmd, exec.args), env: exec.env };
       } else {
         spec = { command: command.shell, env };
       }
@@ -633,7 +620,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     }
     const proc: SupervisedProcess = this.createProcess({
       name,
-      command: commandLine(spec),
+      command: commandLine(spec.cmd, spec.args),
       cwd: config.absoluteDir,
       env: spec.env,
       onLine: (text, isError) => this.line(svc, proc, text, isError),

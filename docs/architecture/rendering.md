@@ -174,9 +174,9 @@ mode the filter row — and the links row (more when it wraps).
   can't run is drawn dim. Groups are set apart by `│`, except the log's, headed by a dim `logs:`
   (`KEY_GROUP_HEADINGS`). The commands menu's own hint row comes from the same table
   (`row: 'menu'`).
-- **The keys area never reflows the log.** It takes as many rows as normal mode's keys row would
-  take for any app service, so opening filter mode or the menu, or ←/→ between services, never
-  changes the pane's height.
+- **The footer takes only the rows it draws.** It never keeps an empty row, so the keys row
+  wrapping onto a second row, or the filter row or the menu's one row replacing it, moves the log
+  by a row.
 - `Footer`/`KeysRow` draw the rows as laid out (`SegmentLine`; a `link` segment becomes an OSC 8
   hyperlink). `Footer` and `CommandsMenu` are `memo`ized, and both layouts are `useMemo`ized on
   the snapshot, the UI state and the size, so a log line alone redraws neither.
@@ -625,9 +625,8 @@ with the TUI, and none of the Ink rendering.
   are found through the element tree.
 - **Every hint comes from a key table**, so a hint and its key can't disagree, and a click on a
   hint dispatches exactly the key's action.
-- **The keys area's height doesn't change with the mode** or the focused app service, and the
-  menu and toasts float out of flow, so nothing but a resize or a services-row wrap reflows the
-  log.
+- **The footer holds no empty row.** Its height is the rows it draws; the menu and toasts float
+  out of flow.
 - **The reducers are pure** (`step`, `pickerStep`): no clock, no session, no Ink. Effects run once,
   from `actions.ts` or the picker component, each in a guard.
 - The headless path stays a line printer over the store, with none of the Ink rendering.

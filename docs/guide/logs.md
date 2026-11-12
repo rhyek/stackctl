@@ -64,14 +64,20 @@ stackctl writes to the same stream, in gold, under labels of its own:
 
 ## Log files
 
-Every session writes its whole stream to a file, timestamps included, colors removed:
+Every session writes its whole stream to a file, timestamps included, colors removed, in a
+folder of its own named by when it started:
 
 ```
-node_modules/.stackctl/modes/<mode>/logs/<timestamp>-<pid>-<n>.log
+node_modules/.stackctl/modes/<mode>/sessions/<id>/
+  logs.txt        the session's log
+  events.jsonl    its event log (see below)
+  commands/       a log per sctl exec and sctl run
 ```
 
-Each session gets a new file, and so does each `sctl exec` and `sctl run`. Earlier
-files are kept. `--log-dir <dir>` writes them somewhere else.
+- **A one-off command belongs to the latest session**, running or not: its log goes in that
+  folder's `commands/`. It holds the command, its piped output and how it ended; output that
+  went to a terminal isn't in it. See [Output and exit code](./commands.md#output-and-exit-code).
+- **A session's folder is kept for 7 days**, then deleted when a session starts.
 
 ## Reading a session's log
 
@@ -84,13 +90,13 @@ sctl logs --path        # print only the file's path
 sctl logs --mode test   # the test session's
 ```
 
-Ctrl+C stops the following, never the session. With no session running, it shows the last
-one's log. See [`sctl logs`](../reference/cli.md#stackctl-logs).
+Ctrl+C stops the following, never the session. The following also stops when the next session
+starts, since that one has a log of its own. With no session running, it shows the last one's log. See [`sctl logs`](../reference/cli.md#stackctl-logs).
 
 ## What acted on the session
 
 The log holds what the services print. What acted on them, a key pressed, a control API request,
-a `sctl infra restart` from another terminal, goes to the mode's
+a `sctl infra restart` from another terminal, goes to the session's
 [event log](../reference/events.md) instead, with who did it:
 
 ```bash

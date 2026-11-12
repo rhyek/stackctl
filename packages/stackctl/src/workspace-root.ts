@@ -88,7 +88,7 @@ export function recordedConfigDir(): string | undefined {
 }
 
 /** Options that take a value, in `stackctl`'s own argument position. */
-const VALUE_OPTIONS = new Set(['-m', '--mode', '--workspace-dir', '-s', '--service', '--log-dir']);
+const VALUE_OPTIONS = new Set(['-m', '--mode', '--workspace-dir', '-s', '--service']);
 
 /** The end of stackctl's own arguments: a bare `--`, or an `infra <provider>` passthrough. */
 function ownArgs(argv: readonly string[]): readonly string[] {
@@ -129,18 +129,30 @@ export function resolveWorkspaceDirArg(argv: readonly string[]): string | undefi
  * option value.
  */
 export function needsNoWorkspace(argv: readonly string[]): boolean {
+  const { command, helpOrVersion } = readCommand(argv);
+  return helpOrVersion || command === 'init' || command === 'help';
+}
+
+/**
+ * The command raw argv names, the first word that is no option or option value (`undefined` for
+ * bare `stackctl`), and whether it asks for help or the version.
+ */
+export function readCommand(argv: readonly string[]): {
+  command: string | undefined;
+  helpOrVersion: boolean;
+} {
   const args = ownArgs(argv.slice(2));
   let command: string | undefined;
+  let helpOrVersion = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '-h' || arg === '--help' || arg === '-V' || arg === '--version') {
-      return true;
-    }
-    if (VALUE_OPTIONS.has(arg)) {
+      helpOrVersion = true;
+    } else if (VALUE_OPTIONS.has(arg)) {
       i++;
     } else if (!arg.startsWith('-') && command === undefined) {
       command = arg;
     }
   }
-  return command === 'init' || command === 'help';
+  return { command, helpOrVersion };
 }

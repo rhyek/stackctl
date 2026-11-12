@@ -21,7 +21,7 @@ packages/stackctl/LICENSE
 packages/stackctl/README.md
 
 # The docs an agent reads are generated into the package from the site build
-# (scripts/package-docs.ts)
+# (maintenance/scripts/package-docs.ts)
 packages/stackctl/docs/
 
 # VitePress build output and cache

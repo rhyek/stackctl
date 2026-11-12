@@ -519,6 +519,42 @@ describe('focus', () => {
   });
 });
 
+describe('starting up', () => {
+  const starting = context({
+    phase: 'starting',
+    entries: ENTRIES.map(
+      (e) => ({ ...e, state: e.kind === 'app' ? 'pending' : 'starting' }) as Entry,
+    ),
+  });
+
+  test('the key context names the entry focused once the session runs', () => {
+    expect(keyContext(initialUiState, starting).focused).toMatchObject({
+      kind: 'app',
+      name: 'api',
+    });
+    expect(keyContext(focusOn('db'), starting).focused).toMatchObject({
+      kind: 'infra',
+      name: 'db',
+    });
+  });
+
+  test('its keys do nothing until then', () => {
+    const actions: Action[] = [
+      { type: 'focus-next' },
+      { type: 'restart' },
+      { type: 'stop-start' },
+      { type: 'open-commands' },
+    ];
+    for (const action of actions) {
+      for (const event of [{ key: action }, { click: action }]) {
+        const { state, effects } = run(initialUiState, [event], { ctx: starting });
+        expect(effects, action.type).toEqual([]);
+        expect(state, action.type).toEqual(initialUiState);
+      }
+    }
+  });
+});
+
 describe('service actions', () => {
   const withState = (name: string, state: Entry['state']) =>
     context({ entries: ENTRIES.map((e) => (e.name === name ? ({ ...e, state } as Entry) : e)) });
@@ -540,14 +576,21 @@ describe('service actions', () => {
     }
   });
 
-  test('s stops an active service and starts any other; an infra entry not while busy', () => {
+  test('s stops an active service and starts any other but a waiting one; an infra entry not while busy', () => {
     const ss: Action = { type: 'stop-start' };
     expect(run(focusOn('api'), [{ key: ss }]).effects).toEqual([
       { type: 'stop', entry: { kind: 'app', name: 'api' } },
     ]);
+    for (const state of ['stopped', 'crashed', 'pending'] as const) {
+      expect(
+        run(focusOn('api'), [{ key: ss }], { ctx: withState('api', state) }).effects,
+        state,
+      ).toEqual([{ type: 'start', entry: { kind: 'app', name: 'api' } }]);
+    }
+    // It waits for its deps, and starts once they're ready.
     expect(
       run(focusOn('api'), [{ key: ss }], { ctx: withState('api', 'waiting') }).effects,
-    ).toEqual([{ type: 'start', entry: { kind: 'app', name: 'api' } }]);
+    ).toEqual([]);
     expect(run(focusOn('db'), [{ key: ss }], { ctx: withState('db', 'stopped') }).effects).toEqual([
       { type: 'start', entry: { kind: 'infra', name: 'db' } },
     ]);

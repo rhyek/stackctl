@@ -237,6 +237,29 @@ describe('the keys row', () => {
     }
   });
 
+  test('starting up, the keys of the entry focused once running are drawn, dim', () => {
+    for (const focused of [appFocused('pending'), infraFocused('starting')]) {
+      const hints = hintsFor(ctx({ phase: 'starting', focused }));
+      const group1 = hints.filter((h) => h.group === 1);
+      expect(group1.length, focused.kind).toBeGreaterThan(0);
+      expect(
+        group1.every((h) => h.disabled),
+        focused.kind,
+      ).toBe(true);
+      expect(
+        hints.filter((h) => h.group !== 1).some((h) => h.disabled),
+        focused.kind,
+      ).toBe(false);
+    }
+    // A service pending at startup is about to start: its key reads what it will once it has.
+    expect(keysRow(hintsFor(ctx({ phase: 'starting', focused: appFocused('pending') })))).toBe(
+      '  ←→ select   r restart   s stop   m commands  │  f filter   c clear  │  ^c quit',
+    );
+    expect(keysRow(hintsFor(ctx({ phase: 'starting', focused: appFocused('stopped') })))).toBe(
+      '  ←→ select   r restart   s start   m commands  │  f filter   c clear  │  ^c quit',
+    );
+  });
+
   test('running with no entries shows the log keys and quit', () => {
     expect(keysRow(hintsFor(ctx()))).toBe('  f filter   c clear  │  ^c quit');
   });
@@ -278,6 +301,16 @@ describe('the keys row', () => {
       action: { type: 'restart' },
     });
     expect(appHints('running').find((h) => h.key === 'r')?.disabled).toBe(false);
+    // Waiting for its deps: it starts when they're ready, never before.
+    expect(
+      appHints('waiting')
+        .filter((h) => h.key === 'r' || h.key === 's')
+        .map((h) => [h.key, h.label, h.disabled]),
+    ).toEqual([
+      ['r', 'restart', true],
+      ['s', 'start', true],
+    ]);
+    expect(appHints('stopped').find((h) => h.key === 's')?.disabled).toBe(false);
 
     const infraHints = (state: SessionInfraState) =>
       hintsFor(ctx({ focused: infraFocused(state) }));

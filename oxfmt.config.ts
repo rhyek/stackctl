@@ -23,7 +23,7 @@ export default defineConfig({
     '**/.tanstack/**',
     '**/routeTree.gen.ts',
     // README, CHANGELOG and the docs are formatted by hand. The docs' `ts` snippets are kept to
-    // the site's width by scripts/format-docs-snippets.ts.
+    // the site's width by maintenance/scripts/format-docs-snippets.ts.
     '**/*.md',
   ],
   overrides: [

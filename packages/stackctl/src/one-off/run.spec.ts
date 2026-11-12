@@ -51,6 +51,37 @@ const node = (js: string): OneOffSpec => ({
 
 const logsIn = (dir: string) => fs.readdirSync(dir).map((name) => path.join(dir, name));
 
+/** A log file's lines, each without its timestamp. */
+const logLines = (file: string) =>
+  fs
+    .readFileSync(file, 'utf8')
+    .trimEnd()
+    .split('\n')
+    .map((line) => line.replace(/^\S+ \S+ /, ''));
+
+/** What the command wrote to a log file: its lines between the first and the last. */
+const bodyOf = (file: string) => `${logLines(file).slice(1, -1).join('\n')}\n`;
+
+/** The file a command run by {@link fdsOf} writes its stdout's and stderr's identity to. */
+const fdsFile = () => path.join(tmp, 'fds.json');
+
+/**
+ * A command that writes, to {@link fdsFile}, which file each of its stdout and stderr is, and
+ * prints nothing: what it was handed, with no output to land in the test runner's.
+ */
+const fdsOf = (): OneOffSpec =>
+  node(`const fs=require('fs');const id=(fd)=>{const s=fs.fstatSync(fd);return s.dev+':'+s.ino};fs.writeFileSync(${JSON.stringify(fdsFile())},JSON.stringify([id(1),id(2)]))`); // oxfmt-ignore
+
+/** Whether the command's stdout and stderr were this process's own: handed over, not piped. */
+const handedOver = (): [boolean, boolean] => {
+  const [out, err] = JSON.parse(fs.readFileSync(fdsFile(), 'utf8')) as [string, string];
+  const id = (fd: number) => {
+    const stat = fs.fstatSync(fd);
+    return `${stat.dev}:${stat.ino}`;
+  };
+  return [out === id(1), err === id(2)];
+};
+
 describe('runOneOff', () => {
   test('returns the exit code', async () => {
     const result = await runOneOff(node('process.exit(3)'), { stdio: 'pipe', logDir: tmp });
@@ -85,11 +116,49 @@ describe('runOneOff', () => {
     }
   });
 
-  test('tees to a log file', async () => {
+  test('tees to a log file, between a line naming the command and one saying how it ended', async () => {
     const logDir = path.join(tmp, 'logs');
     await runOneOff(node("console.log('\\u001b[31mhi\\u001b[0m')"), { stdio: 'pipe', logDir });
     const [file] = logsIn(logDir);
-    expect(fs.readFileSync(file!, 'utf8')).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d hi\n$/);
+    const text = fs.readFileSync(file!, 'utf8');
+    expect(text).toMatch(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d .*\n){3}$/);
+    expect(logLines(file!)).toEqual([
+      `▶ running: ${process.execPath} -e 'console.log('\\''\\u001b[31mhi\\u001b[0m'\\'')' (in ${tmp})`,
+      'hi',
+      expect.stringMatching(/^✔ finished in \d+\.\d seconds$/),
+    ]);
+  });
+
+  test("the log's last line says how the command ended", async () => {
+    const lastLine = async (js: string) => {
+      const logDir = path.join(tmp, `logs-${String(Math.random()).slice(2)}`);
+      await runOneOff(node(js), { stdio: 'pipe', logDir });
+      return logLines(logsIn(logDir)[0]!).at(-1);
+    };
+    expect(await lastLine('process.exit(3)')).toMatch(
+      /^✘ exited with code 3 after \d+\.\d seconds$/,
+    );
+    expect(await lastLine("process.kill(process.pid,'SIGTERM')")).toMatch(
+      /^✘ ended by SIGTERM after \d+\.\d seconds$/,
+    );
+  });
+
+  test("a command that can't start is logged", async () => {
+    const logDir = path.join(tmp, 'logs');
+    const spec = { ...node(''), command: 'stackctl-no-such-command', args: [] };
+    await expect(runOneOff(spec, { stdio: 'pipe', logDir })).rejects.toThrow('stackctl-no-such-command'); // oxfmt-ignore
+    expect(logLines(logsIn(logDir)[0]!)).toEqual([
+      `▶ running: stackctl-no-such-command (in ${tmp})`,
+      expect.stringMatching(/^✘ couldn't start: .*stackctl-no-such-command/),
+    ]);
+  });
+
+  test("the log's first line masks a URL's password", async () => {
+    const logDir = path.join(tmp, 'logs');
+    await runOneOff({ ...node(''), args: ['-e', '', 'postgres://app:hunter2@db/app'] }, { stdio: 'pipe', logDir }); // oxfmt-ignore
+    const [first] = logLines(logsIn(logDir)[0]!);
+    expect(first).toContain('postgres://app:***@db/app');
+    expect(first).not.toContain('hunter2');
   });
 
   test('rejects when the command cannot start', async () => {
@@ -133,7 +202,7 @@ describe('runOneOff', () => {
     const running = runOneOff(node(js), {
       stdio: 'inherit',
       logDir: tmp,
-      isTerminal: () => true,
+      isTerminal: (fd) => fd === 0,
     });
     try {
       const deadline = Date.now() + 10_000;
@@ -164,7 +233,7 @@ describe('runOneOff', () => {
     });
     expect(result.stdout).toBe('€'.repeat(100000));
     const [file] = logsIn(logDir);
-    expect(fs.readFileSync(file!, 'utf8').replace(/^\S+ \S+ /, '')).toBe(`${'€'.repeat(100000)}\n`);
+    expect(bodyOf(file!)).toBe(`${'€'.repeat(100000)}\n`);
   });
 
   test('many concurrent calls share their listeners: no MaxListenersExceededWarning', async () => {
@@ -198,7 +267,50 @@ describe('runOneOff', () => {
     );
     const files = logsIn(logDir);
     expect(files).toHaveLength(4);
-    const contents = files.map((file) => fs.readFileSync(file, 'utf8').replace(/^\S+ \S+ /, ''));
+    const contents = files.map(bodyOf);
     expect(contents.sort()).toEqual(words.map((word) => `${word}\n`));
+  });
+});
+
+describe('runOneOff hands a terminal to the command', () => {
+  test("with 'inherit', stdout and stderr on a terminal are the command's own", async () => {
+    const logDir = path.join(tmp, 'logs');
+    await runOneOff(fdsOf(), { stdio: 'inherit', logDir, isTerminal: () => true, agent: false });
+    expect(handedOver()).toEqual([true, true]);
+    expect(logLines(logsIn(logDir)[0]!)[1]).toBe(
+      'stdout and stderr went to the terminal, not to this log',
+    );
+  });
+
+  test('each stream is decided on its own: a piped stdout stays piped, and logged', async () => {
+    const logDir = path.join(tmp, 'logs');
+    const spec = node(`${fdsOf().args[1]};console.log('piped')`);
+    await runOneOff(spec, { stdio: 'inherit', logDir, isTerminal: (fd) => fd !== 1, agent: false });
+    expect(handedOver()).toEqual([false, true]);
+    expect(logLines(logsIn(logDir)[0]!).slice(1, -1)).toEqual([
+      'stderr went to the terminal, not to this log',
+      'piped',
+    ]);
+  });
+
+  test('a coding agent gets pipes even on a terminal, so its log holds everything', async () => {
+    await runOneOff(fdsOf(), {
+      stdio: 'inherit',
+      logDir: tmp,
+      isTerminal: () => true,
+      agent: true,
+    });
+    expect(handedOver()).toEqual([false, false]);
+  });
+
+  test("'pipe' collects on a terminal too", async () => {
+    const result = await runOneOff(node(`${fdsOf().args[1]};console.log('hi')`), {
+      stdio: 'pipe',
+      logDir: tmp,
+      isTerminal: () => true,
+      agent: false,
+    });
+    expect(handedOver()).toEqual([false, false]);
+    expect(result.stdout).toBe('hi\n');
   });
 });

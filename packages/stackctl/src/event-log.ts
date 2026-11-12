@@ -3,15 +3,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { SessionServiceStatus } from './control-client.js';
 import type { InfraStatus } from './infra/control.js';
-import { modeStateDir } from './log-files.js';
 import { isProcessAlive } from './process-info.js';
 import { readRunning } from './running.js';
+import { currentSessionId, sessionEventsPath, writeTargetSessionId } from './session-files.js';
 
-// A mode's event log, `node_modules/.stackctl/modes/<mode>/events.log`: one JSON object per line,
-// its `type` first, for whatever changes the mode's stack. The session writes its state changes,
-// its lifecycle and what its keys, control API and start-up infra step do; a stackctl command that
-// acts without the session writes its own. `GET /events` streams the same lines (control-server.ts
-// tails this file). Kept free of the config, so a CLI command loads only this.
+// A session's event log, `node_modules/.stackctl/modes/<mode>/sessions/<id>/events.jsonl`: one JSON
+// object per line, its `type` first, for whatever changes the mode's stack. The session writes its
+// state changes, its lifecycle and what its keys, control API and start-up infra step do; a stackctl
+// command that acts without the session writes its own, to the running session's file or, with none
+// running, the latest one's. `GET /events` streams the same lines (control-server.ts tails the
+// session's file). Kept free of the config, so a CLI command loads only this.
 
 /** Who asked for a command. */
 export type EventBy =
@@ -21,6 +22,8 @@ export type EventBy =
   | { kind: 'control-api'; request: string; userAgent: string | null }
   /** A stackctl command run from a shell: its own arguments, where, and whether an agent ran it. */
   | { kind: 'cli'; argv: string[]; cwd: string; agent: boolean }
+  /** A Node script calling the SDK's `exec()` or `run()`: node's arguments, where, whether an agent ran it. */
+  | { kind: 'sdk'; argv: string[]; cwd: string; agent: boolean }
   /** The session itself: its start-up infra step. */
   | { kind: 'session' };
 
@@ -38,7 +41,7 @@ type Command<T extends string, Asked, Result> =
 export type ServiceCommandEntry = Command<
   'service-command',
   { action: 'start' | 'stop' | 'restart'; service: string },
-  { outcome: 'done' | 'busy' | 'unknown' | 'unavailable' | 'closing' }
+  { outcome: 'done' | 'busy' | 'waiting' | 'unknown' | 'unavailable' | 'closing' }
 >;
 export type InfraCommandEntry = Command<
   'infra-command',
@@ -171,12 +174,30 @@ export function commandBy(
   };
 }
 
-/** A file over this is renamed to `events.1.log` by the next writer, replacing the old one. */
+/**
+ * Who asked, for the lines of an SDK `exec()` or `run()`: the Node script that called it, its
+ * path relative to `root` and its arguments, run in `cwd`.
+ */
+export function sdkBy(root: string, opts: { agent: boolean; cwd: string }): EventBy {
+  const [script, ...args] = process.argv.slice(1);
+  return {
+    kind: 'sdk',
+    argv: maskSecrets([...(script ? [path.relative(root, script) || '.'] : []), ...args]),
+    cwd: path.relative(root, opts.cwd) || '.',
+    agent: opts.agent,
+  };
+}
+
+/** A file over this is renamed to `events.1.jsonl` by the next writer, replacing the old one. */
 const MAX_BYTES = 5 * 1024 * 1024;
 
-/** The mode's event log. Not created. */
-export function eventsFilePath(root: string, mode: string): string {
-  return path.join(modeStateDir(root, mode), 'events.log');
+/**
+ * The event log `stackctl events` and `status` read: the running session's, else the latest
+ * one's. `null` before any session ran.
+ */
+export function currentEventsPath(root: string, mode: string): string | null {
+  const id = currentSessionId(root, mode);
+  return id === null ? null : sessionEventsPath(root, mode, id);
 }
 
 /** `date` as ISO 8601 in the machine's time zone, with its offset, to the ms. */
@@ -214,7 +235,7 @@ export function isReadOnlyCompose(args: string[]): boolean {
 }
 
 /**
- * A mode's event log, for one process to write. Each line is one append, so several processes'
+ * A session's event log, for one process to write. Each line is one append, so several processes'
  * lines never interleave; a write it can't make is dropped, never thrown.
  */
 export class EventLog {
@@ -223,14 +244,15 @@ export class EventLog {
 
   constructor(
     private readonly opts: {
-      root: string;
+      /** The file it appends to: a session's `events.jsonl`, chosen once, so a command's lines share one. */
+      file: string;
       mode: string;
       /** The mode's running session, asked at each write: a session's id is known only once it has one. */
       sessionId: () => string | null;
       maxBytes?: number;
     },
   ) {
-    this.file = eventsFilePath(opts.root, opts.mode);
+    this.file = opts.file;
   }
 
   write(entry: EventEntry): void {
@@ -295,18 +317,19 @@ export class EventLog {
       return;
     }
     if (size > (this.opts.maxBytes ?? MAX_BYTES)) {
-      fs.renameSync(this.file, this.file.replace(/\.log$/, '.1.log'));
+      fs.renameSync(this.file, this.file.replace(/\.jsonl$/, '.1.jsonl'));
     }
   }
 }
 
 /**
- * The event log a stackctl command writes to, from the workspace at `root`: each line carries the
- * id of the mode's session if one is alive, else `null`.
+ * The event log a stackctl command writes to, from the workspace at `root`: the running session's,
+ * else the latest one's, chosen now. Each line carries the id of the mode's session if one is
+ * alive, else `null`.
  */
 export function cliEventLog(root: string, mode: string): EventLog {
   return new EventLog({
-    root,
+    file: sessionEventsPath(root, mode, writeTargetSessionId(root, mode)),
     mode,
     sessionId: () => {
       const running = readRunning(root, mode);

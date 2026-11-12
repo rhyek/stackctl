@@ -120,9 +120,32 @@ describe('removeOwnRunning', () => {
   });
 });
 
+describe('takeHandedSessionId', () => {
+  test('takes the id `start --detach` handed over, and leaves none for the processes it starts', async () => {
+    vi.resetModules();
+    const fresh = await import('./running.js');
+    const env: NodeJS.ProcessEnv = { [fresh.SESSION_ID_ENV]: '1794447587632' };
+    fresh.takeHandedSessionId(env);
+    expect(env).toEqual({});
+    expect(fresh.sessionId()).toBe('1794447587632');
+  });
+
+  test('ignores a value that is no session id', async () => {
+    vi.resetModules();
+    const fresh = await import('./running.js');
+    const env: NodeJS.ProcessEnv = { [fresh.SESSION_ID_ENV]: '../elsewhere' };
+    fresh.takeHandedSessionId(env);
+    expect(env).toEqual({});
+    expect(fresh.sessionId()).toMatch(/^\d+$/);
+  });
+});
+
 describe('sessionId', () => {
-  test('is random, and the same for the life of the process', () => {
-    expect(sessionId()).toMatch(/^[0-9a-f-]{36}$/);
+  test('is when it was first asked for, in ms, and the same for the life of the process', () => {
+    const before = Date.now();
+    expect(sessionId()).toMatch(/^\d+$/);
+    expect(Number(sessionId())).toBeLessThanOrEqual(Date.now());
+    expect(Number(sessionId())).toBeGreaterThan(before - 60_000);
     expect(sessionId()).toBe(sessionId());
   });
 });

@@ -2,9 +2,9 @@
 name: commit
 description: >-
   Commit the work in the stackctl repo, re-recording first any of the docs' terminal recordings
-  (scripts/demo: the home page demo, the README GIF, the guide pages' players and screenshots)
-  that the changes would alter, so the recordings land in the same commit as the change that
-  caused them.
+  (maintenance/scripts/demo: the home page demo, the README GIF, the guide pages' players and
+  screenshots) that the changes would alter, so the recordings land in the same commit as the
+  change that caused them.
   Use when the user asks to commit in this repo ("commit it", "/commit"), and whenever a
   `git commit` is blocked by the recordings hook. Never on your own initiative: a commit needs
   the user's word.
@@ -13,9 +13,9 @@ description: >-
 # Commit, with the recordings kept current
 
 The docs show stackctl's terminal UI as recordings of the real thing (see
-`scripts/demo/CLAUDE.md`). A change to what a screen shows makes its recording wrong. This skill
-re-records what a change touches before committing, so the recording and the change travel
-together.
+`maintenance/scripts/demo/CLAUDE.md`). A change to what a screen shows makes its recording
+wrong. This skill re-records what a change touches before committing, so the recording and the
+change travel together.
 
 A hook enforces it (`.claude/hooks/check-recordings.ts`, wired in `.claude/settings.json`): a
 `git commit` whose changes match a scene's triggers is blocked unless the changes carry a new cast
@@ -34,11 +34,12 @@ unfinished, ask before including it.
 ## 2. List the recordings the changes may alter
 
 ```sh
-node scripts/demo/affected.ts
+node maintenance/scripts/demo/affected.ts
 ```
 
-It prints each scene (`scripts/demo/scenes.ts`, the index of every recording) whose `triggers`
-match a changed file, with its description and the matched files. Nothing printed: skip to step 5.
+It prints each scene (`maintenance/scripts/demo/scenes.ts`, the index of every recording)
+whose `triggers` match a changed file, with its description and the matched files. Nothing
+printed: skip to step 5.
 
 ## 3. Judge which really change
 
@@ -60,7 +61,7 @@ your statement that you judged it, so make the judgment first.
 ## 4. Re-record
 
 ```sh
-./scripts/demo/record.sh <scene> [<scene>…]
+./maintenance/scripts/demo/record.sh <scene> [<scene>…]
 ```
 
 About 30 seconds a scene. It needs Docker running and the example's ports (21060, 3001, 3002, 21050)
@@ -72,8 +73,9 @@ Then check what it wrote:
 - **The text copies:** `git diff docs/` shows each page's new text beside its player. Read it as
   the screen the change should produce. A difference you didn't expect means the change does more
   than intended, or the scene broke: stop and tell the user.
-- **The demo's GIF** (only if `demo` was re-recorded): `node scripts/demo/frames.ts` must end in
-  `OK`. Open a frame or two from `scripts/demo/.frames/` where the change shows.
+- **The demo's GIF** (only if `demo` was re-recorded): `node maintenance/scripts/demo/frames.ts`
+  must end in `OK`. Open a frame or two from `maintenance/scripts/demo/.frames/` where the
+  change shows.
 
 ## 5. Commit
 

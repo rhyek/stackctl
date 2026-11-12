@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -38,9 +37,9 @@ export interface RunningState {
   port: number;
   pid: number;
   /**
-   * The session's id, random to each session and reported on its `/query/status` as well: a live
-   * pid whose control API answers with another id (or none) is not this record's session.
-   * Absent from records an earlier stackctl wrote.
+   * The session's id, when it started in ms since the epoch, reported on its `/query/status` as
+   * well: a live pid whose control API answers with another id (or none) is not this record's
+   * session. An older stackctl wrote a UUID here, or nothing.
    */
   sessionId?: string;
   /**
@@ -56,16 +55,13 @@ export interface RunningState {
    */
   children?: ChildRecord[];
   /**
-   * Absolute directory the session writes its timestamped logs into
-   * (`<timestamp>-<pid>-<n>.log`). Lets a tool find the current session's logs even when started
-   * with `--log-dir`. Omitted by callers that don't run a session (e.g. tests).
+   * Absolute path to the session's folder, `modes/<mode>/sessions/<id>/`. Omitted by callers that
+   * don't run a session (e.g. tests).
    */
   logDir?: string;
   /**
-   * Absolute path to the logfile the session is currently writing — updated whenever the log
-   * rotates (the `t` hotkey), so it always names the latest file. This is the authoritative
-   * "current logfile" a live session also reports on `/query/status`. Omitted by callers that
-   * don't run a session.
+   * Absolute path to the session's log, `logDir`'s `logs.txt`, as a live session also reports it
+   * on `/query/status`. Omitted by callers that don't run a session.
    */
   logFile?: string;
 }
@@ -81,9 +77,30 @@ export interface InstanceInfo {
 
 let ownSessionId: string | undefined;
 
-/** This process's session id: made on first use, then the same for the life of the process. */
+/**
+ * Set by `stackctl start --detach` on the session it starts, to the id that session takes, so it
+ * knows where the session's log is before the session says.
+ */
+export const SESSION_ID_ENV = 'STACKCTL_SESSION_ID';
+
+/**
+ * Takes `SESSION_ID_ENV` out of `env`, as this process's session id: the session's services, and
+ * any stackctl they run, must not take it as theirs. The CLI calls it first thing.
+ */
+export function takeHandedSessionId(env: NodeJS.ProcessEnv = process.env): void {
+  const handed = env[SESSION_ID_ENV];
+  delete env[SESSION_ID_ENV];
+  if (handed !== undefined && /^\d+$/.test(handed)) {
+    ownSessionId ??= handed;
+  }
+}
+
+/**
+ * This process's session id: when it started, in ms since the epoch, made on first use and then
+ * the same for the life of the process. It names the session's folder (`sessions/<id>/`).
+ */
 export function sessionId(): string {
-  ownSessionId ??= randomUUID();
+  ownSessionId ??= String(Date.now());
   return ownSessionId;
 }
 
@@ -250,9 +267,9 @@ export async function decideControlPort(opts: {
   sessionId?: string;
   /** When this session started, recorded beside its pid; see {@link RunningState.startedAt}. */
   startedAt?: number;
-  /** Directory this session writes its logs into; recorded in the session record as `logDir`. */
+  /** This session's folder; recorded in the session record as `logDir`. */
   logDir?: string;
-  /** This session's initial logfile; recorded in the session record as `logFile` (updated on rotation). */
+  /** This session's log; recorded in the session record as `logFile`. */
   logFile?: string;
   env: PortEnv;
   onStatus?: (message: string) => void;

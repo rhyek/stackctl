@@ -21,8 +21,8 @@ graded Claude Code sessions in a workspace that uses stackctl.
   an agent to the playbook. A section of `AGENTS.md` is written only on request, and nothing is
   installed unasked.
 
-The harness is [`scripts/agent-eval/`](../../scripts/agent-eval/README.md). The last section is
-a checklist for the next package.
+The harness is [`maintenance/scripts/agent-eval/`](../scripts/agent-eval/README.md). The last
+section is a checklist for the next package.
 
 ## Contents
 
@@ -517,11 +517,11 @@ a command the final hook allows was redone, in every setup: 24 runs.
 ```bash
 pnpm build
 work=$(mktemp -d)
-node scripts/agent-eval/eval.ts setup --work "$work"
-node scripts/agent-eval/eval.ts run   --work "$work" --out .local/agent-runs/<name>
+node maintenance/scripts/agent-eval/eval.ts setup --work "$work"
+node maintenance/scripts/agent-eval/eval.ts run   --work "$work" --out .local/agent-runs/<name>
 ```
 
-[`scripts/agent-eval/README.md`](../../scripts/agent-eval/README.md) has the options, the
+[`maintenance/scripts/agent-eval/README.md`](../scripts/agent-eval/README.md) has the options, the
 conditions, the end-to-end check and how to add a task. Run it after changing the skill
 (`packages/stackctl/skills/stackctl/SKILL.md`), the always-on text
 (`packages/stackctl/assets/agent-rules.md`), the playbook or `llms.txt`. The transcripts stay
@@ -541,7 +541,7 @@ out of the repo: they hold the machine's paths and process list.
 5. **Offer, don't install.** Ask a person one question, once, at a moment they are at a
    terminal; give scripts a flag; keep what was accepted current without asking.
 6. **Make the CLI's `--help` say enough to act on.** It is what an agent with no guidance finds.
-7. **Measure before and after.** Copy `scripts/agent-eval/`: prompts phrased as a person would,
-   a hook that refuses every change, grading on the first command tried. Include tasks that name
+7. **Measure before and after.** Copy `maintenance/scripts/agent-eval/`: prompts phrased as a
+   person would, a hook that refuses every change, grading on the first command tried. Include tasks that name
    the wrong tool, a crowded skill listing and a smaller model: the plain cases hide every
    difference between setups.

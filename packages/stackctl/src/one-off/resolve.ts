@@ -150,9 +150,17 @@ export function oneOffEnvResolution(
 /**
  * What the hidden resolver command writes: the command (`null` when asked for an environment
  * only), the target's environment as `resolveEnv` returns it, and the log directory the command
- * tees to — the workspace's, for the mode.
+ * tees to: the `commands/` folder of the mode's current session.
  */
 export interface OneOffResolution extends SerializedEnvResolution {
   spec: OneOffSpec | null;
   logDir: string;
+  /** The workspace root and the mode: where the command's event-log lines go. */
+  root: string;
+  mode: string;
+  /** Where the command runs, as its event-log lines name it. */
+  where: OneOffWhere;
 }
+
+/** Where a one-off command runs, as its event-log lines name it: a service, or a directory. */
+export type OneOffWhere = { service: string } | { dir: string };

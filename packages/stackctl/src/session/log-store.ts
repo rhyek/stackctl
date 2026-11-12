@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import stringWidth from 'string-width';
 import { stripAnsi } from '../format.js';
 import { normalize } from '../tui/text-cells.js';
@@ -113,6 +114,8 @@ export class LogStore implements LogSource {
   constructor(opts: { logFile: string; maxBytes?: number }) {
     this.maxBytes = opts.maxBytes ?? DEFAULT_LOG_BYTES;
     this.logFile = opts.logFile;
+    // The session's folder is made here, once a session is starting for sure.
+    fs.mkdirSync(path.dirname(this.logFile), { recursive: true });
     this.fd = fs.openSync(this.logFile, 'w');
   }
 
