@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
+import { startedByAgent } from '../agent-detection.js';
 import { STACKCTL_LABEL_COLOR } from '../colors.js';
 import {
   type UrlEntry,
@@ -20,6 +21,15 @@ import {
 import type { DevReverseProxyManager, DevReverseProxyServer } from '../dev-reverse-proxy.js';
 import { currentMode, modeLine } from '../env-base.js';
 import { errorMessage } from '../errors.js';
+import {
+  EventLog,
+  type EventBy,
+  type InfraCommandEntry,
+  type OneOffCommandEntry,
+  type ServiceCommandEntry,
+  type SessionCommandEntry,
+  maskSecrets,
+} from '../event-log.js';
 import { logTimestamp } from '../format.js';
 import {
   type InfraAction,
@@ -30,13 +40,15 @@ import {
 import { InfraFailedError, runSessionInfra } from '../infra/session.js';
 import type { InfraEvent, InfraRunSummary } from '../infra/types.js';
 import type { InternalLoggers } from '../internal-logger.js';
-import { pickRandomPort, sessionId } from '../running.js';
+import { isProcessAlive } from '../process-info.js';
+import { pickRandomPort, readRunning, sessionId } from '../running.js';
 import { definesDevScript } from '../scripts.js';
 import { planSelection } from '../selection-plan.js';
 import { UsageSampler, type UsageReader, createUsageReader } from '../service-usage.js';
 import { acquireSession } from '../session-takeover.js';
 import { SHUTDOWN_GRACE_MS, SHUTDOWN_TIMEOUT_MS } from '../shutdown-timing.js';
 import { installShutdownSignals } from '../signals.js';
+import { readOwnVersion } from '../skill.js';
 import type { StackMessage } from '../stack.js';
 import { bounded } from '../util.js';
 import { type GitBranchWatch, readGitBranch, followGitBranch } from './git-branch.js';
@@ -46,6 +58,7 @@ import type { ServiceProcessOptions } from './service-process.js';
 import { startSessionDevReverseProxy } from './start-proxy.js';
 import {
   type OneOff,
+  type OneOffResult,
   type ServiceState,
   type SupervisedProcess,
   Supervisor,
@@ -128,6 +141,8 @@ export interface SessionSeams {
   randomPort?: () => number;
   /** A forked session's IPC channel to its parent; `process` unless given. */
   parentChannel?: ParentChannel;
+  /** The mode's event log; the one under the workspace's `node_modules/.stackctl/` unless given. */
+  events?: EventLog;
 }
 
 /** What a forked session sends its `started` message over: `process`'s IPC channel. */
@@ -241,6 +256,11 @@ export class Session implements ControlManager, DevReverseProxyManager {
   private notifying = false;
   private readonly listeners = new Set<() => void>();
   private readonly infraListeners = new Set<(progress: InfraProgress) => void>();
+  /** The mode's event log: what acts on the session, and what it does on its own. */
+  private readonly events: EventLog;
+  private startedAt = 0;
+  /** The quit command under way, ended once the session has stopped. */
+  private quitCommand: { end(result: { ok: boolean }): void } | null = null;
 
   constructor(opts: {
     plan: SessionPlan;
@@ -281,6 +301,15 @@ export class Session implements ControlManager, DevReverseProxyManager {
       createProcess: this.seams.createProcess,
     });
     this.supervisor.on('change', () => this.changed());
+    this.events =
+      this.seams.events ??
+      new EventLog({ root: process.cwd(), mode: currentMode(), sessionId: () => sessionId() });
+    this.supervisor.on('exit', (service, exitCode, signal) => {
+      this.events.write({ type: 'service-exit', service, exitCode, signal });
+    });
+    this.supervisor.on('env-change', (dir, services) => {
+      this.events.write({ type: 'env-change', dir, services });
+    });
     // Infra's labels count in the width from the start, so a service's text and an infra
     // service's start in one column; a service the provider reports beyond the config's joins
     // them once infra names its targets.
@@ -345,6 +374,9 @@ export class Session implements ControlManager, DevReverseProxyManager {
       const readUsage = this.interactive
         ? (this.seams.usageReader ?? createUsageReader)().catch(() => null)
         : null;
+      // The mode's session before this one, if alive: gone after the takeover, it was replaced.
+      const before = readRunning(process.cwd());
+      const prior = before && before.pid !== process.pid && isProcessAlive(before.pid) ? before : null; // oxfmt-ignore
       const acquired = acquire((message) => log.info(message));
       const port = await this.step(
         this.interactive
@@ -361,6 +393,17 @@ export class Session implements ControlManager, DevReverseProxyManager {
       if (this.closing) {
         return;
       }
+      this.startedAt = Date.now();
+      this.events.write({
+        type: 'session-start',
+        services: this.plan.sortedPackages.map((pkg) => pkg.name),
+        headless: !this.interactive,
+        startedByAgent: startedByAgent(),
+        argv: process.argv.slice(2),
+        version: readOwnVersion(),
+        logFile: path.relative(process.cwd(), this.logs.getLogFile()),
+        replaced: prior && !isProcessAlive(prior.pid) ? (prior.sessionId ?? null) : null,
+      });
 
       const startProxy =
         this.seams.startProxy ??
@@ -373,8 +416,9 @@ export class Session implements ControlManager, DevReverseProxyManager {
       const startServer = this.seams.startControlServer ?? startControlServer;
       const server = await this.step(
         startServer({
-          quitHandler: () => void this.shutdown('quit'),
+          quitHandler: (by) => void this.requestQuit(by, 'quit'),
           port,
+          events: this.events,
           configPath: this.configPath,
           logFile: this.logs.getLogFile(),
           reverseProxy: proxy,
@@ -492,7 +536,18 @@ export class Session implements ControlManager, DevReverseProxyManager {
     if (this.proxy) {
       await bounded(this.proxy.close(), CLOSE_STEP_MS);
     }
+    // Before the server closes, so the streams get them too.
+    this.quitCommand?.end({ ok: true });
+    this.quitCommand = null;
+    if (this.startedAt > 0) {
+      this.events.write({
+        type: 'session-end',
+        cause: reason === 'signal' ? 'signal' : failed || reason === 'startup-failed' ? 'error' : 'quit', // oxfmt-ignore
+        durationMs: Date.now() - this.startedAt,
+      });
+    }
     if (this.server) {
+      this.server.flush();
       // After the children are down (so it means "ports freed"), before the server closes.
       this.server.ackQuit();
       await bounded(this.server.close(), CLOSE_STEP_MS);
@@ -552,7 +607,20 @@ export class Session implements ControlManager, DevReverseProxyManager {
     return this.logs.getLogFile();
   }
 
-  async runPackage(name: string, action: ServiceAction): Promise<ServiceRunOutcome> {
+  /** Runs `action` on a service for `by`, writing its command's two lines. */
+  async runPackage(name: string, action: ServiceAction, by: EventBy): Promise<ServiceRunOutcome> {
+    const command = this.events.begin<ServiceCommandEntry>({ type: 'service-command', action, service: name }, by); // oxfmt-ignore
+    const outcome = await this.runPackageNow(name, action);
+    if (outcome === 'accepted') {
+      // A restart runs on: its end is once the service has been started again.
+      void this.supervisor.restart(name).then(() => command.end({ ok: true, outcome: 'done' }));
+    } else {
+      command.end({ ok: outcome === 'done', outcome });
+    }
+    return outcome;
+  }
+
+  private async runPackageNow(name: string, action: ServiceAction): Promise<ServiceRunOutcome> {
     const status = this.supervisor.states().get(name);
     if (!status) {
       if (action === 'start') {
@@ -589,12 +657,25 @@ export class Session implements ControlManager, DevReverseProxyManager {
     return this.subscribe(fn);
   }
 
-  runInfra(service: string, action: InfraAction): InfraRunOutcome {
-    return this.infraControl?.run(service, action) ?? 'unknown';
+  /** Starts `action` on an infra service for `by`; the `stackctl infra` child it runs writes its lines. */
+  runInfra(service: string, action: InfraAction, by: EventBy): InfraRunOutcome {
+    return this.infraControl?.run(service, action, by) ?? 'unknown';
   }
 
   quit(): void {
     void this.shutdown('quit');
+  }
+
+  /**
+   * Shuts the session down for `by` (a key, or a control API request), writing the quit's
+   * `begin` line now and its `end` once the session has stopped. A second request while it
+   * stops only goes on to the shutdown, which then kills everything.
+   */
+  requestQuit(by: EventBy, reason: 'quit' | 'user'): Promise<void> {
+    if (!this.closing && !this.quitCommand) {
+      this.quitCommand = this.events.begin<SessionCommandEntry>({ type: 'session-command', action: 'quit' }, by); // oxfmt-ignore
+    }
+    return this.shutdown(reason);
   }
 
   logControl(command: string, attrs?: Record<string, unknown>): void {
@@ -603,9 +684,19 @@ export class Session implements ControlManager, DevReverseProxyManager {
 
   // The run screen's
 
-  /** Runs a one-off command for a service (the commands menu); resolves once it has exited. */
-  runOneOff(name: string, command: OneOff): Promise<void> {
-    return this.supervisor.runOneOff(name, command);
+  /**
+   * Runs a one-off command for a service (the commands menu) for `by`, writing its two lines;
+   * resolves once it has exited.
+   */
+  async runOneOff(name: string, command: OneOff, by: EventBy): Promise<OneOffResult> {
+    const asked =
+      typeof command === 'string'
+        ? { kind: 'run' as const, service: name, script: command, args: [] }
+        : { kind: 'exec' as const, service: name, command: maskSecrets([command.shell]) };
+    const entry = this.events.begin<OneOffCommandEntry>({ type: 'one-off-command', ...asked }, by);
+    const result = await this.supervisor.runOneOff(name, command);
+    entry.end({ ok: result?.exitCode === 0, exitCode: result?.exitCode ?? null, signal: result?.signal ?? null }); // oxfmt-ignore
+    return result;
   }
 
   /** Drops every buffered line, the hidden ones included. The logfile is untouched. */
@@ -647,18 +738,32 @@ export class Session implements ControlManager, DevReverseProxyManager {
   }
 
   /** The infra step: its output into the log as it arrives, the rest to {@link subscribeInfra}. */
+  /** The infra step, written as an `infra-command` `start` by the session itself. */
   private async bringUpInfra(): Promise<SessionInfra | undefined> {
     const run = this.seams.runInfra ?? ((onEvent) => runSessionInfra(onEvent));
+    const command = getLoadedConfig()?.infra
+      ? this.events.begin<InfraCommandEntry>({ type: 'infra-command', action: 'start', requested: [] }, { kind: 'session' }) // oxfmt-ignore
+      : null;
     try {
       const infra = await run((event) => this.infraEvent(event));
       if (infra && !this.closing) {
         this.emitInfra({ type: 'finished', summary: { ok: true, services: [] } });
       }
+      const services = infra?.services.map((s) => s.name) ?? [];
+      command?.end({ ok: true, services, results: Object.fromEntries(services.map((s) => [s, 'ready' as const])) }); // oxfmt-ignore
       return infra;
     } catch (err) {
       if (err instanceof InfraFailedError && !this.closing) {
         this.emitInfra({ type: 'finished', summary: err.summary });
       }
+      const summary = err instanceof InfraFailedError ? err.summary : null;
+      command?.end({
+        ok: false,
+        ...(summary
+          ? { services: summary.services.map((s) => s.service), results: Object.fromEntries(summary.services.map((s) => [s.service, s.ok ? ('ready' as const) : ('failed' as const)])) } // oxfmt-ignore
+          : {}),
+        error: errorMessage(err),
+      });
       throw err;
     }
   }

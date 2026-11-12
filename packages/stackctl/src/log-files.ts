@@ -15,7 +15,7 @@ export function stateDirOf(root: string): string {
 
 /**
  * A mode's own state, `node_modules/.stackctl/modes/<mode>/`: its session record, saved selection,
- * trust bundle and default logs. Not created. `reset` deletes it whole.
+ * trust bundle, default logs and event log. Not created. `reset` deletes it whole.
  */
 export function modeStateDir(root: string, mode: string = currentMode()): string {
   return path.join(stateDirOf(root), 'modes', mode);

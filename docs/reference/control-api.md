@@ -125,7 +125,8 @@ poll again, or follow [`/events`](#get-events). A configured service that isn't 
 ## `GET /events`
 
 A long-lived response of newline-delimited JSON (`application/x-ndjson`): one object per
-line, each with a `type`. The first line is the full snapshot, then one line per change.
+line, each with a `type`. The first line is the full snapshot, then each line of the mode's
+[event log](./events.md) as it is written: by the session, or by another stackctl command.
 
 ```bash
 curl -sN "http://127.0.0.1:$port/events"
@@ -133,26 +134,27 @@ curl -sN "http://127.0.0.1:$port/events"
 
 ```jsonc
 {"type":"snapshot","pid":12345,"services":{"web":"waiting"},"ready":{"web":false},"infra":{"db":"starting"},"sessionReady":false, /* … */}
-{"type":"infra","service":"db","status":"running"}
-{"type":"service","service":"web","status":"running","ready":false}
-{"type":"service","service":"web","status":"running","ready":true}
-{"type":"session","ready":true}
+{"type":"infra-state","service":"db","status":"running","previousStatus":"starting", /* … */}
+{"type":"service-state","service":"web","status":"running","ready":true,"previousStatus":"running","previousReady":false, /* … */}
+{"type":"session-state","ready":true, /* … */}
+{"type":"service-command","phase":"begin","id":"p81c","action":"restart","service":"web","by":{"kind":"control-api","request":"POST /command/service/restart/web","userAgent":"curl/8.7.1"}, /* … */}
 {"type":"heartbeat","at":1792948269484}
 ```
 
-| `type`      | Sent                                                  | Fields                                    |
-| ----------- | ----------------------------------------------------- | ----------------------------------------- |
-| `snapshot`  | First, once.                                          | Everything `/query/status` returns.       |
-| `service`   | A service's status or readiness changed.              | `service`, `status`, `ready`              |
-| `infra`     | An infra service's status changed.                    | `service`, `status`                       |
-| `session`   | `sessionReady` changed.                               | `ready`                                   |
-| `heartbeat` | Every 5 seconds.                                      | `at`, the session's clock in ms           |
+| `type`        | Sent                                                          |
+| ------------- | ------------------------------------------------------------- |
+| `snapshot`    | First, once: everything `/query/status` returns.              |
+| `heartbeat`   | Every 5 seconds: `at`, the session's clock in ms.             |
+| anything else | A line of the event log: a state change (`service-state`, `infra-state`, `session-state`), a command, the session's own lifecycle. See [Events](./events.md). |
+
+A client that switches on `type` ignores the ones it doesn't know. `snapshot` and `heartbeat` are
+the stream's own, never in the file.
 
 To wait until a stack is healthy, read until the session is ready or a service has stopped:
 
 ```bash
 curl -sN "http://127.0.0.1:$port/events" \
-  | grep -m1 -E '"sessionReady":true|"type":"session","ready":true|"status":"stopped"'
+  | grep -m1 -E '"sessionReady":true|"type":"session-state","ready":true|"status":"stopped"'
 ```
 
 The stream ends when the session shuts down. If no line arrives for 15 seconds (three
@@ -250,7 +252,7 @@ one as `control`.
 | Method                                    | Endpoint                                | Resolves with                              |
 | ----------------------------------------- | --------------------------------------- | ------------------------------------------ |
 | `control.query.status()`                  | `GET /query/status`                     | The snapshot, or `null` if it didn't answer. |
-| `control.events({ signal })`              | `GET /events`                           | An async iterator of the event objects.    |
+| `control.events({ signal })`              | `GET /events`                           | An async iterator of the event objects: `SessionEvent`, the snapshot, the [event log's](./events.md) lines and the heartbeats. |
 | `control.command.service.start(name)`     | `POST /command/service/start/<name>`    | `true` once started.                       |
 | `control.command.service.stop(name)`      | `POST /command/service/stop/<name>`     | `true` once stopped.                       |
 | `control.command.service.restart(name)`   | `POST /command/service/restart/<name>`  | `true` once accepted.                      |

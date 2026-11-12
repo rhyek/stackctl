@@ -2,7 +2,8 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['packages/**/src/**/*.spec.ts'],
+    // the agent eval's guard decides what an agent under test may run: it is tested like the package
+    include: ['packages/**/src/**/*.spec.ts', 'scripts/agent-eval/**/*.spec.ts'],
     // Restore all spies/mocks to their originals after each test, so a spy left
     // unrestored in one test can't leak into later tests.
     restoreMocks: true,

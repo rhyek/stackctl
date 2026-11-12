@@ -35,7 +35,7 @@ The documentation is one set of Markdown pages in `docs/`, read three ways:
   to read.
 - **Inside the npm package.** `pnpm docs:package` (run by `pnpm build`) builds the site and
   copies `llms.txt` and the pages into `packages/stackctl/docs/` (`scripts/package-docs.ts`),
-  which is generated and gitignored. The installed skill reads them from
+  which is generated and gitignored. The installed agent guidance points at them in
   `node_modules/stackctl/docs/`, so an agent gets the docs of the installed version. Projects
   that `link:` this package read the same folder: run `pnpm docs:package` after a docs edit.
 
@@ -44,7 +44,7 @@ The documentation is one set of Markdown pages in `docs/`, read three ways:
 | `docs/guide/`     | Getting started, why, services, the terminal UI, environment and modes, one-off commands, logs, tests and CI. How to do things. |
 | `docs/config/`    | One page per part of `stackctl.config.ts`: the file itself, services, environment, logs, infra, reverse proxy, URLs and origins. |
 | `docs/reference/` | The CLI, the control API (endpoints and payloads), the SDK.                        |
-| `docs/ai/`        | `overview.md`: how stackctl serves coding agents. `playbook.md`: recipes written for the agent, the page the skill names. |
+| `docs/ai/`        | `overview.md`: how stackctl serves coding agents. `playbook.md`: recipes written for the agent, the page `llms.txt` sends one to first. |
 
 `docs/index.md` is the site's home page. `docs/architecture/` is contributor internals and
 `docs/superpowers/` working notes: neither is part of the site (`srcExclude`).
@@ -53,10 +53,23 @@ The documentation is one set of Markdown pages in `docs/`, read three ways:
 start, and links to the site. Its links are absolute, so npm and GitHub render it alike;
 `release.yaml` copies it into the package as it is.
 
-`packages/stackctl/assets/skill.md` is the installed skill: frontmatter, a few rules, and an
-instruction to Read `node_modules/stackctl/docs/ai/playbook.md` and `llms.txt`. Put content in
-the docs, not here. The paths are deliberately **not** `@` references: `@` force-loads the whole
-file on invocation, which defeats the progressive disclosure a skill exists to provide.
+Two files in `packages/stackctl/` are what stackctl offers to install for agents
+(`src/agent-guidance.ts`), and neither holds documentation. Put content in the docs, not here:
+
+- **`skills/stackctl/SKILL.md`** is the skill: a description of what stackctl covers in a repo,
+  and a body that tells the agent to Read `node_modules/stackctl/docs/llms.txt`. It sits where
+  `pnpm approve` looks for a dependency's skills, and `src/skill.ts` writes a copy with a banner. The path is
+  deliberately **not** an `@` reference: `@` force-loads the whole file on invocation, which
+  defeats the progressive disclosure a skill exists to provide.
+- **`assets/agent-rules.md`** is the always-on text, written to `.claude/rules/stackctl.md` and
+  to a marked block in `AGENTS.md` (`src/agent-rules.ts`). Every agent session in every repo that
+  uses stackctl pays for each line of it.
+- **Both name the same scope**, and `llms.txt` opens by sending an agent to the playbook
+  (`docs/.vitepress/config.ts`), so each of them points at one file.
+- **Measure a change to either**, or to the playbook, with `scripts/agent-eval/` (its README has
+  the commands).
+  [`maintenance/docs/agent-guidance-experiment.md`](maintenance/docs/agent-guidance-experiment.md)
+  has the research, the experiment and the decision.
 
 - **Frontmatter must start on line 1.** `renderSkill` stamps the managed banner as a YAML
   comment *inside* the frontmatter for exactly this reason. A banner above the `---` means
@@ -69,7 +82,8 @@ file on invocation, which defeats the progressive disclosure a skill exists to p
 Whenever a change affects how stackctl is configured, invoked, or driven — `defineConfig`
 options, the service schema, tokens, CLI flags, the control API, the SDK — update the docs
 in the same change, not later. Grep `docs/guide`, `docs/config`, `docs/reference`, `docs/ai`,
-the README and `assets/skill.md` for the affected names and reconcile every hit.
+the README, `skills/stackctl/SKILL.md` and `assets/agent-rules.md` for the affected names and
+reconcile every hit.
 
 - **One home per fact.** A config option is documented on its `docs/config/` page, a command
   on `reference/cli.md`, an endpoint on `reference/control-api.md`. Guide pages and the

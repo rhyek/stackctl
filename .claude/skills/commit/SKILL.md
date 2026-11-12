@@ -63,7 +63,7 @@ your statement that you judged it, so make the judgment first.
 ./scripts/demo/record.sh <scene> [<scene>…]
 ```
 
-About 30 seconds a scene. It needs Docker running and the example's ports (3000–3002, 21050)
+About 30 seconds a scene. It needs Docker running and the example's ports (21060, 3001, 3002, 21050)
 free. If a port is held, it names the process and stops: tell the user, never kill it. Build
 first if `packages/stackctl` changed (`pnpm build`), since the example runs the built `dist/`.
 

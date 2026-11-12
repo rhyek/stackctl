@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { execa, type ResultPromise } from 'execa';
+import { EVENT_BY_ENV, type EventBy } from '../event-log.js';
 import { stripTitleSequences } from '../terminal-title.js';
 import { callEach } from '../util.js';
 import type { InfraWatch } from './provider.js';
@@ -132,10 +133,11 @@ export class InfraControl {
   }
 
   /**
-   * Starts an action on a service, returning at once: `unknown` for a name the session doesn't
-   * have, `busy` while another action on it is under way or once the control is stopped.
+   * Starts an action on a service for `by`, returning at once: `unknown` for a name the session
+   * doesn't have, `busy` while another action on it is under way or once the control is stopped.
+   * The command it runs writes the action's lines to the event log, with `by`.
    */
-  run(service: string, action: InfraAction): InfraRunOutcome {
+  run(service: string, action: InfraAction, by: EventBy): InfraRunOutcome {
     if (!this.states.has(service)) {
       return 'unknown';
     }
@@ -146,7 +148,7 @@ export class InfraControl {
     this.emit();
     void (async () => {
       try {
-        await this.runCommand(service, infraCliArgs(action, service));
+        await this.runCommand(service, infraCliArgs(action, service), by);
       } finally {
         this.busy.delete(service);
         this.emit();
@@ -186,13 +188,13 @@ export class InfraControl {
    * the session record, until it exits. Its end is logged, unless the session's shutdown stopped
    * it: a shutdown logs no end line for what it waits on.
    */
-  private async runCommand(service: string, args: string[]): Promise<void> {
+  private async runCommand(service: string, args: string[], by: EventBy): Promise<void> {
     const title = `stackctl ${args.join(' ')}`;
     this.opts.log(service, chalk.cyan(`▶ running: ${title}`), false);
     const [node, ...cliArgs] = this.opts.cli;
     const child = execa(node!, [...cliArgs, ...args, '--mode', this.opts.mode], {
       cwd: this.opts.cwd,
-      env: colorEnv(),
+      env: { ...colorEnv(), [EVENT_BY_ENV]: JSON.stringify(by) },
       // Its own process group, so a shutdown can take down whatever it spawned with it.
       detached: true,
       stdin: 'ignore',

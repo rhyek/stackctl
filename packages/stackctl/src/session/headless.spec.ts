@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { type AnyServiceConfig, defineConfig } from '../config.js';
 import type { DevReverseProxyServer } from '../dev-reverse-proxy.js';
+import { EventLog } from '../event-log.js';
 import { logTimestamp } from '../format.js';
 import { createHeadlessPrinter, runHeadless } from './headless.js';
 import { LogStore } from './log-store.js';
@@ -118,6 +119,7 @@ function setup(seams: Partial<SessionSeams>) {
     bindSession: () => {},
     setQuitHandler: () => {},
     ackQuit: () => {},
+    flush: () => {},
     close: () => Promise.resolve(),
   };
   const session = new Session({
@@ -134,6 +136,7 @@ function setup(seams: Partial<SessionSeams>) {
       readBranch: () => null,
       signalGroup: () => {},
       installSignals: () => () => {},
+      events: new EventLog({ root, mode: 'development', sessionId: () => 'headless-test' }),
       ...seams,
     },
   });

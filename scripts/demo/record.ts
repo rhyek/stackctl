@@ -7,6 +7,8 @@
 //   node scripts/demo/record.ts <scene> <out.cast> <out.txt>
 //
 // Everything visible really runs: a bash prompt, the command typed into it, stackctl's screens.
+// The one exception is a scene that names its own `program`: the agent scenes replay a real
+// Claude Code run from its transcript (agent-chat.ts), which a recording can't run again alike.
 // The PTY is the e2e suite's own (packages/stackctl/e2e/pty_driver.py), and its bytes are played
 // into the suite's VT screen (e2e/screen.ts), so each step can wait for what is on screen and a
 // click can aim at a word wherever it is drawn.
@@ -78,7 +80,15 @@ const OSC52 = /\x1b\]52;[^;]*;([A-Za-z0-9+/=]*)(?:\x07|\x1b\\)/g;
 const { cols, rows } = scene;
 const driver = spawn(
   'python3',
-  ['-B', '-u', driverPath, String(rows), String(cols), '--', 'bash', '--noprofile', '--norc'],
+  [
+    '-B',
+    '-u',
+    driverPath,
+    String(rows),
+    String(cols),
+    '--',
+    ...(scene.program ?? ['bash', '--noprofile', '--norc']),
+  ],
   {
     cwd: example,
     env: {
@@ -219,6 +229,10 @@ const stage: Stage = {
   },
   copied: () => copied,
   rowOf: (text) => screen.find(text)?.row ?? null,
+  text(value) {
+    snapshotAt = cast.length;
+    snapshot = value;
+  },
   snapshot(from = 1, to = rows) {
     snapshotAt = cast.length;
     snapshot = screen
@@ -234,8 +248,10 @@ const stage: Stage = {
 
 let failure: string | null = null;
 try {
-  await stage.waitForPrompt();
-  await sleep(600);
+  if (!scene.program) {
+    await stage.waitForPrompt();
+    await sleep(600);
+  }
   failure = (await scene.play(stage)) ?? null;
 } finally {
   driver.stdin!.end();

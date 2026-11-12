@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { intro, outro, confirm, isCancel, cancel, log } from '@clack/prompts';
+import { intro, outro, log } from '@clack/prompts';
+import { guidanceState, installGuidance, missesOwnFiles, offerGuidance } from './agent-guidance.js';
 import { findConfigPath } from './load-config.js';
-import { installSkill, isSkillInstalled, readOwnVersion } from './skill.js';
+import { readOwnVersion } from './skill.js';
 import { reconcileTsconfig } from './tsconfig.js';
 
 /** The scaffolded `stackctl.config.ts`. */
@@ -23,39 +24,52 @@ export default defineConfig({
 
 /**
  * `stackctl init` setup flow. Idempotent: an existing `stackctl.config.ts` is left
- * untouched (pass `force: true` to overwrite). An already-installed agent skill is
- * refreshed automatically without prompting (it's a managed file); the install prompt only
- * appears for a first-time install. Pass `yes: true` for a non-interactive run that accepts
- * the defaults (install the agent skill) without prompting — used by `-y/--yes` and by
- * automation.
+ * untouched (pass `force: true` to overwrite).
+ *
+ * What it installs for coding agents (see `agent-guidance.ts`):
+ *
+ * - **Interactively**, it asks, with stackctl's own files checked and the `AGENTS.md` section
+ *   unchecked. What is already installed is rewritten without asking, and when stackctl's own
+ *   files are all there it asks nothing.
+ * - **With `yes: true`** (`-y/--yes`, automation) it accepts the defaults without prompting:
+ *   stackctl's own files, and no `AGENTS.md` section.
+ * - **`agentsMd: true`** (`--agents-md`) adds the section either way.
+ * - **`guidance: false`** installs none of it: the postinstall's choice, since an install
+ *   shouldn't put files in a repo unasked.
  *
  * Does NOT prompt for a log location — each run writes a fresh timestamped log under
  * `node_modules/.stackctl/`, and the directory is only overridable via the `--log-dir` CLI flag.
  */
 export async function runInit(
-  opts: { cwd?: string; force?: boolean; yes?: boolean } = {},
+  opts: {
+    cwd?: string;
+    force?: boolean;
+    yes?: boolean;
+    agentsMd?: boolean;
+    guidance?: boolean;
+  } = {},
 ): Promise<void> {
   const cwd = opts.cwd ?? process.cwd();
+  const version = readOwnVersion();
   const existingConfig = findConfigPath(cwd);
 
   intro('stackctl init');
 
-  // An already-installed skill is a managed file — refresh it without asking. The prompt
-  // only appears for a first-time install; --yes always installs without prompting.
-  const skillInstalled = isSkillInstalled(cwd);
-  let skill: boolean;
-  if (opts.yes || skillInstalled) {
-    skill = true;
-  } else {
-    const skillAnswer = await confirm({
-      message: 'Install the stackctl agent skill?',
-      initialValue: true,
-    });
-    if (isCancel(skillAnswer)) {
-      cancel('Setup cancelled.');
-      return;
+  // What is installed is a managed file: rewritten without asking. The prompt only appears
+  // while one of stackctl's own files is missing; --yes takes its defaults.
+  const state = guidanceState(cwd);
+  let own = !missesOwnFiles(state);
+  let block = state.block || opts.agentsMd === true;
+  let asked: string[] | null | undefined;
+  if (opts.guidance === false) {
+    own = false;
+    block = false;
+  } else if (missesOwnFiles(state)) {
+    if (opts.yes) {
+      own = true;
+    } else {
+      asked = await offerGuidance({ cwd, version });
     }
-    skill = skillAnswer;
   }
 
   const configPath = path.join(cwd, 'stackctl.config.ts');
@@ -76,9 +90,18 @@ export async function runInit(
     log.step(`Added ${configFile} to tsconfig.json include`);
   }
 
-  if (skill) {
-    installSkill({ cwd, version: readOwnVersion() });
-    log.step(skillInstalled ? 'Updated agent skill' : 'Installed agent skill');
+  const done = [
+    ...(asked ?? []),
+    // after the prompt, only what it didn't already write
+    ...installGuidance({
+      cwd,
+      version,
+      own: own && asked === undefined,
+      agentsMd: block && !(asked ?? []).some((line) => line.includes('AGENTS.md')),
+    }),
+  ];
+  for (const line of done) {
+    log.step(line);
   }
 
   outro('stackctl is set up.');

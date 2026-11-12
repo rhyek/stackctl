@@ -13,7 +13,7 @@ screen with their combined log. Everything in it works with the keyboard or the 
 
 ## Choosing services
 
-<llm-exclude><TerminalPlayer src="/casts/picker-1794401998.cast" label="The service picker: picking the frontend selects the backend it needs, then the list is filtered" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/picker-1794447091.cast" label="The service picker: picking the frontend selects the backend it needs, then the list is filtered" /></llm-exclude>
 <llm-only>
 
 ```text
@@ -44,13 +44,13 @@ selection.
 
 The log fills the screen, above a footer:
 
-<llm-exclude><TerminalPlayer src="/casts/run-screen-1794402027.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/run-screen-1794447119.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
 <llm-only>
 
 ```text
 ── example ⎇ main ────────────────────────────────────────────────────────
-● backend 62M   ● frontend 219M   ● worker 25M
-infra: ● db 8M   ● mail 9M
+● backend 62M   ● frontend 242M   ● worker 23M
+infra: ● db 12M   ● mail 6M
 ←→ select   r restart   s stop   m commands
 logs: f filter   c clear  │  ^c quit
 backend ↗   public ↗   frontend ↗   root ↗   inbox ↗   mail ↗

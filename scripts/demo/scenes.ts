@@ -4,6 +4,9 @@
 // records them, place.ts puts each where its page shows it, and affected.ts (the /commit skill)
 // lists the ones a change touches.
 
+import { conversationText } from './agent-chat.ts';
+import { conversations } from './conversations/index.ts';
+
 /** What a scene drives the terminal with (record.ts). */
 export interface Stage {
   /** Presses `key` (`enter`, `space`, an arrow, `esc`, `ctrl-c`, or one character), then waits `ms`. */
@@ -25,6 +28,8 @@ export interface Stage {
   rowOf(text: string): number | null;
   /** Takes the screen's rows `from`..`to` (1-based, inclusive; all by default) as the scene's text. */
   snapshot(from?: number, to?: number): void;
+  /** Takes `text` as the scene's text, for one whose screen never holds it all at once. */
+  text(text: string): void;
 }
 
 export interface Scene {
@@ -43,6 +48,11 @@ export interface Scene {
    * scene took its snapshot. The page shows it with `<TerminalPlayer still />`.
    */
   still?: boolean;
+  /**
+   * What runs on the terminal in place of a bash prompt, from `example/`: the agent scenes' replay
+   * of a conversation (agent-chat.ts).
+   */
+  program?: string[];
   /** Plays the scene; returns why it failed, if it did. */
   play(stage: Stage): Promise<string | void>;
 }
@@ -254,4 +264,44 @@ export const scenes: Record<string, Scene> = {
       await t.waitForPrompt();
     },
   },
+
+  'agent-restart': agentScene(
+    'restart',
+    "The AI overview page's first agent conversation (docs/ai/overview.md, What it looks like): Claude Code, told the app isn't loading, reads the session's status and log, restarts the backend through stackctl and explains the crash.",
+    'handler?',
+  ),
+
+  'agent-tests': agentScene(
+    'tests',
+    "The AI overview page's second agent conversation (docs/ai/overview.md, What it looks like): Claude Code, asked to run the backend's tests, starts a test-mode session, runs them in its environment and quits it.",
+    'quit the session.',
+  ),
 };
+
+/**
+ * A coding agent's conversation, replayed (agent-chat.ts): the recording plays the same every
+ * time, so re-recording one changes nothing. What can make it stale is the agent: a change to the
+ * skill, the rules file or the playbook that would change what it does calls for a new real run
+ * (conversations/README.md).
+ */
+function agentScene(name: string, description: string, lastWords: string): Scene {
+  return {
+    description: `${description} A replay of a real run: re-recording it changes nothing; a change to what the agent would do calls for a new run (scripts/demo/conversations/README.md).`,
+    triggers: [
+      'scripts/demo/agent-chat.ts',
+      'scripts/demo/conversations/**',
+      'scripts/demo/record.ts',
+      'packages/stackctl/skills/stackctl/SKILL.md',
+      'packages/stackctl/assets/agent-rules.md',
+      'docs/ai/playbook.md',
+    ],
+    cols: PAGE_COLS,
+    rows: 30,
+    program: ['node', '../scripts/demo/agent-chat.ts', name],
+    async play(t) {
+      await t.waitFor(lastWords, 180_000);
+      t.text(conversationText(conversations[name]!, PAGE_COLS));
+      await t.sleep(2000);
+    },
+  };
+}

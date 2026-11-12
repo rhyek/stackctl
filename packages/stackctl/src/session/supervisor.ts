@@ -108,7 +108,14 @@ export interface SupervisedProcess {
  */
 export type SupervisorEvents = {
   change: [];
+  /** A service's dev process exited, or never started, and no stop asked it to. */
+  exit: [name: string, exitCode: number | null, signal: string | null];
+  /** A `.env` file in `dir` (relative to the workspace) changed: `services` restart. */
+  'env-change': [dir: string, services: string[]];
 };
+
+/** How a one-off command ended, or `null` when it never ran (no such service, or shutting down). */
+export type OneOffResult = { exitCode: number | null; signal: string | null } | null;
 
 /** A one-off command of the commands menu: a script or make target, or a shell command line. */
 export type OneOff = string | { shell: string };
@@ -409,16 +416,17 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
    * Runs a one-off command for a service, alongside its dev process and without touching its
    * state: a script or make target, or a shell command line. Its output goes under the service's
    * label, framed by `▶ running: …` and `✔ … finished` or `✘ … exited with code <n>`. Resolves
-   * once it has exited. Ignored for a name not in the session, and once shutting down.
+   * with how it ended once it has exited; `null` for a name not in the session, and once shutting
+   * down.
    */
-  async runOneOff(name: string, command: OneOff): Promise<void> {
+  async runOneOff(name: string, command: OneOff): Promise<OneOffResult> {
     const svc = this.services.get(name);
     if (!svc || this.closing) {
-      return;
+      return null;
     }
     await this.firstRead;
     if (this.closing) {
-      return;
+      return null;
     }
     const title = typeof command === 'string' ? command : command.shell;
     this.status(svc, chalk.cyan(`▶ running: ${title}`));
@@ -434,7 +442,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     } catch (err) {
       this.status(svc, chalk.red(`failed to start: ${(err as Error).message}`), true);
       this.status(svc, chalk.red(`✘ ${title} exited with code 1`), true);
-      return;
+      return { exitCode: 1, signal: null };
     }
     const proc: SupervisedProcess = this.createProcess({
       name,
@@ -445,8 +453,8 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       records: this.records,
     });
     this.live.set(proc, name);
-    await new Promise<void>((resolve) => {
-      proc.on('exit', () => {
+    return new Promise<OneOffResult>((resolve) => {
+      proc.on('exit', (exit) => {
         this.live.delete(proc);
         if (!this.closing) {
           const code = proc.exitCode ?? 1;
@@ -456,7 +464,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
             this.status(svc, chalk.red(`✘ ${title} exited with code ${code}`), true);
           }
         }
-        resolve();
+        resolve({ exitCode: exit.code, signal: exit.signal });
       });
       proc.start();
     });
@@ -620,6 +628,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       this.setState(svc, 'crashed');
       this.status(svc, chalk.red(`failed to start: ${(err as Error).message}`), true);
       this.status(svc, 'exited with code 1');
+      this.emit('exit', name, 1, null);
       return;
     }
     const proc: SupervisedProcess = this.createProcess({
@@ -653,6 +662,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       this.setState(svc, exit.code === 0 ? 'stopped' : 'crashed');
       this.readiness.processExited(name);
       this.status(svc, `exited with code ${code}`);
+      this.emit('exit', name, exit.code, exit.signal);
     });
     proc.start();
   }
@@ -806,8 +816,13 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
    */
   private watchEnv(): void {
     this.watch?.();
-    const changed = (names: string[]) => {
+    const changed = (dir: string, names: string[]) => {
       void this.snapshot.refresh();
+      const restarting = names.filter((name) => {
+        const state = this.services.get(name)?.state;
+        return !this.closing && (state === 'running' || state === 'starting');
+      });
+      this.emit('env-change', path.relative(root, dir) || '.', restarting);
       for (const name of names) {
         void this.envChanged(name);
       }
@@ -817,7 +832,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       {
         dir: root,
         filenames: this.envFiles.workspace,
-        onChange: () => changed([...this.services.keys()]),
+        onChange: () => changed(root, [...this.services.keys()]),
       },
     ];
     for (const { config } of this.services.values()) {
@@ -825,7 +840,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
         targets.push({
           dir: config.absoluteDir,
           filenames: this.envFiles.service,
-          onChange: () => changed([config.name]),
+          onChange: () => changed(config.absoluteDir, [config.name]),
         });
       }
     }

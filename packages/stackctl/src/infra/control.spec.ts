@@ -44,6 +44,9 @@ async function settled(infra: InfraControl, service: string) {
   await vi.waitFor(() => expect(infra.isBusy(service)).toBe(false), { timeout: 5000 });
 }
 
+/** Who asked, as a session's `r` key hands it on. */
+const BY = { kind: 'ui', key: 'r' } as const;
+
 describe('infraCliArgs', () => {
   test('runs the infra command of the same name, for the one service', () => {
     for (const action of ['start', 'stop', 'restart', 'reset'] as const) {
@@ -70,9 +73,9 @@ describe('InfraControl', () => {
   test('runs the infra command with the mode, logs it, and refreshes the watch after', async () => {
     const { infra, lines, refresh } = control();
     infra.start();
-    expect(infra.run('db', 'restart')).toBe('accepted');
+    expect(infra.run('db', 'restart', BY)).toBe('accepted');
     expect(infra.status('db')).toBe('restarting');
-    expect(infra.run('db', 'stop')).toBe('busy');
+    expect(infra.run('db', 'stop', BY)).toBe('busy');
     await settled(infra, 'db');
     expect(lines).toEqual([
       'db: ▶ running: stackctl infra restart -s db',
@@ -85,13 +88,13 @@ describe('InfraControl', () => {
 
   test('logs a command that fails, with its exit code', async () => {
     const { infra, lines } = control();
-    infra.run('broken', 'reset');
+    infra.run('broken', 'reset', BY);
     await settled(infra, 'broken');
     expect(lines.at(-1)).toBe('broken: ✘ stackctl infra reset -s broken exited with code 3');
   });
 
   test('refuses a service it does not have', () => {
-    expect(control().infra.run('cache', 'start')).toBe('unknown');
+    expect(control().infra.run('cache', 'start', BY)).toBe('unknown');
   });
 
   test('starts nothing once stopped', () => {
@@ -99,13 +102,13 @@ describe('InfraControl', () => {
     // would outlive the session.
     const { infra } = control();
     infra.stop();
-    expect(infra.run('db', 'start')).toBe('busy');
+    expect(infra.run('db', 'start', BY)).toBe('busy');
   });
 
   test('a step under way when the control stops logs no end line', async () => {
     // A shutdown SIGTERMs the actions it waits on; their exit is not reported as a failure.
     const { infra, lines } = control();
-    infra.run('db', 'start');
+    infra.run('db', 'start', BY);
     infra.stop();
     await settled(infra, 'db');
     expect(lines).toContain('db: ▶ running: stackctl infra start -s db');

@@ -1,5 +1,8 @@
+import { startedByAgent } from '../agent-detection.js';
+import { guidanceAtStart } from '../agent-guidance.js';
+import { isCI } from '../env-base.js';
 import { resolveSelectedNames } from '../saved-selection.js';
-import { readOwnVersion, refreshSkillIfStale } from '../skill.js';
+import { readOwnVersion } from '../skill.js';
 import { loadConfigOrExit, validatePackageNames } from './workspace.js';
 
 // `stackctl start`, the default command — `stackctl` with no subcommand: a dev session.
@@ -41,12 +44,21 @@ export function resolveSelectedNamesOrExit(
 export async function runDefaultAction(opts: StartOptions): Promise<void> {
   await loadConfigOrExit();
 
-  // Best-effort: a skill refresh should never block a run. No-ops unless the skill was
-  // actually installed (a managed banner in the installed file says so).
+  // Best-effort: the agent guidance should never block a run. What is installed is kept
+  // current; what is missing is offered once, and only to a person about to see the terminal UI.
   try {
-    refreshSkillIfStale({ cwd: process.cwd(), version: readOwnVersion() });
+    await guidanceAtStart({
+      cwd: process.cwd(),
+      version: readOwnVersion(),
+      interactive:
+        !opts.headless &&
+        !opts.detach &&
+        Boolean(process.stdin.isTTY && process.stdout.isTTY) &&
+        !startedByAgent() &&
+        !isCI(),
+    });
   } catch (err) {
-    console.error('stackctl: skill refresh failed (non-fatal):', err);
+    console.error('stackctl: agent guidance check failed (non-fatal):', err);
   }
 
   // Validate --package names before mounting/running anything.

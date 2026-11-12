@@ -17,14 +17,14 @@
 #
 # Requires: brew install agg ffmpeg gifsicle, python3 (for the e2e suite's PTY driver), and Docker for the
 # example's infra. The recording drives the real example (Go worker + Vite frontend), so a plain
-# `pnpm stackctl` must boot cleanly here first, with its ports (3000-3002, 21050) free. It never
+# `pnpm stackctl` must boot cleanly here first, with its ports (21060, 3001, 3002, 21050) free. It never
 # touches the clipboard (see record.ts).
 set -euo pipefail
 cd "$(dirname "$0")"
 
 SCENES=("$@")
 if [ ${#SCENES[@]} -eq 0 ]; then
-  SCENES=(demo picker run-screen getting-started)
+  SCENES=(demo picker run-screen getting-started agent-restart agent-tests)
 fi
 MAX_TAKES="${MAX_TAKES:-3}"
 PUBLIC="../../docs/public"
@@ -34,13 +34,18 @@ trap 'rm -rf "$WORK"' EXIT
 
 # The example's dev ports and its proxy's have to be free, or it won't boot cleanly. A port
 # that is held is someone's running process: say whose, and stop there rather than kill it.
-for port in 3000 3001 3002 21050; do
+for port in 21060 3001 3002 21050; do
   holder=$( (lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true) | tail -n +2 | awk '{ print $1 " (pid " $2 ")" }' | sort -u | paste -sd, -)
   if [ -n "$holder" ]; then
     echo "error: port $port is in use by $holder; stop it and run this again" >&2
     exit 1
   fi
 done
+
+# A session started at a terminal offers the agent guidance once. The recordings are of a
+# workspace where that was already answered, so the example is marked as having said no.
+mkdir -p ../../example/node_modules/.stackctl
+printf '{ "declined": true }\n' > ../../example/node_modules/.stackctl/agent-guidance.json
 
 # The example's infra (Postgres, the mail catcher), up and migrated before the recording starts,
 # so a recorded startup takes the second it takes on a warm machine.

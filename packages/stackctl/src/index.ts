@@ -86,7 +86,13 @@ export type { StartStackOptions, Stack } from './stack.js';
 export { exec, run } from './one-off/sdk.js';
 export type { OneOffOptions, ExecOptions, RunOptions, OneOffResult } from './one-off/sdk.js';
 // What an infra callback's `control` is: a client for the running session's control API.
-export type { ControlClient, SessionStatus, SessionServiceStatus } from './control-client.js';
+export type {
+  ControlClient,
+  SessionEvent,
+  SessionStatus,
+  SessionServiceStatus,
+} from './control-client.js';
+export type { EventBy, EventEntry, EventEnvelope, EventLine } from './event-log.js';
 export type { ServiceAction } from './control-server.js';
 export type { InfraAction, InfraStatus } from './infra/control.js';
 export {

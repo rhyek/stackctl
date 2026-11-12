@@ -20,6 +20,14 @@ const cli = path.join(buildDir, 'cli.js');
 let ws: string;
 const stateDir = () => path.join(ws, 'node_modules', '.stackctl');
 const modeDir = (mode: string) => path.join(stateDir(), 'modes', mode);
+/** The `session-command` lines of the mode's event log. */
+const resetLines = (mode: string) =>
+  fs
+    .readFileSync(path.join(modeDir(mode), 'events.log'), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((line) => line.type === 'session-command');
 const recordOf = (mode: string) => path.join(modeDir(mode), 'running.json');
 /** The modes with a session record, as `<mode>/running.json`. */
 const records = () =>
@@ -460,14 +468,20 @@ describe('stackctl reset', () => {
     const result = await execa('node', [cli, '--mode', 'development', 'reset'], { cwd: ws, reject: false }); // oxfmt-ignore
     expect(result.stdout.split('\n')).toEqual([
       `stopped development session (pid ${String(session.pid)})`,
-      'Removed node_modules/.stackctl/modes/development/',
+      'Removed node_modules/.stackctl/modes/development/; its events.log starts again with this reset.',
     ]);
     expect(result.exitCode).toBe(0);
     await session;
-    expect(fs.existsSync(modeDir('development'))).toBe(false);
+    // All its state went, the event log too; the reset's own lines open the new one.
+    expect(fs.readdirSync(modeDir('development'))).toEqual(['events.log']);
+    expect(resetLines('development')).toMatchObject([
+      { type: 'session-command', phase: 'begin', action: 'reset', by: { kind: 'cli', argv: expect.arrayContaining(['reset']) } }, // oxfmt-ignore
+      { type: 'session-command', phase: 'end', action: 'reset', ok: true },
+    ]);
     // The other mode's session and state, and the shared files, are untouched.
     expect(alive(other.pid!)).toBe(true);
-    expect(fs.readdirSync(modeDir('test')).sort()).toEqual(['logs', 'running.json', 'selection.json', 'trusted.pem']); // oxfmt-ignore
+    // The other mode's session goes on: its own event log included.
+    expect(fs.readdirSync(modeDir('test')).sort()).toEqual(['events.log', 'logs', 'running.json', 'selection.json', 'trusted.pem']); // oxfmt-ignore
     expect(fs.readFileSync(path.join(stateDir(), 'tls', 'cert.pem'), 'utf8')).toBe('c\n');
     expect(fs.readFileSync(path.join(stateDir(), 'debug.log'), 'utf8')).toBe('d\n');
   }, 60_000);
@@ -505,7 +519,9 @@ describe('stackctl reset', () => {
       'Left node_modules/.stackctl/modes/development/ in place: the session is still running.',
     ]);
     expect(alive(pid)).toBe(true);
-    expect(fs.readdirSync(modeDir('development')).sort()).toEqual(['running.json', 'selection.json']); // oxfmt-ignore
+    // Its state is in place; the event log says a reset was asked for and didn't happen.
+    expect(fs.readdirSync(modeDir('development')).sort()).toEqual(['events.log', 'running.json', 'selection.json']); // oxfmt-ignore
+    expect(resetLines('development').at(-1)).toMatchObject({ type: 'session-command', phase: 'end', action: 'reset', ok: false }); // oxfmt-ignore
   }, 30_000);
 
   test("reset deletes nothing when a hung record can't be confirmed as stackctl's", async () => {
@@ -523,7 +539,9 @@ describe('stackctl reset', () => {
       'Left node_modules/.stackctl/modes/development/ in place: the recorded session may still be running.',
     ]);
     expect(alive(pid)).toBe(true);
-    expect(fs.readdirSync(modeDir('development')).sort()).toEqual(['running.json', 'selection.json']); // oxfmt-ignore
+    // Its state is in place; the event log says a reset was asked for and didn't happen.
+    expect(fs.readdirSync(modeDir('development')).sort()).toEqual(['events.log', 'running.json', 'selection.json']); // oxfmt-ignore
+    expect(resetLines('development').at(-1)).toMatchObject({ type: 'session-command', phase: 'end', action: 'reset', ok: false }); // oxfmt-ignore
   }, 30_000);
 
   test("a mode named like a running one but for case is that session's: stop and reset leave it alone", async () => {

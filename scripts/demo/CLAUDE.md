@@ -21,6 +21,8 @@ It is internal tooling — nothing in it belongs in the user-facing docs.
 | `place.ts`  | puts a scene's cast in `docs/public/casts/`, points its references and fills its text   |
 | `affected.ts` | lists the scenes a change may alter (their triggers), for the `/commit` skill          |
 | `frames.ts` | frame-by-frame inspection of the GIF (see **Debugging**)                                 |
+| `agent-chat.ts` | replays a coding agent's conversation the way Claude Code draws it, for the agent scenes |
+| `conversations/` | those conversations, real Claude Code runs kept as data, and how to capture one (`README.md`) |
 
 ## Recording
 
@@ -32,7 +34,7 @@ It is internal tooling — nothing in it belongs in the user-facing docs.
 Needs `brew install agg ffmpeg gifsicle`, python3, and Docker for the example's infra. It drives the
 **real** example workspace, so `cd example && pnpm stackctl` must boot cleanly first.
 
-- **It needs ports 3000–3002 and 21050 free**, and stops, naming the process, if one is held.
+- **It needs ports 21060, 3001, 3002 and 21050 free**, and stops, naming the process, if one is held.
   It never kills anything.
 - **It starts the example's infra** (`stackctl infra start`) and leaves it running.
 - **It never touches the clipboard**, so you can keep working while it records.
@@ -58,6 +60,11 @@ files, so the site plays the recording and llms.txt reads the text. Write the bl
 with an empty text block, add the scene to `scenes.ts` (a 74-column terminal fits a docs page)
 with its `description` and its `triggers`, the files whose change can alter what it shows, and
 run `record.sh <scene>`: `place.ts` fills in the cast's name and the text.
+
+**An agent conversation** is a scene with a `program`: it runs `agent-chat.ts` in place of a
+shell, replaying a real Claude Code run from `conversations/`, and hands its whole transcript in
+as the text copy (`t.text`). A replay plays the same every time; `conversations/README.md` says
+when and how to capture a run again.
 
 **A screenshot** is a scene with `still: true`, shown with `<TerminalPlayer … still />`: its
 cast is one frame, the screen as it stood when the scene took its snapshot, drawn as text like

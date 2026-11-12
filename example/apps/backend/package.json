@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch --watch-path=./src --watch-path=../../libs/db/src --watch-path=../../libs/isomorphic/src src/index.ts",
-    "add-random-todo": "node src/cmd/add-random-todo.ts"
+    "add-random-todo": "node src/cmd/add-random-todo.ts",
+    "test": "node --test 'test/**/*.spec.ts'"
   },
   "dependencies": {
     "@example/db": "workspace:*",

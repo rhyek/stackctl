@@ -5,6 +5,9 @@ dist/
 # Personal env overrides. The example's other .env files are committed on purpose —
 # they're synthetic demo content — but the `.local` tier never should be.
 .env*.local
+# A link to files this machine needs that git must never see, such as the agent recording's
+# API key. A symlink, so no trailing slash.
+/.local
 docs/superpowers/
 .superpowers/
 

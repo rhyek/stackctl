@@ -2,6 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import {
+  installRules,
+  readAgentsBlock,
+  readInstalledRules,
+  rulesInstallPath,
+  writeAgentsBlock,
+} from './agent-rules.js';
 import { runPostinstall } from './postinstall.js';
 import { installSkill, readInstalledSkill, skillInstallPath } from './skill.js';
 
@@ -30,20 +37,35 @@ const run = (env: Record<string, string | undefined> = { INIT_CWD: root }) =>
   runPostinstall({ packageDir, env, version: '1.2.3', write });
 
 describe('runPostinstall', () => {
-  test('installs the skill when the project already has a config, leaving the config alone', async () => {
+  test('installs none of the agent guidance in a project that has a config', async () => {
     const config = path.join(root, 'stackctl.config.ts');
     fs.writeFileSync(config, '// my config\n');
+    fs.writeFileSync(path.join(root, 'AGENTS.md'), '# Mine\n');
     await run();
     expect(fs.readFileSync(config, 'utf8')).toBe('// my config\n');
-    expect(fs.existsSync(skillInstallPath(root))).toBe(true);
-    expect(fs.readFileSync(skillInstallPath(root), 'utf8')).toContain('1.2.3');
-    expect(log.join('\n')).toMatch(/agent skill/);
+    expect(fs.existsSync(skillInstallPath(root))).toBe(false);
+    expect(fs.existsSync(rulesInstallPath(root))).toBe(false);
+    expect(fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8')).toBe('# Mine\n');
+    expect(log).toEqual([]);
   });
 
-  test('runs init when the project has no config: scaffolds it and installs the skill', async () => {
+  test('runs init when the project has no config: scaffolds it, without the agent guidance', async () => {
     await run();
     expect(fs.existsSync(path.join(root, 'stackctl.config.ts'))).toBe(true);
-    expect(fs.existsSync(skillInstallPath(root))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'tsconfig.json'))).toBe(true);
+    expect(fs.existsSync(skillInstallPath(root))).toBe(false);
+    expect(fs.existsSync(rulesInstallPath(root))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'AGENTS.md'))).toBe(false);
+  });
+
+  test('refreshes the rules file and the AGENTS.md block an older version wrote', async () => {
+    fs.writeFileSync(path.join(root, 'stackctl.config.ts'), 'export default {};\n');
+    installRules({ cwd: root, version: '1.0.0' });
+    writeAgentsBlock({ cwd: root, version: '1.0.0' });
+    await run();
+    expect(readInstalledRules(rulesInstallPath(root))?.version).toBe('1.2.3');
+    expect(readAgentsBlock(root)).toEqual({ version: '1.2.3' });
+    expect(log.join('\n')).toMatch(/updated the agent guidance at .*AGENTS\.md/);
   });
 
   test('refreshes an unedited copy an older version wrote', async () => {
@@ -54,11 +76,12 @@ describe('runPostinstall', () => {
       version: '1.2.3',
       unedited: true,
     });
-    expect(log.join('\n')).toMatch(/updated the agent skill/);
+    expect(log.join('\n')).toMatch(/updated the agent guidance/);
   });
 
   test('leaves a hand-edited copy alone', async () => {
     fs.writeFileSync(path.join(root, 'stackctl.config.ts'), '');
+    installRules({ cwd: root, version: '1.2.3' });
     installSkill({ cwd: root, version: '1.0.0' });
     fs.appendFileSync(skillInstallPath(root), 'HAND EDIT\n');
     const before = fs.readFileSync(skillInstallPath(root), 'utf8');
@@ -75,12 +98,13 @@ describe('runPostinstall', () => {
     expect(fs.readFileSync(skillInstallPath(root), 'utf8')).toBe('--- mine ---\n');
   });
 
-  test('installs a missing copy without touching an .agents copy of its own', async () => {
+  test('refreshes the managed copies, without touching an .agents copy of its own', async () => {
     fs.writeFileSync(path.join(root, 'stackctl.config.ts'), '');
+    fs.mkdirSync(path.join(root, '.cursor'));
+    installSkill({ cwd: root, version: '1.0.0' });
     const agents = path.join(root, '.agents', 'skills', 'stackctl', 'SKILL.md');
     fs.mkdirSync(path.dirname(agents), { recursive: true });
     fs.writeFileSync(agents, 'mine\n');
-    fs.mkdirSync(path.join(root, '.cursor'));
     await run();
     expect(readInstalledSkill(skillInstallPath(root))?.version).toBe('1.2.3');
     expect(readInstalledSkill(path.join(root, '.cursor/skills/stackctl/SKILL.md'))?.version).toBe('1.2.3'); // oxfmt-ignore
@@ -100,6 +124,9 @@ describe('runPostinstall', () => {
 
   test('counts CI=false as no CI, as the mode does', async () => {
     fs.writeFileSync(path.join(root, 'stackctl.config.ts'), '');
+    installSkill({ cwd: root, version: '1.0.0' });
+    await run({ INIT_CWD: root, CI: 'true' });
+    expect(readInstalledSkill(skillInstallPath(root))?.version).toBe('1.0.0');
     await run({ INIT_CWD: root, CI: 'false' });
     expect(readInstalledSkill(skillInstallPath(root))?.version).toBe('1.2.3');
   });
@@ -119,8 +146,9 @@ describe('runPostinstall', () => {
 
   test('never throws: a failure is reported and swallowed', async () => {
     fs.writeFileSync(path.join(root, 'stackctl.config.ts'), '');
-    // `.claude` as a file makes the skill dir uncreatable.
-    fs.writeFileSync(path.join(root, '.claude'), '');
+    // an outdated rules file that can't be written
+    installRules({ cwd: root, version: '1.0.0' });
+    fs.chmodSync(rulesInstallPath(root), 0o444);
     await expect(run()).resolves.toBeUndefined();
     expect(log.join('\n')).toMatch(/could not/i);
   });

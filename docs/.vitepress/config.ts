@@ -53,7 +53,27 @@ export default defineConfig({
   // llms.txt, llms-full.txt and a Markdown copy of every page, generated from the same files.
   // `scripts/package-docs.ts` copies them into the npm package for the agent skill to read.
   // The home page's config example (theme/HomeConfig.md) is a snippet, not a page.
-  vite: { plugins: [llmstxt({ ignoreFiles: ['.vitepress/**'] })] },
+  // The index opens by sending a coding agent to the playbook: whatever points an agent at
+  // llms.txt (the skill, the rules file, the AGENTS.md block) names this one file.
+  vite: {
+    plugins: [
+      llmstxt({
+        ignoreFiles: ['.vitepress/**'],
+        customLLMsTxtTemplate: [
+          '# {title}',
+          '{description}',
+          '{details}',
+          '{agents}',
+          '## Table of Contents',
+          '{toc}',
+        ].join('\n\n'),
+        customTemplateVariables: {
+          agents:
+            '**Coding agents:** read the [Agent playbook](/ai/playbook.md) first. It has the rules and a recipe for each task, and links to the pages below.',
+        },
+      }),
+    ],
+  },
 
   themeConfig: {
     logo: { src: versioned('/logo.svg'), alt: '' },
@@ -100,6 +120,7 @@ export default defineConfig({
         items: [
           { text: 'CLI', link: '/reference/cli' },
           { text: 'Control API', link: '/reference/control-api' },
+          { text: 'Events', link: '/reference/events' },
           { text: 'SDK', link: '/reference/sdk' },
         ],
       },

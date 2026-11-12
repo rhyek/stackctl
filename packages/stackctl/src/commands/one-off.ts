@@ -1,6 +1,11 @@
 import fs from 'node:fs';
+import path from 'node:path';
+import { startedByAgent } from '../agent-detection.js';
+import { getRegisteredPackages } from '../config.js';
 import { proxyTlsFor } from '../dev-tls.js';
+import { currentMode } from '../env-base.js';
 import { RESOLVE_ENV_FD } from '../env.js';
+import { type OneOffCommandEntry, cliEventLog, commandBy, maskSecrets } from '../event-log.js';
 import { getLogDir } from '../log-files.js';
 import {
   type OneOffResolution,
@@ -80,12 +85,29 @@ export async function runOneOffCommand(
   } catch (err) {
     exitOnOneOffError(err);
   }
+  // Written to the mode's event log: the service (or directory) it ran in, what it ran, its exit.
+  const service = getRegisteredPackages().find(
+    (pkg) => path.resolve(pkg.absoluteDir) === path.resolve(spec.cwd),
+  )?.name;
+  const entry = cliEventLog(root, currentMode()).begin<OneOffCommandEntry>(
+    {
+      type: 'one-off-command',
+      kind: command.kind,
+      ...(service ? { service } : { dir: path.relative(root, spec.cwd) || '.' }),
+      ...(command.kind === 'exec'
+        ? { command: maskSecrets(command.command) }
+        : { script: command.script, args: maskSecrets(command.args) }),
+    },
+    commandBy(root, { agent: startedByAgent(), invocationCwd: context.invocationCwd }),
+  );
   try {
     const result = await runOneOff(spec, { stdio: 'inherit', logDir: context.logDir });
+    entry.end({ ok: result.exitCode === 0, exitCode: result.exitCode ?? null, signal: result.signal ?? null }); // oxfmt-ignore
     process.exit(
       exitCodeOf({ exitCode: result.exitCode ?? undefined, signal: result.signal ?? undefined }),
     );
   } catch (err) {
+    entry.end({ ok: false, exitCode: null, signal: null });
     exitOnOneOffError(err);
   }
 }

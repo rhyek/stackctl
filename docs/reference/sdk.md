@@ -201,5 +201,6 @@ The types used by the config are exported for
 `DockerComposeCallbackContext`, `ReverseProxyRoute`, `ReverseProxyInput` and
 `DockerComposeInfraInput`. With
 [typed service names](../config/config-file.md#typed-service-names), `ServiceName`,
-`InfraServiceName` and `ServiceConfig` are your own. `ControlClient` and `SessionStatus`
-describe the [control API client](./control-api.md#the-client).
+`InfraServiceName` and `ServiceConfig` are your own. `ControlClient`, `SessionStatus` and
+`SessionEvent` describe the [control API client](./control-api.md#the-client), and `EventLine`,
+`EventEntry`, `EventEnvelope` and `EventBy` the [event log](./events.md)'s lines.

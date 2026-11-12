@@ -15,6 +15,7 @@ import {
   resolveMode,
 } from './env-base.js';
 import { exitOnFatalError } from './errors.js';
+import { takeHandedBy } from './event-log.js';
 import { passthroughArgs } from './infra/argv.js';
 // Records, as it loads, the environment and directory the process started with, which this file
 // changes before a session starts over from them (see relaunch.ts).
@@ -88,6 +89,8 @@ try {
 // describe this invocation, so a value inherited from a stackctl that started this one is dropped.
 process.env.STACKCTL_CWD = INVOCATION_CWD;
 delete process.env.STACKCTL_WORKSPACE_DIR;
+// A session that ran this command handed over who asked; nothing this runs may pass that on.
+takeHandedBy();
 
 /**
  * Very early step (runs for every command): find the workspace (`--workspace-dir` exactly, else the
@@ -297,13 +300,14 @@ program
 
 program
   .command('init')
-  .description('set up stackctl.config.ts (and, optionally, the agent skill)')
+  .description('set up stackctl.config.ts (and, optionally, the guidance for coding agents)')
   .option(WORKSPACE_DIR_FLAGS, 'create the config in this directory, instead of the current one')
   .option(
     '-y, --yes',
-    'non-interactive: accept defaults (scaffold config + install the agent skill)',
+    'non-interactive: accept defaults (scaffold config + install the agent skill and rules file)',
   )
-  .action(async (opts: { yes?: boolean }) => {
+  .option('--agents-md', 'also add a stackctl section to AGENTS.md')
+  .action(async (opts: { yes?: boolean; agentsMd?: boolean }) => {
     const { runInit } = await import('./init.js');
     // From raw argv, since the option is global: it may precede `init`.
     let given: string | undefined;
@@ -318,7 +322,7 @@ program
       console.error(`--workspace-dir ${cwd} is not a directory`);
       process.exit(1);
     }
-    await runInit({ cwd, yes: opts.yes });
+    await runInit({ cwd, yes: opts.yes, agentsMd: opts.agentsMd });
   });
 
 program
@@ -374,13 +378,13 @@ for (const [action, description] of SERVICE_ACTIONS) {
 program
   .command('reset')
   .description(
-    "stop the --mode session, then delete node_modules/.stackctl/modes/<mode>/: its record, saved selection, trust bundle and default logs (infra isn't touched)",
+    "stop the --mode session, then delete node_modules/.stackctl/modes/<mode>/: its record, saved selection, trust bundle, default logs and event log, which starts again with the reset's own lines (infra isn't touched)",
   )
   .option(MODE_FLAGS, 'the mode whose state to delete (required)') // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .action(async () => {
     const { runReset } = await import('./commands/stop.js');
-    process.exit(await runReset(process.cwd()));
+    process.exit(await runReset(process.cwd(), {}, undefined, INVOCATION_CWD));
   });
 
 program
@@ -522,6 +526,34 @@ program
     await runLogs(opts);
   });
 
+program
+  .command('status')
+  .description(
+    "the mode's session now (its services, infra and files) and the last commands that acted on it, from its event log — read-only, it never ends a session",
+  )
+  .option(MODE_FLAGS, MODE_HELP) // see `exec`
+  .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
+  .option('--json', 'print it as JSON')
+  .action(async (opts: { json?: boolean }) => {
+    const { runStatus } = await import('./commands/status.js');
+    await runStatus(opts);
+  });
+
+program
+  .command('events')
+  .description(
+    "print the mode's event log, node_modules/.stackctl/modes/<mode>/events.log: what acted on its stack, one JSON object per line",
+  )
+  .option(MODE_FLAGS, MODE_HELP) // see `exec`
+  .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
+  .option('-n, --lines <count>', 'print only the last <count> lines')
+  .option('-f, --follow', 'keep printing lines as they are written')
+  .option('--path', "print the event log's path instead, then exit")
+  .action(async (opts: { lines?: string; follow?: boolean; path?: boolean }) => {
+    const { runEvents } = await import('./commands/events.js');
+    await runEvents(opts);
+  });
+
 // `infra`: the services the packages need but that aren't packages (see `commands/infra.ts`).
 const infra = program
   .command('infra')
@@ -559,7 +591,7 @@ for (const [command, description] of INFRA_COMMANDS) {
     .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
     .action(async (opts: { service: string[] }) => {
       const { runInfra } = await import('./commands/infra.js');
-      await runInfra(command, opts.service);
+      await runInfra(command, opts.service, INVOCATION_CWD);
     });
 }
 
