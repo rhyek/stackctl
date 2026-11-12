@@ -42,7 +42,26 @@ export default defineConfig({
       { rel: 'icon', href: versioned('/favicon-32.png'), type: 'image/png', sizes: '32x32' },
     ],
     ['link', { rel: 'apple-touch-icon', href: versioned('/apple-touch-icon.png') }],
+    // A link's preview in Slack, X and the like: the icon, square, as a small card. Absolute,
+    // since a preview's fetcher doesn't resolve a path. It has to be a PNG: none of them draws
+    // an SVG, and Slack showed an empty tile for the page's own.
+    ['meta', { property: 'og:type', content: 'website' }],
+    ['meta', { property: 'og:site_name', content: 'stackctl' }],
+    ['meta', { property: 'og:image', content: `${site}${versioned('/og-image.png')}` }],
+    ['meta', { property: 'og:image:width', content: '512' }],
+    ['meta', { property: 'og:image:height', content: '512' }],
+    ['meta', { property: 'og:image:alt', content: 'stackctl' }],
+    ['meta', { name: 'twitter:card', content: 'summary' }],
   ],
+  // Each page's preview names the page: its title, its description and its URL.
+  transformHead({ pageData, title, description }) {
+    const path = pageData.relativePath.replace(/\.md$/, '').replace(/(^|\/)index$/, '$1');
+    return [
+      ['meta', { property: 'og:title', content: title }],
+      ['meta', { property: 'og:description', content: description }],
+      ['meta', { property: 'og:url', content: `${site}/${path}` }],
+    ];
+  },
   // The home page's images, named in its frontmatter by their plain path, get the same hash.
   transformPageData(page) {
     const hero = page.frontmatter.hero as { image?: { src: string } } | undefined;
