@@ -44,13 +44,13 @@ selection.
 
 The log fills the screen, above a footer:
 
-<llm-exclude><TerminalPlayer src="/casts/run-screen-1794501151.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/run-screen-1794521140.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
 <llm-only>
 
 ```text
 ── example ⎇ main ────────────────────────────────────────────────────────
-● backend 62M   ● frontend 242M   ● worker 24M
-infra: ● db 12M   ● mail 7M
+● backend 62M   ● frontend 225M   ● worker 24M
+infra: ● db 25M   ● mail 7M
 ←→ select   r restart   s stop   m commands
 logs: f filter   c clear  │  ^c quit
 backend ↗   public ↗   frontend ↗   root ↗   inbox ↗   mail ↗
@@ -73,9 +73,10 @@ backend ↗   public ↗   frontend ↗   root ↗   inbox ↗   mail ↗
 | gray `○`            | pending                                                 |
 | red `○`             | stopped or exited                                       |
 
-Startup happens on this screen too. If it fails (the proxy's port is taken, an infra service
-never gets healthy), nothing else starts, the reason is in the log, and the screen stays up for
-reading. Ctrl+C then exits with code `1`.
+Startup happens on this screen too, with the service keys dim until the services can take them.
+If it fails (the proxy's port is taken, an infra service never gets healthy), nothing else
+starts, the reason is in the log, and the screen stays up for reading. Ctrl+C then exits with
+code `1`.
 
 ## Keys
 
@@ -83,7 +84,7 @@ reading. Ctrl+C then exits with code `1`.
 | ------------------------- | --------------------------------------------------------------------------------------- |
 | `←` `→` `↑` `↓`           | Focus another service.                                                                  |
 | `r`                       | Restart the focused service.                                                            |
-| `s`                       | Stop it, or start it when it isn't running.                                             |
+| `s`                       | Stop it, or start it when it isn't running. A waiting service starts on its own.        |
 | `m`                       | Open the commands menu: the service's scripts, and a custom shell command.              |
 | `R`                       | Reset the focused infra service, **deleting its data**. Asks for a second `R`.          |
 | `f`                       | Filter the log: type terms, `⏎` to apply, `esc` to clear.                               |

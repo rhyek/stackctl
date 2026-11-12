@@ -519,20 +519,19 @@ describe('waits', () => {
     expect(t.said('api')).toEqual(['waiting for db...']);
   });
 
-  test('a waiter the user starts starts at once, skipping its wait', async () => {
+  test('a start or restart of a waiter does nothing: it starts once what it waits for is ready', async () => {
     const t = setup({ services });
     t.supervisor.launchAll();
     await t.supervisor.start('api');
-    expect(t.state('api')).toBe('running');
-    expect(t.said('api')).toEqual(['waiting for db...', 'started']);
-  });
-
-  test('a restart of a waiter starts it at once', async () => {
-    const t = setup({ services });
-    t.supervisor.launchAll();
     await t.supervisor.restart('api');
+    expect(t.state('api')).toBe('waiting');
+    expect(t.of('api')).toHaveLength(0);
+    expect(t.said('api')).toEqual(['waiting for db...']);
+    await until(() => expect(t.of('db')).toHaveLength(1));
+    t.answers.set('db', true);
+    await t.clock.advance(1600);
+    expect(t.said('api')).toEqual(['waiting for db...', 'db ready, starting...', 'started']);
     expect(t.state('api')).toBe('running');
-    expect(t.said('api')).toEqual(['waiting for db...', 'started', 'restarted']);
   });
 
   test("a service that can't be started stays stopped, silently, even with waits", async () => {

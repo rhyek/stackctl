@@ -13,6 +13,7 @@ import type { Target } from './hit-test.js';
 import { hitTest } from './hit-test.js';
 import {
   type FooterLayout,
+  type FooterRow,
   type Segment,
   entriesOf,
   footerLayout,
@@ -114,14 +115,6 @@ function frameOf(element: React.ReactElement, columns: number) {
   const raw = (frames[frames.length - 1] ?? '').replace(/\n$/, '').split('\n');
   instance.unmount();
   return { raw, rows: raw.map((r) => strip(r).trimEnd()) };
-}
-
-/** How many rows the keys row itself draws (not its padding). */
-function layoutRowsOf(snap: SessionSnapshot, state: UiState, cols: number): number {
-  const layout = footerLayout(snap, state, cols);
-  return layout.rows
-    .slice(layout.keysRow)
-    .filter((r) => r.length > 0 && !r.some((seg) => seg.link !== undefined)).length;
 }
 
 /** The index of the links row, or the row count when the footer has none. */
@@ -233,10 +226,20 @@ describe('Design A at 104 columns (S2-R14)', () => {
       RULE,
       '○ api   ○ web',
       'infra: ● db   ● mail',
-      'logs: f filter   c clear  │  ^c quit',
+      '←→ select   r restart   s stop   m commands  │  logs: f filter   c clear  │  ^c quit',
     ]);
     expect(focusSpan(layout.rows[1]!)).toBeNull();
     expect(focusSpan(layout.rows[2]!)).toBeNull();
+    // The keys api will have once the session runs, dim until then, so the row doesn't change
+    // length when it does.
+    const keys = layout.rows[layout.keysRow]!;
+    for (const hint of ['←→ select', 'r restart', 's stop', 'm commands']) {
+      expect(
+        keys.find((s) => s.text === hint),
+        hint,
+      ).toMatchObject({ dim: true });
+    }
+    expect(keys.find((s) => s.text === 'filter')?.dim).toBeUndefined();
   });
 
   test('a service on its way has a yellow dot that blinks: dimmed while the blink is off', () => {
@@ -309,7 +312,8 @@ describe('Design A at 104 columns (S2-R14)', () => {
 
 describe('the footer', () => {
   test('filter mode replaces the keys row', () => {
-    // At 61 columns the normal keys row takes two rows, and the filter row keeps both.
+    // At 61 columns the normal keys row takes two rows; the filter row takes one, and the footer
+    // is a row shorter for it, with no empty row kept.
     for (const cols of [104, 61]) {
       const normal = footerLayout(running(), ui(), cols);
       const layout = footerLayout(
@@ -317,21 +321,16 @@ describe('the footer', () => {
         ui({ mode: 'filter', filterDraft: 'error api' }),
         cols,
       );
-      // Ink's frame leaves off trailing blank rows; the footer's box still takes them.
       const rows = renderFooter(layout, cols);
-      while (rows.length < layout.height) {
-        rows.push('');
-      }
-      expect(layout.height).toBe(normal.height);
+      const keysRows = linksStart(normal) - normal.keysRow;
+      expect(layout.height).toBe(normal.height - (keysRows - 1));
+      expect(rows).toHaveLength(layout.height);
       expect(layout.keysRow).toBe(normal.keysRow);
       expect(rows.slice(0, layout.keysRow)).toEqual(
         renderFooter(normal, cols).slice(0, layout.keysRow),
       );
-      // The filter row keeps the keys rows' height, and the links row stays below it.
-      const keysRows = linksStart(normal) - normal.keysRow;
       expect(rows.slice(layout.keysRow)).toEqual([
         'filter › error api▏      ⏎ apply   esc clear',
-        ...Array.from({ length: keysRows - 1 }, () => ''),
         ...renderFooter(normal, cols).slice(linksStart(normal)),
       ]);
       const hints = layout.targets.filter((t) => t.id.startsWith('hint:'));
@@ -710,17 +709,21 @@ describe('the commands menu', () => {
     return { rows, layout, menu, pane: measured.pane };
   }
 
-  test("the menu does not change the log pane's height", () => {
-    // At 61 columns the normal keys row wraps to two rows; the menu's `^c quit` keeps both.
+  test('with the menu open, the footer takes only the rows it draws, and the log pane the rest', () => {
+    // At 61 columns the normal keys row wraps to two rows; the menu's `^c quit` takes one, and
+    // the log pane gets the other.
     for (const cols of [104, 61]) {
       const closed = screen(ui(), cols, 16);
       const opened = screen(open(), cols, 16);
       expect(opened.menu).not.toBeNull();
-      expect(opened.pane).toBe(closed.pane);
-      expect(opened.layout.height).toBe(closed.layout.height);
-      const footerTop = 16 - closed.layout.height;
-      expect(opened.rows.slice(footerTop, footerTop + closed.layout.keysRow)).toEqual(
-        closed.rows.slice(footerTop, footerTop + closed.layout.keysRow),
+      const keysRows = (l: FooterLayout) => linksStart(l) - l.keysRow;
+      expect(keysRows(opened.layout)).toBe(1);
+      expect(opened.layout.height).toBe(closed.layout.height - (keysRows(closed.layout) - 1));
+      expect(opened.pane).toBe(16 - opened.layout.height);
+      expect(closed.pane).toBe(16 - closed.layout.height);
+      const top = (s: typeof closed) => 16 - s.layout.height;
+      expect(opened.rows.slice(top(opened), top(opened) + opened.layout.keysRow)).toEqual(
+        closed.rows.slice(top(closed), top(closed) + closed.layout.keysRow),
       );
     }
   });
@@ -870,25 +873,31 @@ describe('the commands menu', () => {
     expect(at(3).targets.map((t) => t.id)).toEqual(['menu:box', 'menu:row:0']);
   });
 
-  test("←/→ in the menu never changes the footer's height", () => {
-    // At 90 columns `s stop`'s keys row fits on one row and `s start`'s, one cell wider, wraps.
-    const snap = running({
-      services: [service('api'), service('web', { state: 'stopped' })],
-    });
-    const at = (state: UiState) => footerLayout(snap, state, 90, { commands }).height;
+  test('the footer never draws an empty row', () => {
+    // At 84 columns the running service's keys row (`s stop`) fills a row exactly, and the other
+    // one's (`s start`, a cell wider) wraps; at 85 both fit.
     const onApi = { kind: 'app' as const, name: 'api' };
     const onWeb = { kind: 'app' as const, name: 'web' };
-    expect(
-      layoutRowsOf(snap, ui({ focus: onApi }), 90),
-      'the running service alone fits one keys row',
-    ).toBe(1);
-    const heights = [
-      at(ui({ focus: onApi })),
-      at(ui({ focus: onWeb })),
-      at({ ...open(), focus: onApi }),
-      at({ ...open(), focus: onWeb }),
-    ];
-    expect(new Set(heights).size).toBe(1);
+    const blank = (row: FooterRow) => row.every((seg) => seg.text.trim() === '');
+    for (const cols of [84, 85]) {
+      for (const state of ['stopped', 'waiting'] as const) {
+        const snap = running({
+          services: [service('api'), service('web', { state })],
+          workspaceLinks: [[{ label: 'web', url: 'http://localhost:21050' }]],
+        });
+        for (const focus of [onApi, onWeb]) {
+          for (const mode of [ui({ focus }), ui({ focus, mode: 'filter' }), { ...open(), focus }]) {
+            const layout = footerLayout(snap, mode, cols, { commands });
+            const where = `${cols} columns, web ${state}, ${focus.name} focused, ${mode.mode} mode`;
+            expect(layout.rows.filter(blank), where).toEqual([]);
+            expect(layout.height, where).toBe(layout.rows.length);
+          }
+        }
+      }
+    }
+    // A session with nothing in it yet draws no services row either.
+    const empty = footerLayout(running({ services: [], infra: [] }), ui(), 104);
+    expect(empty.rows.filter(blank)).toEqual([]);
   });
 
   test('it is not laid out unless the menu is open on an app service', () => {

@@ -7,7 +7,7 @@ during development. You describe your services once, in a small typed config fil
 starts the ones you pick and the services they need, brings up their infrastructure, loads
 their environment, and shows it all in one place.
 
-![stackctl's terminal UI running the example monorepo](https://raw.githubusercontent.com/rhyek/stackctl/main/docs/public/demo-1794501113.gif)
+![stackctl's terminal UI running the example monorepo](https://raw.githubusercontent.com/rhyek/stackctl/main/docs/public/demo-1794521101.gif)
 
 **Documentation: [stackctl.dev](https://stackctl.dev)**
 

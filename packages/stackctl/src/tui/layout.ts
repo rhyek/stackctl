@@ -474,14 +474,17 @@ function servicesRows(
     next += w + ENTRY_GAP;
   });
   return {
-    rows: rows.map((pieces) => {
-      const row = new RowBuilder();
-      for (const piece of pieces) {
-        row.padTo(piece.col);
-        row.push(...piece.segments);
-      }
-      return clip(row.segments, cols);
-    }),
+    // No entries, no row: the footer never draws an empty one.
+    rows: rows
+      .filter((pieces) => pieces.length > 0)
+      .map((pieces) => {
+        const row = new RowBuilder();
+        for (const piece of pieces) {
+          row.padTo(piece.col);
+          row.push(...piece.segments);
+        }
+        return clip(row.segments, cols);
+      }),
     rects,
     targets,
   };
@@ -628,27 +631,6 @@ export function footerLayout(
     const keys = layoutHints(hintsFor(kc), cols, keysOptions);
     rows.push(...keys.rows);
     targets.push(...hintTargets(keys.placed, 'keys', (r) => keysRow + r));
-  }
-  // The keys area takes as many rows as normal mode's keys row would, so the log never reflows
-  // when filter mode or the menu opens (run-screen §4.2.1, §5.2.1). With an app service focused,
-  // that is the most any app service's row takes (`s stop` and `s start` differ by a cell), so
-  // ←/→ in the menu never changes it either.
-  const normalRows = (focus: UiState['focus']) =>
-    layoutHints(
-      hintsFor(keyContext({ ...ui, mode: 'normal', menu: null, focus }, ctx)),
-      cols,
-      keysOptions,
-    ).rows.length;
-  const keysArea =
-    kc.focused?.kind === 'app'
-      ? Math.max(
-          ...entries
-            .filter((e) => e.kind === 'app')
-            .map((e) => normalRows({ kind: 'app', name: e.name })),
-        )
-      : normalRows(ui.focus);
-  while (rows.length < keysRow + keysArea) {
-    rows.push([]);
   }
   rows.push(...linksRows(snapshot, cols));
   return {

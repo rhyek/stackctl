@@ -133,7 +133,11 @@ export async function runServiceCommand(
       log(actedLine(action, name, before));
     } else {
       failed = true;
-      error(`couldn't ${action} ${name}: it is restarting, or the session is shutting down`);
+      error(
+        before?.[name] === 'waiting'
+          ? `couldn't ${action} ${name}: it is waiting for its dependencies, and starts once they're ready`
+          : `couldn't ${action} ${name}: it is restarting, or the session is shutting down`,
+      );
     }
   }
 

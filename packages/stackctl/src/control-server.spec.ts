@@ -180,6 +180,9 @@ describe('control-server', () => {
       fakeManager({
         runPackage: (name, action) => {
           runs.push(`${action} ${name}`);
+          if (name === 'worker') {
+            return Promise.resolve('waiting');
+          }
           if (name !== 'web' && name !== 'api') {
             return Promise.resolve('unknown');
           }
@@ -206,6 +209,10 @@ describe('control-server', () => {
       status: 409,
       body: { ok: false, error: 'service "api" has no dev command' },
     });
+    expect(await post('/command/service/start/worker')).toEqual({
+      status: 409,
+      body: { ok: false, error: 'service "worker" is waiting for its dependencies' },
+    });
     expect((await post('/command/service/start/nope')).status).toBe(404);
     expect((await post('/command/service/explode/web')).status).toBe(404);
     expect(runs).toEqual([
@@ -214,6 +221,7 @@ describe('control-server', () => {
       'start web',
       'stop api',
       'start api',
+      'start worker',
       'start nope',
     ]);
   });

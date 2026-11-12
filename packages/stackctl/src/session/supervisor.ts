@@ -334,8 +334,9 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   }
 
   /**
-   * Starts a service now, skipping any wait on its deps. Does nothing while shutting down, for a
-   * name not in the session, one already running or restarting, or one with no dev command.
+   * Starts a service now. Does nothing while shutting down, for a name not in the session, one
+   * already running or restarting, one with no dev command, or one waiting for its deps: it starts
+   * once they're ready, never before.
    * The start waits for the first `.env` read, and for a process a stop let go of to finish
    * exiting, so one service never runs two copies; it resolves once it has happened.
    */
@@ -346,6 +347,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       this.closing ||
       svc.proc ||
       svc.state === 'restarting' ||
+      svc.state === 'waiting' ||
       !definesDevScript(svc.config)
     ) {
       return Promise.resolve();
@@ -379,13 +381,13 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
 
   /**
    * Restarts a service: stops it (with its lines), reads the `.env` files again, starts it and
-   * logs `restarted`. A stopped or waiting service is just started, skipping any wait. A restart
-   * already under way is the one returned. Its start waits for a process an earlier stop let go of
+   * logs `restarted`. A stopped service is just started; one waiting for its deps is left waiting.
+   * A restart already under way is the one returned. Its start waits for a process an earlier stop let go of
    * to finish exiting; nothing starts once shutting down, or after a stop issued meanwhile.
    */
   restart(name: string): Promise<void> {
     const svc = this.services.get(name);
-    if (!svc || this.closing) {
+    if (!svc || this.closing || svc.state === 'waiting') {
       return Promise.resolve();
     }
     if (!svc.restart) {

@@ -635,6 +635,9 @@ export class Session implements ControlManager, DevReverseProxyManager {
         ? 'done'
         : 'unknown';
     }
+    if (action !== 'stop' && status.state === 'waiting') {
+      return 'waiting';
+    }
     if (action === 'restart') {
       void this.supervisor.restart(name);
       return 'accepted';

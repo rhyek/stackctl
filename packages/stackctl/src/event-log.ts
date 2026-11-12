@@ -39,7 +39,7 @@ type Command<T extends string, Asked, Result> =
 export type ServiceCommandEntry = Command<
   'service-command',
   { action: 'start' | 'stop' | 'restart'; service: string },
-  { outcome: 'done' | 'busy' | 'unknown' | 'unavailable' | 'closing' }
+  { outcome: 'done' | 'busy' | 'waiting' | 'unknown' | 'unavailable' | 'closing' }
 >;
 export type InfraCommandEntry = Command<
   'infra-command',

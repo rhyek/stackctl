@@ -7,6 +7,13 @@ Monorepo for the published `stackctl` npm package.
   `stackctl: link:../packages/stackctl` (see `example/package.json`).
 - `maintenance/` — the project's own notes and tooling. See [Maintenance](#maintenance).
 
+## No worktrees — work in the main checkout
+
+Never create a git worktree for this repo, and never work in one. Work in the main checkout
+(`~/Dev/personal/published/stackctl`), switching branches there. Other projects on this machine
+use stackctl through `link:` to this checkout's `packages/stackctl`, so a change is only testable
+in them once it is built here; a build in a worktree reaches none of them.
+
 ## NEVER commit personal content — hard rule
 
 This is a **public** repository. Do not put any of the user's personal material into the code,

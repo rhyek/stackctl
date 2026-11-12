@@ -10,6 +10,10 @@
 - **`stackctl wait` blocks until the mode's session is ready**, for a session started in the
   background. See [docs/reference/cli.md](docs/reference/cli.md#stackctl-wait).
 
+### Fixes
+
+- **The run screen's footer no longer leaves an empty row** under the keys while a service waits.
+
 ### Breaking changes
 
 - **Logs and event logs moved to `node_modules/.stackctl/modes/<mode>/sessions/<id>/`**: read
@@ -20,6 +24,8 @@
   string.
 - **A coding agent's command must name its mode**: pass `--mode development` (or the mode
   meant) where an agent's script or prompt relied on the default.
+- **A service waiting for its dependencies can't be started or restarted early**: start the
+  services it waits for instead.
 
 ## 0.4.0
 

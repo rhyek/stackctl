@@ -72,7 +72,7 @@ no `end` is a command still running, or one whose process was killed.
 
 | `type`            | Asked                                                                       | `end` adds                    |
 | ----------------- | --------------------------------------------------------------------------- | ----------------------------- |
-| `service-command` | `action` (`start`, `stop`, `restart`), `service`                            | `outcome`: `done`, `busy`, `unknown`, `unavailable` |
+| `service-command` | `action` (`start`, `stop`, `restart`), `service`                            | `outcome`: `done`, `busy`, `waiting`, `unknown`, `unavailable` |
 | `infra-command`   | `action` (`start`, `stop`, `restart`, `reset`, `destroy`), `requested` (`[]` for all) | `services`, `results` (each `ready`, `stopped`, `destroyed` or `failed`), `everything`, `error` |
 | `compose-command` | `args`: what followed `infra docker-compose`                                | `exitCode`                    |
 | `one-off-command` | `kind` (`exec`, `run`), `service` or `dir`, `command`, or `script` and `args` | `exitCode`, `signal`        |

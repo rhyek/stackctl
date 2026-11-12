@@ -744,6 +744,23 @@ describe('snapshot', () => {
     t.session.logControl('restart', { service: 'web' });
     expect(t.lines().slice(-2)).toEqual(['[control ] [INFO] restart', '[control ]   service: web']); // oxfmt-ignore
   });
+
+  test('a start or restart of a service waiting for its deps is refused as waiting; a stop is not', async () => {
+    const t = setup({
+      services: {
+        api: { healthcheck: 'http://127.0.0.1:1/health' },
+        web: { deps: [{ service: 'api', wait: true }] },
+      },
+      seams: { probe: () => Promise.resolve(false) },
+    });
+    await t.session.start();
+    await until(() => expect(t.session.serviceStatuses()).toEqual({ api: 'running', web: 'waiting' })); // oxfmt-ignore
+    expect(await t.session.runPackage('web', 'start', BY)).toBe('waiting');
+    expect(await t.session.runPackage('web', 'restart', BY)).toBe('waiting');
+    expect(t.procs).toHaveLength(1);
+    expect(await t.session.runPackage('web', 'stop', BY)).toBe('done');
+    expect(t.session.serviceStatuses()).toEqual({ api: 'running', web: 'stopped' });
+  });
 });
 
 describe('git branch', () => {

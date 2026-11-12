@@ -136,7 +136,7 @@ export interface ControlClient<P extends string = ServiceName> {
      * a restart of it is under way.
      */
     readonly service: {
-      /** Starts a stopped service, or one still waiting on the services it waits for. True when it already runs. */
+      /** Starts a stopped service. True when it already runs; false while it waits for its deps. */
       start(name: P): Promise<boolean>;
       /** Stops a service, resolving once its process has exited. True when it is already stopped. */
       stop(name: P): Promise<boolean>;

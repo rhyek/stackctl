@@ -200,6 +200,9 @@ Drives application services in the mode's **running** session, through its
 | `stop`     | Stops each service. Services that wait on it keep running.                       |
 | `restart`  | Restarts each service, starting a stopped one.                                   |
 
+A service waiting for its dependencies is left to start once they're ready: `start` and
+`restart` refuse it and exit `1`.
+
 All take `-s, --service <name>`, repeatable. `start` and `restart` wait until the services
 are ready, up to `--wait-timeout <s>` (default `300`), and exit `1` if one isn't. For infra
 services, use [`stackctl infra`](#stackctl-infra).

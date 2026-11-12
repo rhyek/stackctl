@@ -190,6 +190,7 @@ curl -s -X POST http://127.0.0.1:$port/command/service/restart/api
 | `404`  | `{ "ok": false, "error": "unknown service action \"x\"" }`                               | The action isn't one of the three.          |
 | `409`  | `{ "ok": false, "error": "service \"x\" is restarting" }`                                | A `start` or `stop` during a restart.       |
 | `409`  | `{ "ok": false, "error": "service \"x\" has no dev command" }`                          | A `start` of a service with no dev script.  |
+| `409`  | `{ "ok": false, "error": "service \"x\" is waiting for its dependencies" }`             | A `start` or `restart` of a waiting service. |
 | `503`  | `{ "ok": false, "error": "service \"x\" could not be added: the session is shutting down" }` | A `start` during shutdown.              |
 | `503`  | `{ "error": "manager not attached" }`                                                    | The session is still bringing its infra up. |
 

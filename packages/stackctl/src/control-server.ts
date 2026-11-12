@@ -30,7 +30,8 @@ const REQUEST_URL_BASE = 'http://localhost';
 /**
  * How a service action went: `done` (a start or stop, finished), `accepted` (a restart,
  * under way), `unknown` (no such service in the session), `busy` (a restart is under way),
- * `unavailable` (a start with no dev command),
+ * `waiting` (a start or restart of a service waiting for its deps), `unavailable` (a start with
+ * no dev command),
  * `closing` (a start of a service not in the session, while the session is shutting down).
  */
 export type ServiceRunOutcome =
@@ -38,6 +39,7 @@ export type ServiceRunOutcome =
   | 'accepted'
   | 'unknown'
   | 'busy'
+  | 'waiting'
   | 'unavailable'
   | 'closing';
 
@@ -307,6 +309,11 @@ export async function startControlServer(opts: {
               return send(res, 409, {
                 ok: false,
                 error: `service "${name}" is restarting`,
+              });
+            case 'waiting':
+              return send(res, 409, {
+                ok: false,
+                error: `service "${name}" is waiting for its dependencies`,
               });
             case 'unavailable':
               return send(res, 409, {

@@ -56,7 +56,10 @@ export type Action =
 export interface KeyContext {
   mode: Mode;
   phase: Phase;
-  /** `null` during startup, after a startup failure, or with no entries. */
+  /**
+   * During startup, the entry focused once the session runs, whose keys are drawn dim. `null`
+   * after a startup failure, or with no entries.
+   */
   focused: Entry | null;
   /** The applied filter's terms; empty when nothing is filtered. */
   filter: string;
@@ -195,6 +198,9 @@ export function isInfraBusy(state: SessionInfraState): boolean {
 const app = (ctx: KeyContext) => ctx.focused?.kind === 'app';
 const infra = (ctx: KeyContext) => ctx.focused?.kind === 'infra';
 const appActive = (ctx: KeyContext) => ctx.focused?.kind === 'app' && isActive(ctx.focused.state);
+/** `s` reads stop: an active service, or one pending at startup, about to start. */
+const appStops = (ctx: KeyContext) =>
+  appActive(ctx) || (ctx.phase === 'starting' && ctx.focused?.state === 'pending');
 const infraUp = (ctx: KeyContext) => ctx.focused?.kind === 'infra' && isInfraUp(ctx.focused.state);
 const infraBusy = (ctx: KeyContext) =>
   ctx.focused?.kind === 'infra' && isInfraBusy(ctx.focused.state);
@@ -241,16 +247,18 @@ export const KEY_TABLE: readonly KeyBinding[] = [
   },
   {
     mode: 'normal',
-    when: appActive,
+    when: appStops,
     key: { char: 's' },
     hint: { key: 's', label: 'stop', group: 1 },
     action: { type: 'stop-start' },
   },
   {
     mode: 'normal',
-    when: (ctx) => app(ctx) && !appActive(ctx),
+    when: (ctx) => app(ctx) && !appStops(ctx),
     key: { char: 's' },
     hint: { key: 's', label: 'start', group: 1 },
+    // A service waiting for its deps starts once they're ready, never before.
+    dim: (ctx) => ctx.focused?.state === 'waiting',
     action: { type: 'stop-start' },
   },
   {
@@ -511,7 +519,8 @@ export function hintsFor(ctx: KeyContext, row: HintRow = 'keys'): Hint[] {
       key: spec.key,
       label: spec.label,
       group: spec.group,
-      disabled: binding.dim?.(ctx) ?? false,
+      // Starting up, the focused entry's keys (group 1) are dim: nothing can act on it yet.
+      disabled: (ctx.phase === 'starting' && spec.group === 1) || (binding.dim?.(ctx) ?? false),
       action: binding.action,
     };
     if (spec.detail) {
