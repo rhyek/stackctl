@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A Claude Code PreToolUse hook on `git commit` (.claude/settings.json): stops a commit whose
-// changes may alter one of the docs' terminal recordings (scripts/demo/scenes.ts) without
+// changes may alter one of the docs' terminal recordings (maintenance/scripts/demo/scenes.ts) without
 // re-recording it, and points at the /commit skill, which judges and re-records.
 //
 // A recording counts as re-recorded when the changes carry a new cast for its scene
@@ -13,7 +13,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { affectedScenes, changedFiles } from '../../scripts/demo/affected.ts';
+import { affectedScenes, changedFiles } from '../../maintenance/scripts/demo/affected.ts';
 
 const input = JSON.parse(fs.readFileSync(0, 'utf8')) as {
   cwd?: string;
@@ -44,7 +44,7 @@ try {
   process.exit(0);
 }
 // Another repository's commit is none of this hook's business.
-if (!fs.existsSync(path.join(root, 'scripts/demo/scenes.ts'))) {
+if (!fs.existsSync(path.join(root, 'maintenance/scripts/demo/scenes.ts'))) {
   process.exit(0);
 }
 
@@ -63,7 +63,7 @@ process.stderr.write(
     ...stale.map(({ scene, files }) => `  ${scene}: ${files.join(', ')}`),
     '',
     'Follow the /commit skill (.claude/skills/commit/SKILL.md): judge from the diff whether each',
-    'really changes, re-record those with ./scripts/demo/record.sh <scene>, then commit again.',
+    'really changes, re-record those with ./maintenance/scripts/demo/record.sh <scene>, then commit again.',
     'If none of them really changes, say why to the user and commit with',
     'STACKCTL_RECORDINGS_CHECKED=1 in front of the git commit.',
     '',

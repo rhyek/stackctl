@@ -67,7 +67,6 @@ try {
 | `workspaceDir` | nearest config         | The directory holding `stackctl.config.ts`.                                |
 | `waitTimeout`  | `300`                  | Seconds to wait for everything to be healthy.                              |
 | `killOthers`   | `false`                | Quit a session already running in the mode, as `--kill-others` does.       |
-| `logDir`       | the mode's log dir     | Where the session log is written.                                          |
 | `env`          | `stackEnvironment()`   | The environment the session starts with.                                   |
 
 It resolves with:

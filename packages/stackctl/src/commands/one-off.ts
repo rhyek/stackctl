@@ -6,7 +6,6 @@ import { proxyTlsFor } from '../dev-tls.js';
 import { currentMode } from '../env-base.js';
 import { RESOLVE_ENV_FD } from '../env.js';
 import { type OneOffCommandEntry, cliEventLog, commandBy, maskSecrets } from '../event-log.js';
-import { getLogDir } from '../log-files.js';
 import {
   type OneOffResolution,
   type OneOffSpec,
@@ -19,6 +18,7 @@ import {
 } from '../one-off/resolve.js';
 import { CommandStartError, runOneOff } from '../one-off/run.js';
 import { exitCodeOf } from '../scripts.js';
+import { oneOffLogDir } from '../session-files.js';
 import { type ResolvedTarget, TargetNotFoundError } from '../target.js';
 import { loadedConfigOrExit } from './workspace.js';
 
@@ -31,8 +31,6 @@ export interface OneOffContext {
   invocationCwd: string;
   /** Whether `--workspace-dir` was given: a relative target then resolves against the root. */
   workspaceDirGiven: boolean;
-  /** The `--log-dir` override, if any. */
-  logDir?: string;
 }
 
 /** A one-off command as the command line gave it. */
@@ -85,7 +83,8 @@ export async function runOneOffCommand(
   } catch (err) {
     exitOnOneOffError(err);
   }
-  // Written to the mode's event log: the service (or directory) it ran in, what it ran, its exit.
+  // Written to the session's event log: the service (or directory) it ran in, what it ran, its
+  // exit. Its log goes in the same session's folder.
   const service = getRegisteredPackages().find(
     (pkg) => path.resolve(pkg.absoluteDir) === path.resolve(spec.cwd),
   )?.name;
@@ -101,7 +100,10 @@ export async function runOneOffCommand(
     commandBy(root, { agent: startedByAgent(), invocationCwd: context.invocationCwd }),
   );
   try {
-    const result = await runOneOff(spec, { stdio: 'inherit', logDir: context.logDir });
+    const result = await runOneOff(spec, {
+      stdio: 'inherit',
+      logDir: oneOffLogDir(root, currentMode()),
+    });
     entry.end({ ok: result.exitCode === 0, exitCode: result.exitCode ?? null, signal: result.signal ?? null }); // oxfmt-ignore
     process.exit(
       exitCodeOf({ exitCode: result.exitCode ?? undefined, signal: result.signal ?? undefined }),
@@ -150,7 +152,7 @@ export async function printOneOffResolution(opts: ResolveOneOffRequest): Promise
   const result: OneOffResolution = {
     spec,
     ...oneOffEnvResolution(target, root, layer),
-    logDir: getLogDir(),
+    logDir: oneOffLogDir(root, currentMode()),
   };
   fs.writeSync(RESOLVE_ENV_FD, JSON.stringify(result));
   process.exit(0);

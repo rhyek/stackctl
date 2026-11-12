@@ -38,7 +38,7 @@ jobs:
 
       # Fails a top CHANGELOG.md section that can't be released: empty, edited after its
       # release, or not newer than the latest release.
-      - run: node scripts/changelog.ts check
+      - run: node maintenance/scripts/changelog.ts check
 
       - run: pnpm install --frozen-lockfile
 
@@ -51,7 +51,7 @@ jobs:
 
       # The source maps name the package's own sources, so a build change that would publish the
       # runner's paths fails here, before a release.
-      - run: node scripts/check-source-maps.ts
+      - run: node maintenance/scripts/check-source-maps.ts
 
       # The root lint covers `example/` too.
       - run: pnpm lint

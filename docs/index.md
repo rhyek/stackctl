@@ -20,7 +20,7 @@ hero:
       link: https://github.com/rhyek/stackctl
 
 demo:
-  src: /casts/demo-1794447068.cast
+  src: /casts/demo-1794501122.cast
   alt: stackctl's terminal UI running the example monorepo
 
 config:
@@ -28,6 +28,14 @@ config:
   details: Services, what each one needs, how to tell it is ready, and the infrastructure under them, in TypeScript your editor checks. The terminal UI, your tests, CI and coding agents all read the same file.
   linkText: The config file
   link: /config/config-file
+
+agents:
+  title: Your coding agent runs it too.
+  details: It works from the config you wrote, so it knows what your stack is made of. It can start, stop and restart your services, check which are healthy, run your tests in a session of their own and read the logs when something breaks.
+  linkText: stackctl for coding agents
+  link: /ai/overview
+  src: /casts/agent-tests-1794505772.cast
+  alt: Claude Code starts a test-mode session, runs the backend's tests in it and stops it
 
 features:
   - icon: 🧩

@@ -23,7 +23,6 @@ const START_STACK_OPTIONS = [
   'mode',
   'workspaceDir',
   'waitTimeout',
-  'logDir',
   'killOthers',
   'env',
 ];
@@ -40,8 +39,6 @@ export interface StartStackOptions<P extends string = ServiceName> {
   workspaceDir?: string;
   /** How long to wait for everything to be healthy, in seconds. Default 300. */
   waitTimeout?: number;
-  /** A session's log directory, as `--log-dir` takes it. */
-  logDir?: string;
   /**
    * Quit a session of the mode already running in the workspace, and start this one in its
    * place, as `--kill-others` does. Without it, a running one fails the call.
@@ -150,7 +147,6 @@ export async function startStack<P extends string = ServiceName>(
     '--headless',
     ...options.services.flatMap((name) => ['-s', name]),
     ...(options.killOthers ? ['--kill-others'] : []),
-    ...(options.logDir === undefined ? [] : ['--log-dir', options.logDir]),
   ];
   note(`starting a session: ${options.services.join(', ')}`);
   const launched = await launchSession<P>({

@@ -1,5 +1,5 @@
 ---
-description: Every stackctl command and flag - start, stop, reset, service, status, events, show-config, exec, run, logs, infra and init - plus global options, taking over a session and where state is kept.
+description: Every stackctl command and flag - start, stop, wait, reset, service, status, events, show-config, exec, run, logs, infra and init - plus global options, taking over a session and where state is kept.
 ---
 
 # CLI
@@ -26,10 +26,11 @@ above the current one, that holds `stackctl.config.ts`. Without one, every comma
 | ---------------------------------------------- | --------------------------------------------------------- |
 | [`start`](#stackctl-start)                     | Start a session. The default command.                     |
 | [`stop`](#stackctl-stop)                       | Stop the mode's session.                                  |
+| [`wait`](#stackctl-wait)                       | Wait until the mode's session is ready.                   |
 | [`reset`](#stackctl-reset)                     | Stop it, then delete the mode's state.                    |
 | [`service`](#stackctl-service)                 | Start, stop or restart services in a running session.     |
 | [`status`](#stackctl-status)                   | The session now, and the last commands that acted on it.  |
-| [`events`](#stackctl-events)                   | Print or follow the mode's event log.                     |
+| [`events`](#stackctl-events)                   | Print or follow the session's event log.                  |
 | [`show-config`](#stackctl-show-config)         | Print the resolved config as JSON.                        |
 | [`exec`](#stackctl-exec-and-stackctl-run)      | Run a command with a service's environment.               |
 | [`run`](#stackctl-exec-and-stackctl-run)       | Run a script with a service's environment.                |
@@ -43,10 +44,15 @@ Accepted before or after any command.
 
 | Option                  | What it does                                                                          |
 | ----------------------- | ------------------------------------------------------------------------------------- |
-| `-m, --mode <name>`     | The [mode](../guide/env.md#modes). Default: `STACKCTL_MODE`, else `test` in CI, else `development`. |
+| `-m, --mode <name>`     | The [mode](../guide/env.md#modes). Default: `STACKCTL_MODE`, else `test` in CI, else `development`. A coding agent must name it. |
 | `--workspace-dir <dir>` | The directory holding the config, to run against a workspace from outside it. No walk-up. |
 | `-V, --version`         | Print the version.                                                                    |
 | `-h, --help`            | Help for the command.                                                                 |
+
+- **A coding agent names the mode on every command**, `development` included, with `--mode` or
+  `STACKCTL_MODE`. A command it runs in the default mode, or CI's, exits `1` and says how to
+  name it. `init`, `--help` and `--version` need no mode, and neither does the session
+  [`startStack()`](./sdk.md#startstack) starts.
 
 ## `stackctl start`
 
@@ -62,7 +68,6 @@ Starts a session. `stackctl` with no command is `stackctl start`, so `stackctl -
 | `-d, --detach`           | For CI: a headless session that outlives the command. Needs `-s` or `--last-answers`. |
 | `--wait-timeout <s>`     | How long `--detach` waits for the session to be ready. Default `300`.                |
 | `--kill-others`          | Quit a session already running in this mode without asking.                          |
-| `--log-dir <dir>`        | Where to write the session log. Default `node_modules/.stackctl/modes/<mode>/logs/`. |
 
 The first time a person starts a session in a terminal, stackctl offers to install the
 [agent guidance](../ai/overview.md#agent-guidance). It asks once, and never asks an agent, a
@@ -97,7 +102,7 @@ Starts a headless session with no tie to the terminal, waits until the infra and
 are healthy, prints one line and exits `0`, leaving the session running:
 
 ```
-test session ready: pid 4242, control API on 14012, log /repo/node_modules/.stackctl/modes/test/logs/1794164978752-4242-1.log
+test session ready: pid 4242, control API on 14012, log /repo/node_modules/.stackctl/modes/test/sessions/1794164978752/logs.txt
 ```
 
 - **Progress goes to stderr**, so `$(…)` captures that line alone.
@@ -146,6 +151,28 @@ Other modes' sessions and [infra](../config/infra.md) are never touched.
 so and names the record: `node_modules/.stackctl/modes/<mode>/running.json`. Delete that file
 by hand if no session is running.
 
+## `stackctl wait`
+
+```bash
+stackctl --mode test --headless -s api   # in a background task
+stackctl --mode test wait                 # returns once it is ready
+stackctl --mode test run api test
+stackctl --mode test stop
+```
+
+Waits for the mode's session to start, then until its services and the infra are up and
+healthy, as [`startStack()`](./sdk.md#startstack) waits. Prints the session's pid, control API
+port and log, and exits `0`.
+
+| Option                | What it does                                                         |
+| --------------------- | -------------------------------------------------------------------- |
+| `--timeout <seconds>` | How long to wait, from the start to ready. Default `300`.            |
+
+- **Exits `1` with the reason** when a service stops while starting, the session ends, or the
+  timeout passes. With no session by then, it says none started.
+- **A service with `autostart: false`** isn't waited on, since it stays stopped.
+- **Read-only:** it never starts or stops anything.
+
 ## `stackctl reset`
 
 ```bash
@@ -153,9 +180,8 @@ stackctl --mode development reset
 ```
 
 Runs `stop`, then deletes the mode's state, `node_modules/.stackctl/modes/<mode>/`: its
-session record, saved selection, default logs and event log. `--mode` is required. Infra, other
-modes and logs written to a custom `--log-dir` are left alone. The reset writes its own lines to a
-new event log.
+session record, saved selection and every session's folder. `--mode` is required. Infra and other
+modes are left alone. The reset writes its own lines to a new event log.
 
 ## `stackctl service`
 
@@ -192,8 +218,8 @@ services  backend   running, not ready
           worker    running, ready
 infra     db        running
           mail      running
-log       node_modules/.stackctl/modes/development/logs/1794424917144-86046-1.log
-events    node_modules/.stackctl/modes/development/events.log
+log       node_modules/.stackctl/modes/development/sessions/1794424917144/logs.txt
+events    node_modules/.stackctl/modes/development/sessions/1794424917144/events.jsonl
 
 last commands
   today 13:21:57  session-start  backend, frontend, worker, headless
@@ -203,21 +229,24 @@ last commands
 
 - **The session** is the mode's running one, checked as
   [Finding the port](./control-api.md#finding-the-port) does. Without one it says so.
-- **The last commands** are the event log's last 10 commands and lifecycle entries, each command's
-  two lines as one row. See [Events](./events.md).
+- **The last commands** are the last 10 commands and lifecycle entries of the session's event log,
+  or the latest session's, each command's two lines as one row. See [Events](./events.md).
 - **Read-only, and exits `0`** with a session or without.
 
 ## `stackctl events`
 
 ```bash
-stackctl events          # the mode's event log, one JSON object per line
+stackctl events          # the session's event log, one JSON object per line
 stackctl events -n 20    # its last 20 lines
 stackctl events -f       # print them, then follow
 stackctl events --path   # print its path
 ```
 
-The lines are [the event log's](./events.md), as they are in the file, for `jq`. It reads the
-file, a session running or not, and never asks the session anything.
+The lines are [the event log's](./events.md), as they are in the file, for `jq`: the running
+session's, else the latest one's. It never asks the session anything.
+
+- **`-f` stops when the next session starts**, exiting `0` with a note on stderr: run it again to
+  follow that one.
 
 ## `stackctl show-config`
 
@@ -249,11 +278,8 @@ stackctl run [target] <script> [-- args...]
 ```
 
 Run one command, or one `package.json` script or Makefile target, in a target's directory
-with its environment. The [One-off commands](../guide/commands.md) guide covers targets.
-
-| Option            | What it does                                              |
-| ----------------- | --------------------------------------------------------- |
-| `--log-dir <dir>` | Where to write the call's log file.                       |
+with its environment. The [One-off commands](../guide/commands.md) guide covers targets. Its log
+goes in the latest session's folder, under `commands/`.
 
 - **`exec` needs the `--`.** Everything after it is the command.
 - **`run` forwards what follows `--`** to the script. A script that doesn't exist is an error.
@@ -270,11 +296,11 @@ stackctl logs --path   # print its path
 
 | Option         | What it does                                                         |
 | -------------- | -------------------------------------------------------------------- |
-| `-f, --follow` | Stream new lines until Ctrl+C. The session keeps running.            |
+| `-f, --follow` | Stream new lines until Ctrl+C or the next session starts.            |
 | `--path`       | Print the log file's path instead of its contents.                   |
 
-Read-only: it never starts or stops anything. It finds the log by asking the running session,
-else from the mode's session record, else the newest file in the mode's log directory.
+Read-only: it never starts or stops anything. It shows the running session's log, else the
+latest session's. A one-off command's log is never it.
 
 ## `stackctl infra`
 
@@ -368,9 +394,11 @@ node_modules/.stackctl/
   modes/<mode>/
     running.json        the session record: pid, control-API port, log file
     selection.json      the selection --last-answers reuses
-    events.log          the event log: what acted on the stack (see Events)
     trusted.pem         the NODE_EXTRA_CA_CERTS bundle
-    logs/               session and one-off command logs
+    sessions/<id>/      one per session, named by its start, kept 7 days
+      logs.txt          the session's log
+      events.jsonl      what acted on the stack (see Events)
+      commands/         the logs of exec and run
 ```
 
 ## Exit codes

@@ -150,7 +150,7 @@ export function oneOffEnvResolution(
 /**
  * What the hidden resolver command writes: the command (`null` when asked for an environment
  * only), the target's environment as `resolveEnv` returns it, and the log directory the command
- * tees to — the workspace's, for the mode.
+ * tees to: the `commands/` folder of the mode's current session.
  */
 export interface OneOffResolution extends SerializedEnvResolution {
   spec: OneOffSpec | null;

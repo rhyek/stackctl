@@ -4,5 +4,5 @@
     "oxfmt --disable-nested-config --no-error-on-unmatched-pattern"
   ],
   "*.{js,mjs,cjs,json,jsonc,yaml,yml,css}": "oxfmt --disable-nested-config --no-error-on-unmatched-pattern",
-  "*.md": "node scripts/format-docs-snippets.ts"
+  "*.md": "node maintenance/scripts/format-docs-snippets.ts"
 }

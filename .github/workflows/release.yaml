@@ -41,7 +41,7 @@ jobs:
 
       - name: Read the version from CHANGELOG.md
         id: version
-        run: node scripts/changelog.ts version >> "$GITHUB_OUTPUT"
+        run: node maintenance/scripts/changelog.ts version >> "$GITHUB_OUTPUT"
 
       - name: Check what's already released
         id: state
@@ -107,8 +107,8 @@ jobs:
       - run: pnpm build
 
       # The published source maps must name the package's own sources, never a path on the build
-      # machine (scripts/check-source-maps.ts).
-      - run: node scripts/check-source-maps.ts
+      # machine (maintenance/scripts/check-source-maps.ts).
+      - run: node maintenance/scripts/check-source-maps.ts
 
       - name: Copy LICENSE into the package
         run: cp LICENSE packages/stackctl/LICENSE
@@ -150,7 +150,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node scripts/changelog.ts notes > "$RUNNER_TEMP/release-notes.md"
+          node maintenance/scripts/changelog.ts notes > "$RUNNER_TEMP/release-notes.md"
           flags=()
           if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
           gh release create "$TAG" \

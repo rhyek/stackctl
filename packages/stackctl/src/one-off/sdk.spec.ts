@@ -199,9 +199,12 @@ describe('exec()', () => {
     }
   });
 
-  test("tees to a log file in the workspace's log directory", async () => {
-    const logDir = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'logs');
-    const before = new Set(fs.existsSync(logDir) ? fs.readdirSync(logDir) : []);
+  test("tees to a log file in the latest session's commands/", async () => {
+    const sessions = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+    const latest = String(Date.now() + 60_000);
+    const logDir = path.join(sessions, latest, 'commands');
+    fs.mkdirSync(path.join(sessions, latest), { recursive: true });
+    const before = new Set<string>();
     await inDir('/', () =>
       sdk.exec({ workspaceDir: ws, command: ['echo', 'logged-by-sdk'], stdio: 'pipe' }),
     );

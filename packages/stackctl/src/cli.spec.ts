@@ -399,13 +399,16 @@ describe('stackctl exec', () => {
     expect((await stackctl(['exec', 'app', '--', 'sh', '-c', 'exit 5'])).exitCode).toBe(5);
   });
 
-  test("writes its two lines to the mode's event log: where, what (a URL's password masked), its exit", async () => {
-    // oxfmt-ignore
-    const log = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'events.log');
-    fs.rmSync(log, { force: true });
+  test("writes its two lines to the latest session's event log: where, what (a URL's password masked), its exit", async () => {
+    // With no session folder yet, the command makes one of its own, as a session would.
+    const sessions = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+    fs.rmSync(sessions, { recursive: true, force: true });
     const asked = ['sh', '-c', 'exit 3', 'postgres://app:s3cret@db/app'];
     await stackctl(['exec', 'app', '--', ...asked], { env: { STACKCTL_STARTED_BY_AGENT: '0' } });
-    const lines = fs.readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>); // oxfmt-ignore
+    const [folder] = fs.readdirSync(sessions);
+    expect(folder).toMatch(/^\d+$/);
+    expect(fs.readdirSync(path.join(sessions, folder!, 'commands'))).toHaveLength(1);
+    const lines = fs.readFileSync(path.join(sessions, folder!, 'events.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>); // oxfmt-ignore
     const command = ['sh', '-c', 'exit 3', 'postgres://app:***@db/app'];
     expect(lines).toMatchObject([
       { type: 'one-off-command', phase: 'begin', kind: 'exec', service: 'app', command, by: { kind: 'cli', cwd: '.', agent: false } }, // oxfmt-ignore
@@ -459,6 +462,82 @@ describe('stackctl infra', () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toMatch(/unknown command/);
     expect(result.stderr).not.toContain(NO_INFRA);
+  });
+});
+
+describe('-f follows one session', () => {
+  const sessions = () => path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions'); // oxfmt-ignore
+  // Later than any session another test makes, so these two are the mode's latest.
+  const followed = String(Date.now() + 1e9);
+  const next = String(Number(followed) + 1);
+  afterEach(() => {
+    for (const id of [followed, next]) {
+      fs.rmSync(path.join(sessions(), id), { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    { command: 'events', file: 'events.jsonl', first: '{"n":1}', second: '{"n":2}' },
+    { command: 'logs', file: 'logs.txt', first: 'line one', second: 'line two' },
+  ])(
+    '$command -f follows the session it began with, and stops when the next one starts',
+    async ({ command, file: name, first, second }) => {
+      const file = path.join(sessions(), followed, name);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${first}\n`);
+      const child = execa('node', [cli, command, '-f'], { cwd: ws, reject: false, timeout: 4_000 }); // oxfmt-ignore
+      let out = '';
+      await new Promise<void>((resolve) => {
+        child.stdout!.on('data', (chunk: Buffer) => {
+          out += String(chunk);
+          if (out.includes(first)) {
+            resolve();
+          }
+        });
+      });
+      // A line the followed session gets just before the next one starts is still printed.
+      fs.appendFileSync(file, `${second}\n`);
+      fs.mkdirSync(path.join(sessions(), next), { recursive: true });
+      const result = await child;
+      expect(result.timedOut).toBe(false);
+      expect(result.stdout.split('\n')).toEqual([first, second]);
+      expect(result.stderr).toBe(`stackctl ${command}: the development session exited; run stackctl ${command} -f again to follow the next one.`); // oxfmt-ignore
+      expect(result.exitCode).toBe(0);
+    },
+  );
+});
+
+describe('a coding agent names the mode', () => {
+  const agent = { STACKCTL_STARTED_BY_AGENT: '1' };
+
+  test('a command with no mode is refused, saying how to name it', async () => {
+    const result = await stackctl(['status'], { env: agent });
+    expect(result.stderr).toBe(
+      'stackctl: a coding agent names the mode on every command, development included: stackctl --mode development status. ' +
+        'STACKCTL_MODE=<mode> names it too. (Not an agent? Set STACKCTL_STARTED_BY_AGENT=0.)',
+    );
+    expect(result.stdout).toBe('');
+    expect(result.exitCode).toBe(1);
+  });
+
+  test('so is one in CI, whose default mode is test', async () => {
+    const result = await stackctl(['show-config'], { env: { ...agent, CI: 'true' } });
+    expect(result.stderr).toContain('stackctl --mode development show-config');
+    expect(result.exitCode).toBe(1);
+  });
+
+  test.each([
+    { how: '--mode', args: ['--mode', 'development', 'status'], env: agent },
+    { how: 'STACKCTL_MODE', args: ['status'], env: { ...agent, STACKCTL_MODE: 'development' } },
+  ])('a mode named by $how runs', async ({ args, env }) => {
+    const result = await stackctl(args, { env });
+    expect(result.stderr).toBe('');
+    expect(result.exitCode).toBe(0);
+  });
+
+  test('--version and help need no mode', async () => {
+    expect((await stackctl(['--version'], { env: agent })).exitCode).toBe(0);
+    expect((await stackctl(['status', '--help'], { env: agent })).exitCode).toBe(0);
   });
 });
 
@@ -1098,8 +1177,6 @@ describe('startStack()', () => {
   type StackModule = typeof import('./stack.js');
   /** The compiled module, so the CLI it runs is the one compiled beside it. */
   const load = () => import(pathToFileURL(path.join(buildDir, 'stack.js')).href) as Promise<StackModule>; // oxfmt-ignore
-  // Its own log directory: the logfiles here would otherwise be the newest the `logs` tests find.
-  const logDir = () => path.join(ws, 'stack-logs');
   const record = () => path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'running.json'); // oxfmt-ignore
   const alive = (pid: number) => {
     try {
@@ -1156,20 +1233,29 @@ describe('startStack()', () => {
     }
   };
 
-  const startStack = async (services: string[], extra: { killOthers?: boolean } = {}) => {
+  const startStack = async (
+    services: string[],
+    extra: { killOthers?: boolean; env?: Record<string, string> } = {},
+  ) => {
     const { startStack, stackEnvironment } = await load();
+    const { env, ...options } = extra;
     const stack = await startStack({
       services,
       workspaceDir: ws,
-      logDir: logDir(),
-      env: stackEnvironment(),
-      ...extra,
+      env: { ...stackEnvironment(), ...env },
+      ...options,
     });
     stacks.push(stack);
     // Forked by this process.
     await keep(stack.pid, process.pid);
     return stack;
   };
+
+  test("starts a coding agent's suite's stack in the mode its code chose, here none", async () => {
+    const stack = await startStack(['wide'], { env: { STACKCTL_STARTED_BY_AGENT: '1' } });
+    expect(stack).toMatchObject({ session: 'started', mode: 'development', modeSource: 'default' }); // oxfmt-ignore
+    await stack.stop();
+  }, 30_000);
 
   test('starts a stack, and stop() ends its session and deletes its record', async () => {
     const stack = await startStack(['wide']);
@@ -1207,7 +1293,7 @@ describe('startStack()', () => {
 
   test("throws stackctl's error, after quitting its session", async () => {
     await expect(startStack(['broken'])).rejects.toThrow(
-      /broken stopped while starting.*\(log: .*\.log\)/,
+      /broken stopped while starting.*\(log: .*\/sessions\/\d+\/logs\.txt\)/,
     );
     // Nothing was left running: the next call starts a session of its own.
     expect((await startStack(['idle'])).session).toBe('started');
@@ -1245,7 +1331,6 @@ const { startStack, stackEnvironment } = await import(process.argv[2]);
 const stack = await startStack({
   services: ['idle'],
   workspaceDir: process.argv[3],
-  logDir: process.argv[4],
   env: stackEnvironment(),
 });
 console.log(JSON.stringify({ ready: stack.pid }));
@@ -1260,7 +1345,7 @@ setInterval(() => {}, 1e9);
       fs.writeFileSync(helper, HELPER);
       const parent = execa(
         'node',
-        [helper, pathToFileURL(path.join(buildDir, 'stack.js')).href, ws, logDir()],
+        [helper, pathToFileURL(path.join(buildDir, 'stack.js')).href, ws],
         { cwd: ws, reject: false },
       );
       track(parent);
@@ -1317,7 +1402,7 @@ setInterval(() => {}, 1e9);
 
   test('a session started from a shell has no parent to end with', async () => {
     // No channel, so nothing to end with: it runs until it is told to stop.
-    const child = execa('node', [cli, '--headless', '-s', 'idle', '--log-dir', logDir()], {
+    const child = execa('node', [cli, '--headless', '-s', 'idle'], {
       cwd: ws,
       reject: false,
     });
@@ -1329,6 +1414,125 @@ setInterval(() => {}, 1e9);
     await child;
     expect(fs.existsSync(record())).toBe(false);
   }, 60_000);
+
+  test('a session takes the id `start --detach` hands it, and its services never see it', async () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-cli-handed-')));
+    try {
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'handedroot', type: 'module' })); // oxfmt-ignore
+      fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
+      fs.writeFileSync(
+        path.join(dir, 'stackctl.config.ts'),
+        "import { defineConfig } from 'stackctl';\nexport default defineConfig({ serviceRootDir: 'packages', services: { tell: {} } });\n", // oxfmt-ignore
+      );
+      const standIn = path.join(dir, 'node_modules', 'stackctl');
+      fs.mkdirSync(standIn, { recursive: true });
+      fs.symlinkSync(path.join(packageDir, 'package.json'), path.join(standIn, 'package.json'));
+      fs.symlinkSync(buildDir, path.join(standIn, 'dist'));
+      const tell = path.join(dir, 'packages', 'tell');
+      fs.mkdirSync(tell, { recursive: true });
+      // The service prints the variable as it sees it, then idles.
+      const dev = script("console.log('handed='+(process.env.STACKCTL_SESSION_ID??'none'));setInterval(()=>{},1e9)"); // oxfmt-ignore
+      fs.writeFileSync(path.join(tell, 'package.json'), JSON.stringify({ name: 'tell', scripts: { dev } })); // oxfmt-ignore
+
+      const id = String(Date.now() - 5000);
+      const child = execa('node', [cli, '--headless', '-s', 'tell'], {
+        cwd: dir,
+        env: { STACKCTL_SESSION_ID: id },
+        reject: false,
+      });
+      track(child);
+      let output = '';
+      child.stdout!.on('data', (chunk: Buffer) => (output += chunk.toString()));
+      child.stderr!.on('data', (chunk: Buffer) => (output += chunk.toString()));
+      expect(await until(() => output.includes('handed=')), output).toBe(true);
+      const recorded = path.join(dir, 'node_modules', '.stackctl', 'modes', 'development', 'running.json'); // oxfmt-ignore
+      expect(JSON.parse(fs.readFileSync(recorded, 'utf8'))).toMatchObject({ sessionId: id });
+      const folder = path.join(dir, 'node_modules', '.stackctl', 'modes', 'development', 'sessions', id); // oxfmt-ignore
+      expect(fs.readFileSync(path.join(folder, 'logs.txt'), 'utf8')).toContain('handed=none');
+      expect(output).toContain('handed=none');
+      child.kill('SIGTERM');
+      await child;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  describe('stackctl wait', () => {
+    /** A workspace of its own with these services, each `dev` a script. */
+    function waitWorkspace(services: Record<string, { dev: string; autostart?: boolean }>) {
+      const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-cli-wait-')));
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'waitroot', type: 'module' })); // oxfmt-ignore
+      fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
+      const entries = Object.entries(services).map(([name, { autostart }]) => `${name}: ${autostart === undefined ? '{}' : `{ autostart: ${String(autostart)} }`}`); // oxfmt-ignore
+      fs.writeFileSync(
+        path.join(dir, 'stackctl.config.ts'),
+        `import { defineConfig } from 'stackctl';\nexport default defineConfig({ serviceRootDir: 'packages', services: { ${entries.join(', ')} } });\n`, // oxfmt-ignore
+      );
+      const standIn = path.join(dir, 'node_modules', 'stackctl');
+      fs.mkdirSync(standIn, { recursive: true });
+      fs.symlinkSync(path.join(packageDir, 'package.json'), path.join(standIn, 'package.json'));
+      fs.symlinkSync(buildDir, path.join(standIn, 'dist'));
+      for (const [name, { dev }] of Object.entries(services)) {
+        fs.mkdirSync(path.join(dir, 'packages', name), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'packages', name, 'package.json'), JSON.stringify({ name, scripts: { dev } })); // oxfmt-ignore
+      }
+      return dir;
+    }
+
+    const idle = script('setInterval(()=>{},1e9)');
+
+    test('waits for a session started after it, and leaves alone a service that never autostarts', async () => {
+      const dir = waitWorkspace({ idle: { dev: idle }, later: { dev: idle, autostart: false } });
+      try {
+        const wait = execa('node', [cli, 'wait', '--timeout', '30'], { cwd: dir, reject: false });
+        track(wait);
+        // Long enough for `wait` to have found no session.
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const session = execa('node', [cli, '--headless', '-s', 'idle', '-s', 'later'], { cwd: dir, reject: false }); // oxfmt-ignore
+        track(session);
+        let ended = false;
+        void session.then(() => (ended = true));
+        const result = await wait;
+        expect(result.stderr.split('\n')).toEqual(['stackctl: waiting for idle to be healthy', 'stackctl: everything is healthy']); // oxfmt-ignore
+        expect(result.stdout).toMatch(/^development session ready: pid \d+, control API on \d+, log .*\/sessions\/\d+\/logs\.txt$/); // oxfmt-ignore
+        expect(result.exitCode).toBe(0);
+        // Read-only: the session is still up.
+        expect(ended).toBe(false);
+        session.kill('SIGTERM');
+        await session;
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
+
+    test('fails at once when a service stops while the session starts', async () => {
+      const dir = waitWorkspace({ crash: { dev: script('setTimeout(()=>process.exit(3),300)') } });
+      try {
+        const session = execa('node', [cli, '--headless', '-s', 'crash'], { cwd: dir, reject: false }); // oxfmt-ignore
+        track(session);
+        const started = Date.now();
+        const result = await execa('node', [cli, 'wait', '--timeout', '30'], { cwd: dir, reject: false }); // oxfmt-ignore
+        expect(lastLine(result.stderr)).toMatch(/^stackctl: crash stopped while starting; see .*\/sessions\/\d+\/logs\.txt$/); // oxfmt-ignore
+        expect(result.exitCode).toBe(1);
+        expect(Date.now() - started).toBeLessThan(20_000);
+        session.kill('SIGTERM');
+        await session;
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
+
+    test('says no session started when none did by the timeout', async () => {
+      const dir = waitWorkspace({ idle: { dev: idle } });
+      try {
+        const result = await execa('node', [cli, 'wait', '--timeout', '1'], { cwd: dir, reject: false }); // oxfmt-ignore
+        expect(result.stderr).toBe('stackctl: no development session started within 1s');
+        expect(result.exitCode).toBe(1);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }, 30_000);
+  });
 });
 
 describe.skipIf(process.platform === 'win32')(
@@ -1499,8 +1703,6 @@ describe.skipIf(process.platform === 'win32')(
 );
 
 describe('start --detach', () => {
-  // Its own log directory: the logfiles here would otherwise be the newest the `logs` tests find.
-  const logDir = () => path.join(ws, 'detach-logs');
   const recordOf = (mode: string) => path.join(ws, 'node_modules', '.stackctl', 'modes', mode, 'running.json'); // oxfmt-ignore
   /** Not an agent, whatever runs the suite: the refusal has a test of its own. */
   const human = { STACKCTL_STARTED_BY_AGENT: '0' };
@@ -1543,9 +1745,9 @@ describe('start --detach', () => {
     return { mode: mode!, pid: Number(pid), port: Number(port), logFile: logFile! };
   };
 
-  /** `stackctl <args> start --detach --log-dir … <rest>`. */
+  /** `stackctl <args> start --detach <rest>`. */
   const detach = (rest: string[], env: Record<string, string> = human, before: string[] = []) =>
-    stackctl([...before, 'start', '--detach', '--log-dir', logDir(), ...rest], { env });
+    stackctl([...before, 'start', '--detach', ...rest], { env });
 
   test('returns once ready, and the session still answers after the command has exited', async () => {
     const result = await detach(['-s', 'idle']);
@@ -1574,11 +1776,11 @@ describe('start --detach', () => {
   test('a $(…) capture returns, with the one line it prints', async () => {
     const result = await execa(
       'sh',
-      ['-c', 'out=$(node "$0" --mode test start -d -s idle --log-dir "$1"); echo "$out"', cli, logDir()], // oxfmt-ignore
+      ['-c', 'out=$(node "$0" --mode test start -d -s idle); echo "$out"', cli],
       { cwd: ws, env: human, reject: false, timeout: 60_000 },
     );
     expect(result.exitCode, result.stderr).toBe(0);
-    const match = /^test session ready: pid (\d+), control API on (\d+), log (.+\.log)$/.exec(result.stdout); // oxfmt-ignore
+    const match = /^test session ready: pid (\d+), control API on (\d+), log (.+\/sessions\/\d+\/logs\.txt)$/.exec(result.stdout); // oxfmt-ignore
     expect(match, result.stdout).not.toBeNull();
     await keep('test', Number(match![1]));
     expect(JSON.parse(fs.readFileSync(recordOf('test'), 'utf8'))).toMatchObject({ pid: Number(match![1]), port: Number(match![2]) }); // oxfmt-ignore
@@ -1590,7 +1792,7 @@ describe('start --detach', () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe('');
     expect(result.stderr).toMatch(/start --detach failed: broken stopped while starting/);
-    expect(result.stderr).toMatch(/\nlog: .*\.log\n/);
+    expect(result.stderr).toMatch(/\nlog: .*\/sessions\/\d+\/logs\.txt\n/);
     expect(result.stderr).toContain('[stackctl] [INFO] mode development (default)');
     expect(fs.existsSync(recordOf('development'))).toBe(false);
     expect((await stackctl(['--mode', 'development', 'stop'])).stdout).toBe('No development stackctl session is running.'); // oxfmt-ignore
@@ -1614,7 +1816,11 @@ describe('start --detach', () => {
   }, 90_000);
 
   test('SIGINT while waiting: exit 130, and nothing left', async () => {
-    const child = execa('node', [cli, 'start', '--detach', '-s', 'slow', '--log-dir', logDir()], { cwd: ws, env: human, reject: false }); // oxfmt-ignore
+    const child = execa('node', [cli, 'start', '--detach', '-s', 'slow'], {
+      cwd: ws,
+      env: human,
+      reject: false,
+    });
     // Once the session is up, and waiting on slow.
     expect(await until(() => fs.existsSync(recordOf('development')), 30_000)).toBe(true);
     const { pid } = JSON.parse(fs.readFileSync(recordOf('development'), 'utf8')) as { pid: number };
@@ -1629,7 +1835,11 @@ describe('start --detach', () => {
   }, 90_000);
 
   test('the command killed outright while it waits: the session quits with it', async () => {
-    const child = execa('node', [cli, 'start', '--detach', '-s', 'slow', '--log-dir', logDir()], { cwd: ws, env: human, reject: false }); // oxfmt-ignore
+    const child = execa('node', [cli, 'start', '--detach', '-s', 'slow'], {
+      cwd: ws,
+      env: human,
+      reject: false,
+    });
     expect(await until(() => fs.existsSync(recordOf('development')), 30_000)).toBe(true);
     const { pid } = JSON.parse(fs.readFileSync(recordOf('development'), 'utf8')) as { pid: number };
     await keep('development', pid);
@@ -1643,20 +1853,24 @@ describe('start --detach', () => {
 
   test('is refused for a coding agent outside CI, and allowed in CI or with the override', async () => {
     const agent = { CLAUDECODE: '1', CI: '', STACKCTL_STARTED_BY_AGENT: '' };
-    const refused = await detach(['-s', 'idle'], agent);
+    // An agent names the mode, as it must.
+    const refused = await detach(['-s', 'idle', '--mode', 'development'], agent);
     expect(refused.exitCode).toBe(1);
     expect(refused.stderr).toContain('start --detach is for CI');
     expect(refused.stderr).toContain('STACKCTL_STARTED_BY_AGENT=0');
     expect(fs.existsSync(recordOf('development'))).toBe(false);
 
-    // In CI the mode is the CI default.
-    const ci = await detach(['-s', 'idle'], { ...agent, CI: 'true' });
+    // In CI too: the CI default is a default.
+    const unnamed = await detach(['-s', 'idle'], { ...agent, CI: 'true' });
+    expect(unnamed.exitCode).toBe(1);
+    expect(unnamed.stderr).toContain('stackctl --mode development start');
+    const ci = await detach(['-s', 'idle', '--mode', 'test'], { ...agent, CI: 'true' });
     expect(ci.exitCode, ci.stderr).toBe(0);
     const inCi = readyLine(ci.stdout);
     await keep('test', inCi.pid);
     expect(inCi.mode).toBe('test');
     const ciStatus = (await (await fetch(`http://127.0.0.1:${String(inCi.port)}/query/status`)).json()) as { modeSource: string }; // oxfmt-ignore
-    expect(ciStatus.modeSource).toBe('ci');
+    expect(ciStatus.modeSource).toBe('flag');
 
     const overridden = await detach(['-s', 'idle'], { ...agent, STACKCTL_STARTED_BY_AGENT: '0' }); // oxfmt-ignore
     expect(overridden.exitCode, overridden.stderr).toBe(0);
@@ -1689,19 +1903,31 @@ describe('what a command loads', () => {
     expectNotLoaded(packages, HEAVY);
   });
 
-  test('logs --path finds the newest logfile without loading the config', async () => {
+  /** A session that has ended, its log saying `text`: the latest, with no session running. */
+  const endedSession = (text: string) => {
+    const folder = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions', String(Date.now() + 60_000)); // oxfmt-ignore
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'logs.txt'), `${text}\n`);
+  };
+
+  test("logs --path finds the latest session's log without loading the config", async () => {
+    endedSession('ended');
     await stackctl(['exec', 'app', '--', 'true']);
     const { result, packages, evaluatedConfig } = await traced(['logs', '--path'], { cwd: app });
-    expect(result.stdout).toMatch(/node_modules\/\.stackctl\/modes\/development\/logs\/.+\.log$/);
+    expect(result.stdout).toMatch(
+      /node_modules\/\.stackctl\/modes\/development\/sessions\/\d+\/logs\.txt$/,
+    );
     expect(result.exitCode).toBe(0);
     expect(evaluatedConfig).toBe(false);
     expectNotLoaded(packages, HEAVY);
   });
 
-  test('logs prints that logfile', async () => {
-    await stackctl(['exec', 'app', '--', 'echo', 'in-the-log']);
+  test("logs prints that log, not a one-off command's", async () => {
+    endedSession('in-the-log');
+    await stackctl(['exec', 'app', '--', 'echo', 'from-a-one-off']);
     const result = await stackctl(['logs']);
     expect(result.stdout).toContain('in-the-log');
+    expect(result.stdout).not.toContain('from-a-one-off');
     expect(result.exitCode).toBe(0);
   });
 
@@ -1709,11 +1935,14 @@ describe('what a command loads', () => {
     await stackctl(['exec', 'app', '--', 'true']);
     const { result, packages, evaluatedConfig } = await traced(['--mode', 'development', 'reset']);
     expect(result.stdout).toBe(
-      'No development stackctl session is running.\nRemoved node_modules/.stackctl/modes/development/; its events.log starts again with this reset.',
+      'No development stackctl session is running.\nRemoved node_modules/.stackctl/modes/development/; its event log starts again with this reset.',
     );
     expect(result.exitCode).toBe(0);
     // Nothing of the mode's state is left but the event log the reset opened with its own line.
-    expect(fs.readdirSync(path.join(ws, 'node_modules', '.stackctl', 'modes', 'development'))).toEqual(['events.log']); // oxfmt-ignore
+    const sessions = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+    expect(fs.readdirSync(path.dirname(sessions))).toEqual(['sessions']);
+    const [folder] = fs.readdirSync(sessions);
+    expect(fs.readdirSync(path.join(sessions, folder!))).toEqual(['events.jsonl']);
     expect(evaluatedConfig).toBe(false);
     expectNotLoaded(packages, HEAVY);
   });

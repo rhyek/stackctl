@@ -1,26 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, test, expect, beforeAll, afterAll, vi } from 'vitest';
-import {
-  getStateDir,
-  getDefaultLogFile,
-  getLogDir,
-  pickNewestLog,
-  resolveLogFile,
-} from './log-files.js';
+import { describe, test, expect, beforeAll, afterAll } from 'vitest';
+import { getStateDir, getDefaultLogFile, resolveLogFile } from './log-files.js';
 
 describe('getStateDir', () => {
   test('getStateDir lives under node_modules/.stackctl', () => {
     expect(getStateDir().replace(/\\/g, '/')).toContain('node_modules/.stackctl');
-  });
-});
-
-describe('getLogDir', () => {
-  test("is the mode's own logs/, under modes/<mode>/", () => {
-    vi.stubEnv('STACKCTL_MODE', 'test');
-    expect(getLogDir()).toBe(path.join(process.cwd(), 'node_modules', '.stackctl', 'modes', 'test', 'logs')); // oxfmt-ignore
-    vi.unstubAllEnvs();
   });
 });
 
@@ -33,7 +19,7 @@ describe('getDefaultLogFile', () => {
 
   test('names the file by time, process and call', () => {
     const name = path.basename(getDefaultLogFile(logs));
-    expect(name).toMatch(new RegExp(`^\\d+-${String(process.pid)}-\\d+\\.log$`));
+    expect(name).toMatch(new RegExp(`^\\d+-${String(process.pid)}-\\d+\\.txt$`));
   });
 
   test('gives each call of a process its own name, within the same millisecond too', () => {
@@ -48,81 +34,42 @@ describe('getDefaultLogFile', () => {
   });
 });
 
-describe('pickNewestLog', () => {
-  let logs: string;
-  beforeAll(() => {
-    logs = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-logs-'));
-  });
-  afterAll(() => fs.rmSync(logs, { recursive: true, force: true }));
-
-  test('returns the most recently modified *.log by mtime', () => {
-    const older = path.join(logs, '1.log');
-    const newer = path.join(logs, '2.log');
-    fs.writeFileSync(older, 'a');
-    fs.writeFileSync(newer, 'b');
-    fs.utimesSync(older, new Date(1_000), new Date(1_000));
-    fs.utimesSync(newer, new Date(2_000), new Date(2_000));
-    expect(pickNewestLog(logs)).toBe(newer);
-  });
-
-  test('ignores non-.log files', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-logs-'));
-    fs.writeFileSync(path.join(dir, 'note.txt'), 'x');
-    expect(pickNewestLog(dir)).toBeNull();
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
-
-  test('returns null for a missing directory', () => {
-    expect(pickNewestLog(path.join(logs, 'does-not-exist'))).toBeNull();
-  });
-});
-
 describe('resolveLogFile', () => {
   test('prefers the live instance logfile when available', async () => {
     const file = await resolveLogFile({
-      liveLogFile: async () => '/live/current.log',
-      fallbackDir: '/logs',
-      newestLog: () => '/logs/fallback.log',
-    });
-    expect(file).toBe('/live/current.log');
-  });
-
-  test('prefers the recorded running.json logFile (when it exists) over scanning the dir', async () => {
-    const file = await resolveLogFile({
-      liveLogFile: async () => null,
-      recordedLogFile: '/logs/recorded.log',
-      fallbackDir: '/logs',
-      newestLog: () => '/logs/newest.log',
+      liveLogFile: async () => '/live/logs.txt',
+      recordedLogFile: '/recorded/logs.txt',
+      latestLogFile: '/latest/logs.txt',
       exists: () => true,
     });
-    expect(file).toBe('/logs/recorded.log');
+    expect(file).toBe('/live/logs.txt');
   });
 
-  test('skips the recorded logFile when it no longer exists, falling back to newest in dir', async () => {
+  test("prefers the record's logFile (when it exists) over the latest session's", async () => {
     const file = await resolveLogFile({
       liveLogFile: async () => null,
-      recordedLogFile: '/logs/gone.log',
-      fallbackDir: '/logs',
-      newestLog: () => '/logs/newest.log',
+      recordedLogFile: '/recorded/logs.txt',
+      latestLogFile: '/latest/logs.txt',
+      exists: () => true,
+    });
+    expect(file).toBe('/recorded/logs.txt');
+  });
+
+  test("falls back to the latest session's log when the recorded one is gone", async () => {
+    const file = await resolveLogFile({
+      liveLogFile: async () => null,
+      recordedLogFile: '/recorded/logs.txt',
+      latestLogFile: '/latest/logs.txt',
+      exists: (f) => f === '/latest/logs.txt',
+    });
+    expect(file).toBe('/latest/logs.txt');
+  });
+
+  test('returns null when no session left a log', async () => {
+    const file = await resolveLogFile({
+      liveLogFile: async () => null,
+      latestLogFile: '/latest/logs.txt',
       exists: () => false,
-    });
-    expect(file).toBe('/logs/newest.log');
-  });
-
-  test('falls back to the newest logfile in the dir when no live answer', async () => {
-    const file = await resolveLogFile({
-      liveLogFile: async () => null,
-      fallbackDir: '/logs',
-      newestLog: (dir) => `${dir}/newest.log`,
-    });
-    expect(file).toBe('/logs/newest.log');
-  });
-
-  test('returns null when neither the instance nor the dir yields a logfile', async () => {
-    const file = await resolveLogFile({
-      liveLogFile: async () => null,
-      fallbackDir: '/logs',
-      newestLog: () => null,
     });
     expect(file).toBeNull();
   });

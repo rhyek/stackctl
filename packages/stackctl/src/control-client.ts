@@ -23,7 +23,8 @@ export type SessionServiceStatus = 'running' | 'stopped' | 'waiting' | 'restarti
 export interface SessionStatus<P extends string = ServiceName> {
   pid: number;
   /**
-   * The session's id, random to each session: the same one its `modes/<mode>/running.json` records.
+   * The session's id, when it started in ms (an older stackctl's was a UUID): the same one its
+   * `modes/<mode>/running.json` records, and the name of its folder.
    * Null from an instance older than 1.0.0.
    */
   sessionId: string | null;
@@ -82,7 +83,7 @@ export interface SessionStatus<P extends string = ServiceName> {
 
 /**
  * A line of `GET /events`, each one JSON object with a `type`: first `snapshot`, the same as
- * `GET /query/status`; then every line of the mode's event log as it is written (an
+ * `GET /query/status`; then every line of the session's event log as it is written (an
  * {@link EventLine}: a state change, a command, the session's own lifecycle), by the session or
  * by another stackctl process; and a `heartbeat` every {@link EVENTS_HEARTBEAT_MS} whatever else
  * happens, with the session's clock in ms. A client that switches on `type` ignores the ones it

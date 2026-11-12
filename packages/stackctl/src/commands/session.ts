@@ -3,8 +3,9 @@ import { getLoadedConfig } from '../config.js';
 import { currentMode } from '../env-base.js';
 import { findSession, unresponsiveMessage } from '../find-session.js';
 import { findConfigPath } from '../load-config.js';
-import { getDefaultLogFile } from '../log-files.js';
 import { renderAppInProduction } from '../render-app-production.js';
+import { sessionId } from '../running.js';
+import { sessionLogPath } from '../session-files.js';
 import { runHeadless } from '../session/headless.js';
 import { buildSessionPlan } from '../session/plan.js';
 import { Session } from '../session/session.js';
@@ -43,7 +44,7 @@ async function forkedSessionRefusal(
 
 /** Starts the session the options ask for. It ends by exiting the process. */
 export async function runDevSession(opts: StartOptions): Promise<void> {
-  const logFile = getDefaultLogFile(opts.logDir);
+  const logFile = sessionLogPath(process.cwd(), currentMode(), sessionId());
   const configPath =
     findConfigPath(process.cwd()) ?? path.join(process.cwd(), 'stackctl.config.ts');
 

@@ -36,8 +36,8 @@ export default defineConfig({
  * - **`guidance: false`** installs none of it: the postinstall's choice, since an install
  *   shouldn't put files in a repo unasked.
  *
- * Does NOT prompt for a log location — each run writes a fresh timestamped log under
- * `node_modules/.stackctl/`, and the directory is only overridable via the `--log-dir` CLI flag.
+ * Does NOT prompt for a log location: each session writes its log in a folder of its own under
+ * `node_modules/.stackctl/modes/<mode>/sessions/`.
  */
 export async function runInit(
   opts: {

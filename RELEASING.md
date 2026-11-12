@@ -29,8 +29,8 @@ Publishing uses npm **trusted publishing** (OIDC): no npm token is stored anywhe
    label, `beta`, and marked as a prerelease on GitHub, so `npm install stackctl` keeps
    resolving to the latest stable version. A stable version goes to `latest`.
 
-2. Open the pull request. CI's `check` job runs `node scripts/changelog.ts check`, which fails
-   if the top section is empty, its version isn't newer than the latest release, or it adds
+2. Open the pull request. CI's `check` job runs `node maintenance/scripts/changelog.ts check`,
+   which fails if the top section is empty, its version isn't newer than the latest release, or it adds
    an entry to a version already released (rewording one, or fixing its link, is fine). A
    new entry always goes under a new heading. It also fails if any link in `CHANGELOG.md`
    points at a file or heading that doesn't exist, as one does after a page moves.
@@ -91,3 +91,8 @@ until the package exists on npm and trusts it.
 5. **Limit the `release` environment to `main`** (Settings → Environments → `release` →
    Deployment branches and tags → Selected branches → `main`). The environment appears after
    the workflow's first run.
+6. **Delete a pull request's branch when it merges:**
+
+   ```sh
+   gh api repos/rhyek/stackctl --method PATCH -F delete_branch_on_merge=true
+   ```

@@ -2,6 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Command, Option } from 'commander';
+import { startedByAgent } from './agent-detection.js';
+import { agentModeRefusal } from './agent-mode.js';
 import type { StartOptions } from './commands/default.js';
 import { rootOptionsRefusal } from './commands/root-options.js';
 import {
@@ -17,6 +19,7 @@ import {
 import { exitOnFatalError } from './errors.js';
 import { takeHandedBy } from './event-log.js';
 import { passthroughArgs } from './infra/argv.js';
+import { takeHandedSessionId } from './running.js';
 // Records, as it loads, the environment and directory the process started with, which this file
 // changes before a session starts over from them (see relaunch.ts).
 import { relaunchWithCappedYoungGeneration } from './relaunch.js';
@@ -76,6 +79,17 @@ dropInjectedEnv();
 // line); a stackctl this one starts resolves its own, `env`, from the `STACKCTL_MODE` it inherits.
 try {
   const { mode, source } = resolveMode(process.argv);
+  // A coding agent never runs a command in a mode it didn't name (see agent-mode.ts).
+  const refusal = agentModeRefusal({
+    agent: startedByAgent(),
+    source,
+    forked: process.channel !== undefined,
+    argv: process.argv,
+  });
+  if (refusal) {
+    console.error(refusal);
+    process.exit(1);
+  }
   process.env.STACKCTL_MODE = mode;
   publishModeSource(source);
 } catch (err) {
@@ -91,6 +105,8 @@ process.env.STACKCTL_CWD = INVOCATION_CWD;
 delete process.env.STACKCTL_WORKSPACE_DIR;
 // A session that ran this command handed over who asked; nothing this runs may pass that on.
 takeHandedBy();
+// The id `start --detach` handed the session it starts: the session takes it, its services don't.
+takeHandedSessionId();
 
 /**
  * Very early step (runs for every command): find the workspace (`--workspace-dir` exactly, else the
@@ -132,15 +148,13 @@ function collect(value: string, previous: string[]): string[] {
 interface OneOffFlags {
   /** Refused: the target is a positional argument (see {@link refuseServiceOption}). */
   service?: string;
-  logDir?: string;
 }
 
-/** Where `exec` and `run` were invoked, and their `--log-dir`. */
-const oneOffContext = ({ logDir }: OneOffFlags) => ({
+/** Where `exec` and `run` were invoked. */
+const oneOffContext = (_flags: OneOffFlags) => ({
   invocationCwd: INVOCATION_CWD,
   // Validated by anchorAtWorkspaceRoot already.
   workspaceDirGiven: resolveWorkspaceDirArg(process.argv) !== undefined,
-  logDir,
 });
 
 /**
@@ -172,7 +186,7 @@ function refuseServiceOption(command: 'exec' | 'run', flags: OneOffFlags): void 
 // `exec` for why both).
 const MODE_FLAGS = '-m, --mode <name>';
 const MODE_HELP =
-  'environment mode selecting the .env.<mode> files to load (default: $STACKCTL_MODE, else "test" in CI, else "development")';
+  'environment mode selecting the .env.<mode> files to load (default: $STACKCTL_MODE, else "test" in CI, else "development"); a coding agent must name it on every command, development included';
 
 // `--workspace-dir`, declared like `--mode`. Read from raw argv before Commander parses (the
 // workspace is located first); the declaration is for --help and validation.
@@ -180,10 +194,9 @@ const WORKSPACE_DIR_FLAGS = '--workspace-dir <dir>';
 const WORKSPACE_DIR_HELP =
   'the directory holding stackctl.config.ts, instead of the nearest one at or above the current directory';
 
-// `-s` and `--log-dir`, declared on each command that takes them: `start`, `exec` and `run`. On
-// `exec` and `run`, `-s` is hidden and refused: their target is a positional argument.
+// `-s`, declared on each command that takes it: `start`, `exec` and `run`. On `exec` and `run`, it
+// is hidden and refused: their target is a positional argument.
 const SERVICE_FLAGS = '-s, --service <name>';
-const LOG_DIR_FLAGS = '--log-dir <dir>';
 
 const program = new Command()
   .name('stackctl')
@@ -253,10 +266,6 @@ program
     'run without the TUI, streaming logs to stdout (needs -s or --last-answers)',
   )
   .option('--last-answers', 'skip the selector and reuse the last saved selection', false)
-  .option(
-    LOG_DIR_FLAGS,
-    'write the timestamped session log into this directory (default: node_modules/.stackctl/modes/<mode>/logs/)',
-  )
   .option(
     '--kill-others',
     "quit the stackctl session already running for this project in the same mode instead of asking (agents: don't pass this unprompted)",
@@ -333,6 +342,23 @@ program
   .action(async () => {
     const { runStop } = await import('./commands/stop.js');
     process.exit(await runStop(process.cwd()));
+  });
+
+program
+  .command('wait')
+  .description(
+    "wait until this workspace's session of the mode is ready, one started in the background: its services and infra up and healthy (read-only)",
+  )
+  .option(MODE_FLAGS, MODE_HELP) // see `exec`
+  .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
+  .option(
+    '--timeout <seconds>',
+    'how long to wait for the session to start and be ready (default: 300)',
+    Number,
+  )
+  .action(async (opts: { timeout?: number }) => {
+    const { runWait } = await import('./commands/wait.js');
+    process.exit(await runWait({ timeout: opts.timeout }));
   });
 
 // `service`: application services of the mode's running session (see `commands/service.ts`).
@@ -412,10 +438,6 @@ program
   // resolveMode already read it off raw argv; this declaration is for --help and validation.
   .option(MODE_FLAGS, MODE_HELP)
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
-  .option(
-    LOG_DIR_FLAGS,
-    'write its log into this directory (default: node_modules/.stackctl/modes/<mode>/logs/)',
-  )
   .addOption(new Option(SERVICE_FLAGS).hideHelp())
   .argument(
     '[target]',
@@ -449,10 +471,6 @@ program
   .usage('[options] [target] <script> [-- <args...>]')
   .option(MODE_FLAGS, MODE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
-  .option(
-    LOG_DIR_FLAGS,
-    'write its log into this directory (default: node_modules/.stackctl/modes/<mode>/logs/)',
-  )
   .addOption(new Option(SERVICE_FLAGS).hideHelp())
   // Commander can't put an optional argument before a required one, so the operands before `--`
   // are counted here: one is the script, two are the target and the script.
@@ -512,13 +530,13 @@ program
 program
   .command('logs')
   .description(
-    "print the logfile of the mode's dev session (queried from the running instance, else the newest under node_modules/.stackctl/modes/<mode>/logs/)",
+    "print the log of the mode's session: the running one, else the latest (node_modules/.stackctl/modes/<mode>/sessions/<id>/logs.txt)",
   )
   .option(MODE_FLAGS, MODE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .option(
     '-f, --follow',
-    'stream new lines live (native `tail -f`) instead of printing the file and exiting',
+    'print it, then its new lines as they are written, until the next session starts',
   )
   .option('--path', 'print the resolved logfile path instead of its contents, then exit')
   .action(async (opts: { follow?: boolean; path?: boolean }) => {
@@ -542,12 +560,12 @@ program
 program
   .command('events')
   .description(
-    "print the mode's event log, node_modules/.stackctl/modes/<mode>/events.log: what acted on its stack, one JSON object per line",
+    "print the event log of the mode's session, the running one else the latest (node_modules/.stackctl/modes/<mode>/sessions/<id>/events.jsonl): what acted on its stack, one JSON object per line",
   )
   .option(MODE_FLAGS, MODE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .option('-n, --lines <count>', 'print only the last <count> lines')
-  .option('-f, --follow', 'keep printing lines as they are written')
+  .option('-f, --follow', 'keep printing lines as they are written, until the next session starts')
   .option('--path', "print the event log's path instead, then exit")
   .action(async (opts: { lines?: string; follow?: boolean; path?: boolean }) => {
     const { runEvents } = await import('./commands/events.js');

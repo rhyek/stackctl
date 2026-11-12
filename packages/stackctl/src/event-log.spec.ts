@@ -7,12 +7,12 @@ import {
   EventLog,
   EventTail,
   commandBy,
-  eventsFilePath,
   isReadOnlyCompose,
   localTime,
   maskSecrets,
   takeHandedBy,
 } from './event-log.js';
+import { sessionEventsPath } from './session-files.js';
 
 let root: string;
 beforeEach(() => {
@@ -29,57 +29,80 @@ const lines = (file: string) =>
 
 describe('EventLog', () => {
   test('appends one JSON line per entry: its type and own fields first, the envelope last', () => {
-    const log = new EventLog({ root, mode: 'development', sessionId: () => 's1' });
+    const log = new EventLog({
+      file: sessionEventsPath(root, 'development', '1'),
+      mode: 'development',
+      sessionId: () => 's1',
+    });
     log.write({ type: 'session-state', ready: true });
-    const file = eventsFilePath(root, 'development');
-    expect(file).toBe(path.join(root, 'node_modules/.stackctl/modes/development/events.log'));
+    const file = sessionEventsPath(root, 'development', '1');
+    expect(file).toBe(
+      path.join(root, 'node_modules/.stackctl/modes/development/sessions/1/events.jsonl'),
+    );
     const [entry] = lines(file);
     expect(Object.keys(entry!)).toEqual(['type', 'ready', 'time', 'mode', 'sessionId', 'pid']);
     expect(entry).toMatchObject({ type: 'session-state', ready: true, mode: 'development', sessionId: 's1', pid: process.pid }); // oxfmt-ignore
   });
 
   test("keeps the documented wait's grep working: `type` and `ready` side by side", () => {
-    const log = new EventLog({ root, mode: 'development', sessionId: () => null });
+    const log = new EventLog({
+      file: sessionEventsPath(root, 'development', '1'),
+      mode: 'development',
+      sessionId: () => null,
+    });
     log.write({ type: 'session-state', ready: true });
     log.write({ type: 'service-state', service: 'api', status: 'stopped', ready: false, previousStatus: 'running', previousReady: true }); // oxfmt-ignore
-    const text = fs.readFileSync(eventsFilePath(root, 'development'), 'utf8');
+    const text = fs.readFileSync(sessionEventsPath(root, 'development', '1'), 'utf8');
     const wait = /"sessionReady":true|"type":"session-state","ready":true|"status":"stopped"/;
     const [first, second] = text.split('\n');
     expect(wait.test(first!)).toBe(true);
     expect(wait.test(second!)).toBe(true);
     // what it was is flat, so a service that *was* stopped doesn't match "status":"stopped"
     log.write({ type: 'service-state', service: 'api', status: 'running', ready: true, previousStatus: 'stopped', previousReady: false }); // oxfmt-ignore
-    expect(wait.test(fs.readFileSync(eventsFilePath(root, 'development'), 'utf8').split('\n')[2]!)).toBe(false); // oxfmt-ignore
+    expect(wait.test(fs.readFileSync(sessionEventsPath(root, 'development', '1'), 'utf8').split('\n')[2]!)).toBe(false); // oxfmt-ignore
   });
 
   test('never throws, a write it cannot make is dropped', () => {
     fs.writeFileSync(path.join(root, 'node_modules'), 'a file where a directory should be');
-    const log = new EventLog({ root, mode: 'development', sessionId: () => null });
+    const log = new EventLog({
+      file: sessionEventsPath(root, 'development', '1'),
+      mode: 'development',
+      sessionId: () => null,
+    });
     expect(() => log.write({ type: 'session-state', ready: true })).not.toThrow();
   });
 
   test('tells whoever listens after each line it writes', () => {
-    const log = new EventLog({ root, mode: 'development', sessionId: () => null });
+    const log = new EventLog({
+      file: sessionEventsPath(root, 'development', '1'),
+      mode: 'development',
+      sessionId: () => null,
+    });
     let told = 0;
     log.onWrite(() => (told += 1));
     log.write({ type: 'session-state', ready: false });
     expect(told).toBe(1);
   });
 
-  test('starts a fresh file once it is over its cap, keeping the old one as events.1.log', () => {
-    const log = new EventLog({ root, mode: 'test', sessionId: () => null, maxBytes: 200 });
+  test('starts a fresh file once it is over its cap, keeping the old one as events.1.jsonl', () => {
+    const log = new EventLog({
+      file: sessionEventsPath(root, 'test', '1'),
+      mode: 'test',
+      sessionId: () => null,
+      maxBytes: 200,
+    });
     for (let i = 0; i < 5; i += 1) {
       log.write({ type: 'session-state', ready: i % 2 === 0 });
     }
-    const file = eventsFilePath(root, 'test');
-    expect(fs.existsSync(file.replace(/events\.log$/, 'events.1.log'))).toBe(true);
+    const file = sessionEventsPath(root, 'test', '1');
+    expect(fs.existsSync(file.replace(/events\.jsonl$/, 'events.1.jsonl'))).toBe(true);
     expect(fs.statSync(file).size).toBeLessThan(400);
   });
 });
 
 describe('EventTail', () => {
   test('hands back whole lines only, keeping a half-written one for next time', () => {
-    const file = eventsFilePath(root, 'development');
+    const file = sessionEventsPath(root, 'development', '1');
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, '{"type":"a"}\n{"type":');
     const tail = new EventTail(file, 0);
@@ -90,7 +113,7 @@ describe('EventTail', () => {
   });
 
   test('starts from where it is told, and reads a file smaller than that again from its start', () => {
-    const file = eventsFilePath(root, 'development');
+    const file = sessionEventsPath(root, 'development', '1');
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, '{"type":"old"}\n');
     const tail = new EventTail(file, fs.statSync(file).size);
@@ -101,7 +124,7 @@ describe('EventTail', () => {
   });
 
   test('reads nothing from a file that is not there yet', () => {
-    expect(new EventTail(eventsFilePath(root, 'development'), 0).read()).toEqual([]);
+    expect(new EventTail(sessionEventsPath(root, 'development', '1'), 0).read()).toEqual([]);
   });
 });
 

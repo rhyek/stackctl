@@ -78,7 +78,7 @@ export async function startControlServer(opts: {
   quitHandler: (by: EventBy) => void;
   port: number;
   /**
-   * The mode's event log: the server writes the session's state changes to it, and `/events`
+   * The session's event log: the server writes the session's state changes to it, and `/events`
    * streams its lines, whoever wrote them.
    */
   events: EventLog;

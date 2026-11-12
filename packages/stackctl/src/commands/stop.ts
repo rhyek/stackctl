@@ -334,7 +334,7 @@ export async function runReset(
   }
   console.log(
     deleted
-      ? `Removed ${dir}; its events.log starts again with this reset.`
+      ? `Removed ${dir}; its event log starts again with this reset.`
       : `Nothing to remove: ${dir} doesn't exist.`,
   );
   return 0;

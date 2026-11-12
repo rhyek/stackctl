@@ -70,19 +70,14 @@ A suite that calls `startStack()` itself needs neither step.
 ## From a shell script
 
 `--headless` runs a session in the foreground with no UI, streaming its log to stdout. Wait
-for it on the control API's [event stream](../reference/control-api.md#get-events):
+for it with [`stackctl wait`](../reference/cli.md#stackctl-wait):
 
 ```sh
 stackctl --mode test --headless -s web &
 session=$!
 trap 'kill $session 2>/dev/null' EXIT   # SIGTERM shuts it down gracefully
 
-record=node_modules/.stackctl/modes/test/running.json
-until [ -f "$record" ]; do sleep 0.2; done
-port=$(node --input-type=module -e "import r from './$record' with { type: 'json' }; console.log(r.port)")
-curl -sN "http://127.0.0.1:$port/events" \
-  | grep -m1 -qE '"sessionReady":true|"type":"session-state","ready":true' || exit 1
-
+stackctl --mode test wait || exit 1
 pnpm test:e2e
 ```
 

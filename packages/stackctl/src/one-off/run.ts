@@ -95,7 +95,7 @@ function untrack(child: LiveChild): void {
  * Runs `spec` to completion and resolves with how it ended. stdin is inherited, so the command
  * stays interactive. With `stdio: 'inherit'` its output streams to this process's stdout and
  * stderr raw (colors intact); with `'pipe'` it is collected into the result instead. Either way it
- * is teed to a fresh log file in `logDir` (default: the mode's log directory) — line-buffered,
+ * is teed to a fresh log file in `logDir` (a session's `commands/` folder) — line-buffered,
  * timestamped and ANSI-stripped, as a session logs. SIGTERM and SIGHUP sent to this process are
  * forwarded to the command while it runs, and so is SIGINT, unless the command shares this
  * process's terminal; the listeners are removed once no command runs. Never exits the process.
@@ -105,7 +105,7 @@ export async function runOneOff(
   spec: OneOffSpec,
   opts: {
     stdio: 'inherit' | 'pipe';
-    logDir?: string;
+    logDir: string;
     /** Whether stdin is a terminal; a seam for tests. Default: `process.stdin.isTTY`. */
     isTerminal?: () => boolean;
   },

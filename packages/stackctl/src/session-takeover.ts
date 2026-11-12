@@ -21,6 +21,7 @@ import {
   readRunning,
   sessionId,
 } from './running.js';
+import { pruneSessions } from './session-files.js';
 import { START_TIME_SLACK_MS } from './session-identity.js';
 import { HANDOFF_FORCE_KILL_MS } from './shutdown-timing.js';
 import { bounded } from './util.js';
@@ -508,6 +509,8 @@ export async function acquireSession(opts: {
     },
     onStatus: opts.onStatus,
   });
+  // The session this one replaces has ended: nothing writes to an old folder any more.
+  pruneSessions(root, mode, sessionId());
   if (!isWindows()) {
     await sweepOrphans(root, mode, previous, opts.onStatus);
     const ports = devPorts(getRegisteredPackages().map((pkg) => pkg.port));

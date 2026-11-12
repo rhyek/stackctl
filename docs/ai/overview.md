@@ -25,77 +25,61 @@ outputs folded as Claude Code folds them. The agent has the rules file and the s
 **The app is down.** Someone restarted Postgres from another terminal, and the backend crashed.
 The agent finds who in the [event log](../reference/events.md):
 
-<llm-exclude><TerminalPlayer src="/casts/agent-restart-1794445754.cast" label="Claude Code finds the crashed backend, restarts it through stackctl and explains the crash" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/agent-restart-1794503803.cast" label="Claude Code finds the crashed backend, restarts it through stackctl and explains the crash" /></llm-exclude>
 <llm-only>
 
 ```text
 > the app isn't loading, can you check what's going on?
 
-● Skill(stackctl)
-  ⎿  Launching skill: stackctl
-
 ● Read(node_modules/stackctl/docs/llms.txt)
   ⎿  Read 47 lines
 
 ● Read(node_modules/stackctl/docs/ai/playbook.md)
-  ⎿  Read 243 lines
+  ⎿  Read 245 lines
 
-● Bash(pnpm stackctl status)
-  ⎿  development session: running since today 19:04:23 (pid 72629, contro…
+● Bash(pnpm stackctl --mode development status)
+  ⎿  development session: running since today 11:14:34 (pid 68544, contro…
      services  backend   running, not ready
                frontend  running, not ready
                worker    running, ready
-     … +16 lines (ctrl+o to expand)
+     … +9 lines (ctrl+o to expand)
 
-● Bash(pnpm stackctl show-config | jq '.services | map_values({ port,
-  publicOrigin, healthcheck })')
-  ⎿  {
-       "backend": {
-         "port": 3001,
-         "publicOrigin": "http://api.localhost:21050",
-     … +22 lines (ctrl+o to expand)
+● Bash(pnpm stackctl --mode development logs | grep -iE
+  'error|exception|fail|refused' | tail -30; pnpm stackctl --mode
+  development events -n 30)
+  ⎿  2026-11-12 11:14:41 [backend   ]     throw er; // Unhandled 'error' …
+     2026-11-12 11:14:41 [backend   ] error: terminating connection due t…
+     2026-11-12 11:14:41 [backend   ]     at parseErrorMessage (node_modu…
+     2026-11-12 11:14:41 [backend   ] Emitted 'error' event on BoundPool …
+     … +19 lines (ctrl+o to expand)
 
-● Backend and frontend are running but not ready, and db was restarted
-  right after the session started. Checking logs.
-
-● Bash(pnpm stackctl logs | grep -iE 'error|exception|ECONN|fail' | tail
-  -30; echo ---; pnpm stackctl logs | tail -25)
-  ⎿  2026-11-11 19:05:12 [backend   ]     throw er; // Unhandled 'error' …
-     2026-11-11 19:05:12 [backend   ] error: terminating connection due t…
-     2026-11-11 19:05:12 [backend   ]     at parseErrorMessage (node_modu…
-     2026-11-11 19:05:12 [backend   ] Emitted 'error' event on BoundPool …
-     … +36 lines (ctrl+o to expand)
-
-● The backend crashed when the db was restarted. I'll restart it with
-  stackctl, which is the recipe for this case.
-
-● Bash(pnpm stackctl service restart -s backend; pnpm stackctl status |
-  head -6)
+● Bash(pnpm stackctl --mode development service restart -s backend && pnpm
+  stackctl --mode development status)
   ⎿  restarting backend
      stackctl: waiting for backend to be healthy
      stackctl: everything is healthy
-     development session: running since today 19:04:23 (pid 72629, contro…
-     … +5 lines (ctrl+o to expand)
+     development session: running since today 11:14:34 (pid 68544, contro…
+     … +13 lines (ctrl+o to expand)
 
-● The app was down because the backend crashed, and it's now fixed. All
-  three services (backend, frontend, worker) are running and ready.
+● The app is loading again: I restarted the backend and all three services
+  now report healthy.
 
-  Cause: at 19:05:12 someone ran `stackctl infra restart -s db`, which
-  restarted the database. The backend's Postgres pool got `terminating
-  connection due to administrator command`. It had no handler for that
-  error, so the process crashed. The dev script then sat on "Waiting for
-  file changes before restarting…", so the backend stayed "running" but
-  never came back. The frontend stayed not-ready because it depends on the
+  Cause: the database was restarted at 11:14:40 (`infra restart -s db`,
+  run from the CLI by a person). That cut the backend's Postgres
+  connection with `terminating connection due to administrator command`.
+  The backend crashed on an unhandled pg error. Its watch-mode dev script
+  stayed alive waiting for a file change, so the service showed `running,
+  not ready`. The frontend went not-ready because it depends on the
   backend.
 
-  Fix: I ran `stackctl service restart -s backend`. It came back healthy
-  and the frontend followed.
+  Fix: `stackctl --mode development service restart -s backend`. Backend,
+  frontend and worker are now `running, ready`, and the db and mail infra
+  are up.
 
-  Follow-up: the backend will crash again on any future database restart
-  or dropped connection. The fix is an `error` listener on the pg Pool
-  (`pool.on('error', …)`) so a dropped idle connection doesn't throw as an
-  unhandled event. I haven't changed any code. Do you want me to add that
-  handler?
+  Underlying bug: the backend has no error handler on its pg pool, so any
+  future database restart will crash it the same way. Adding a
+  `pool.on('error', …)` handler, or reconnect logic, in the backend would
+  fix that. I haven't changed any code. Want me to look at it?
 ```
 
 </llm-only>
@@ -103,7 +87,7 @@ The agent finds who in the [event log](../reference/events.md):
 **Running the tests.** They call the backend, so the agent runs them against a test-mode session
 of their own:
 
-<llm-exclude><TerminalPlayer src="/casts/agent-tests-1794445787.cast" label="Claude Code starts a test-mode session, runs the backend's tests in it and stops it" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/agent-tests-1794505772.cast" label="Claude Code starts a test-mode session, runs the backend's tests in it and stops it" /></llm-exclude>
 <llm-only>
 
 ```text
@@ -113,59 +97,43 @@ of their own:
   ⎿  Read 47 lines
 
 ● Read(node_modules/stackctl/docs/ai/playbook.md)
-  ⎿  Read 243 lines
+  ⎿  Read 245 lines
 
-● Read(node_modules/stackctl/docs/guide/testing.md)
-  ⎿  Read 101 lines
+● Bash(ls; ls .env* ; npx stackctl --mode test status; npx stackctl --mode
+  development status; npx stackctl --mode test show-config | jq '.services
+  | keys')
+  ⎿  apps
+     docker-compose.yaml
+     libs
+     node_modules
+     … +25 lines (ctrl+o to expand)
 
-● Following the playbook: find the config, test mode and service names.
-
-● Bash(ls -a && npx stackctl show-config | jq '.services |
-  map_values({port, command})' && npx stackctl --mode test status)
-  ⎿  .
-     ..
-     .claude
-     .env
-     … +52 lines (ctrl+o to expand)
-
-● No test session is running, so I'll start one for the backend in the
-  background.
+● Test mode exists, no session running. Start a test session of the
+  backend in the background.
 
 ● Bash(npx stackctl --mode test --headless -s backend)
   ⎿  Running in the background (↓ to manage)
 
-● Bash(cat node_modules/.stackctl/modes/test/running.json)
-  ⎿  {
-       "port": 14059,
-       "pid": 75771,
-       "sessionId": "a20d4bad-8bdf-45ec-8388-562f43124103",
+● Bash(npx stackctl --mode test wait && npx stackctl --mode test run
+  backend test)
+  ⎿  stackctl: waiting for backend to be healthy
+     stackctl: everything is healthy
+     test session ready: pid 66053, control API on 14045, log node_module…
+     ✔ lists the todos (81.360709ms)
      … +10 lines (ctrl+o to expand)
 
-● Bash(timeout 120 curl -sN "http://127.0.0.1:14059/events" | grep -m1 -E
-  '"sessionReady":true|"type":"session-state","ready":true|"status":"stopped"')
-  ⎿  {"type":"snapshot","pid":75771,"sessionId":"a20d4bad-8bdf-45ec-8388-…
+● Bash(npx stackctl --mode test stop)
+  ⎿  stopped test session (pid 66053)
 
-● Ready. Running the tests in the test mode's environment.
+● All 3 backend tests passed:
 
-● Bash(npx stackctl --mode test run backend test)
-  ⎿  ✔ lists the todos (61.719875ms)
-     ✔ rejects a todo without a title (14.42275ms)
-     ✔ adds a todo, completes it and deletes it (20.679625ms)
-     ℹ tests 3
-     … +7 lines (ctrl+o to expand)
+  - lists the todos
+  - rejects a todo without a title
+  - adds a todo, completes it and deletes it
 
-● Tests passed. Stopping the test session.
-
-● Bash(curl -s -X POST http://127.0.0.1:14059/command/quit)
-  ⎿  {"ok":true}
-
-● All 3 backend tests passed: lists the todos, rejects a todo without a
-  title, and adds, completes and deletes a todo.
-
-  I ran them in stackctl's `test` mode, which has its own ports and
-  database, so your development data wasn't touched. No test session was
-  running beforehand, so I started one for the backend, ran `stackctl
-  --mode test run backend test`, and then quit the session.
+  I ran them in stackctl's `test` mode. I started a test session for the
+  backend, ran `stackctl --mode test run backend test`, then stopped the
+  session. The development session wasn't running, and I didn't touch it.
 ```
 
 </llm-only>
@@ -196,8 +164,8 @@ stackctl --headless -s web
 ```
 
 The same session as the terminal UI, without the UI: logs stream to stdout, and the process
-runs until it is told to quit. An agent runs it as a background task, waits for it on the
-control API, and stops it when done. See
+runs until it is told to quit. An agent runs it as a background task, waits for it with
+`stackctl wait`, and stops it with `stackctl stop` when done. See
 [Start a stack](./playbook.md#start-a-stack).
 
 For an e2e suite, [`startStack()`](../guide/testing.md) gives the test runner a stack that
@@ -223,7 +191,7 @@ you have open, and you see it happen in your log:
 ```
 
 Every command that changes the stack, from a key, the control API or a stackctl command, is
-written to the mode's [event log](../reference/events.md) with who asked, and `/events` streams
+written to the session's [event log](../reference/events.md) with who asked, and `/events` streams
 it. `stackctl status` shows the last ones, so an agent asked why something broke can see what was
 done to it, and by whom.
 
@@ -264,8 +232,10 @@ An agent shares the machine with you, so stackctl draws a few lines:
   [Taking over a running session](../reference/cli.md#taking-over-a-running-session).
 - **An agent can't leave a session behind.** `--detach` is refused for an agent outside CI. A
   session an agent starts runs in its own background task and ends with it.
-- **Graceful stops only.** The playbook tells agents to stop and restart through the control API,
-  never with `kill`.
+- **An agent always names the mode.** A command an agent runs without `--mode` is refused, so
+  it never acts on your development session when it meant its own test one.
+- **Graceful stops only.** The playbook tells agents to stop and restart with stackctl
+  (`stackctl stop`, `stackctl service restart`), never with `kill`.
 - **Data is deleted only on request.** `infra reset` and `infra destroy` are documented
   to agents as destructive.
 

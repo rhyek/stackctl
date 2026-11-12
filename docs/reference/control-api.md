@@ -40,10 +40,10 @@ node_modules/.stackctl/modes/<mode>/running.json
 {
   "pid": 12345,
   "port": 14012,
-  "sessionId": "0f8e5a52-6a3b-4f1e-9a52-2d6c1b7e4f10",
-  "startedAt": 1794164978752,
-  "logDir": "/repo/node_modules/.stackctl/modes/development/logs",
-  "logFile": "/repo/node_modules/.stackctl/modes/development/logs/1794164978752-12345-1.log",
+  "sessionId": "1794164978752",
+  "startedAt": 1794164978790,
+  "logDir": "/repo/node_modules/.stackctl/modes/development/sessions/1794164978752",
+  "logFile": "/repo/node_modules/.stackctl/modes/development/sessions/1794164978752/logs.txt",
   "children": [{ "pid": 12360, "cwd": "/repo/apps/api" }]
 }
 ```
@@ -82,12 +82,12 @@ service runs.
 ```jsonc
 {
   "pid": 12345,
-  "sessionId": "0f8e5a52-6a3b-4f1e-9a52-2d6c1b7e4f10",
+  "sessionId": "1794164978752",
   "configPath": "/repo/stackctl.config.ts",
   "mode": "development",
   "modeSource": "default",
   "startedByAgent": false,
-  "logFile": "/repo/node_modules/.stackctl/modes/development/logs/1794164978752-12345-1.log",
+  "logFile": "/repo/node_modules/.stackctl/modes/development/sessions/1794164978752/logs.txt",
   "services": { "web": "running", "api": "waiting" },
   "ready": { "web": true, "api": false },
   "infra": { "db": "running", "mail": "starting" },
@@ -105,7 +105,7 @@ service runs.
 | Field            | Type              | What it is                                                                   |
 | ---------------- | ----------------- | ---------------------------------------------------------------------------- |
 | `pid`            | number            | The session's process.                                                       |
-| `sessionId`      | string            | Random per session. The same value as in its record.                         |
+| `sessionId`      | string            | When the session started, in ms. Names its folder, as in its record.         |
 | `configPath`     | string            | The config file it was started with.                                         |
 | `mode`           | string            | The mode it runs in.                                                         |
 | `modeSource`     | string            | Where the mode came from: `flag`, `env`, `ci` or `default`.                  |

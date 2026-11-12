@@ -1,11 +1,11 @@
 ---
-description: The event log - each mode's record of what acted on its stack (keys, control API requests, stackctl commands) and what its session did (starts, exits, readiness), one JSON object per line, in node_modules/.stackctl/modes/<mode>/events.log and on GET /events.
+description: The event log - each session's record of what acted on its stack (keys, control API requests, stackctl commands) and what the session did (starts, exits, readiness), one JSON object per line, in node_modules/.stackctl/modes/<mode>/sessions/<id>/events.jsonl and on GET /events.
 ---
 
 # Events
 
-Each mode keeps one event log: what acted on its stack, and what the session did, one JSON object
-per line.
+Each session keeps an event log: what acted on its stack, and what the session did, one JSON
+object per line.
 
 ```bash
 stackctl status         # the session now, and the last commands that acted on it
@@ -13,23 +13,26 @@ stackctl events -n 20   # the last 20 lines
 stackctl events -f      # and follow them
 ```
 
-The file is `node_modules/.stackctl/modes/<mode>/events.log`. The control API's
+Each session has its own file, `node_modules/.stackctl/modes/<mode>/sessions/<id>/events.jsonl`,
+in the folder that holds [its log](../guide/logs.md#log-files). The control API's
 [`GET /events`](./control-api.md#get-events) streams the same lines as they are written.
 
 ```jsonc
-{"type":"infra-command","phase":"begin","id":"56de9f1a","action":"restart","requested":["db"],"by":{"kind":"cli","argv":["infra","restart","-s","db"],"cwd":".","agent":false},"time":"2026-11-11T13:22:12.255-06:00","mode":"development","sessionId":"add7056e-…","pid":91514}
+{"type":"infra-command","phase":"begin","id":"56de9f1a","action":"restart","requested":["db"],"by":{"kind":"cli","argv":["infra","restart","-s","db"],"cwd":".","agent":false},"time":"2026-11-11T13:22:12.255-06:00","mode":"development","sessionId":"1794424917144","pid":91514}
 {"type":"infra-state","service":"db","status":"stopped","previousStatus":"running", /* … */}
 {"type":"service-state","service":"backend","status":"running","ready":false,"previousStatus":"running","previousReady":true, /* … */}
 {"type":"infra-command","phase":"end","id":"56de9f1a", /* … */ "ok":true,"durationMs":2249,"services":["db"],"results":{"db":"ready"}, /* … */}
 ```
 
-- **What changes the stack is written; what reads it never is.** `status`, `logs`,
+- **What changes the stack is written; what reads it never is.** `status`, `wait`, `logs`,
   `show-config`, `events`, `GET /query/status` and Compose's read-only commands (`ps`, `logs`,
   `config`, `top`, …) leave no line.
 - **Whatever does it writes it:** the session for its keys, its control API and itself; a stackctl
   command for itself, whether a session runs or not.
-- **Kept across sessions.** Over 5 MB, the next line starts a new file and the old one becomes
-  `events.1.log`. `stackctl reset` deletes it with the mode's other state.
+- **A command run between sessions** goes in the latest session's file: a folder holds its
+  session and what came after it, until the next one starts.
+- **Kept 7 days**, with the session's folder. Over 5 MB, the next line starts a new file and the
+  old one becomes `events.1.jsonl`. `stackctl reset` deletes every session's.
 - **Arguments as given, a URL's password masked** (`postgres://app:***@…`). No environment
   value is written.
 

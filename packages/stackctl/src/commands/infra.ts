@@ -97,7 +97,7 @@ export async function runInfraCommand(
 }
 
 /**
- * `stackctl infra <command>`: runs it with the plain reporter, writes it to the mode's event log
+ * `stackctl infra <command>`: runs it with the plain reporter, writes it to the session's event log
  * (`begin`, then `end` with each service's result), and exits with its code.
  */
 export async function runInfra(

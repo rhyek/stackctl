@@ -6,11 +6,12 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { type AnyServiceConfig, defineConfig } from '../config.js';
 import type { ControlManager } from '../control-server.js';
 import type { DevReverseProxyManager, DevReverseProxyServer } from '../dev-reverse-proxy.js';
-import { EventLog, type EventBy, eventsFilePath } from '../event-log.js';
+import { EventLog, type EventBy } from '../event-log.js';
 import { stripAnsi } from '../format.js';
 import { InfraFailedError } from '../infra/session.js';
 import type { InfraEvent } from '../infra/types.js';
 import type { ServiceGroups, ServiceUsage, UsageReader } from '../service-usage.js';
+import { sessionEventsPath } from '../session-files.js';
 import { labelGutter } from './log-layout.js';
 import { buildSessionPlan } from './plan.js';
 import type {
@@ -224,7 +225,11 @@ function setup(opts: {
     watchBranch: () => ({ branch: 'main', stop: () => {} }),
     signalGroup: (pid, signal) => signalled.push([pid, signal]),
     installSignals: () => () => {},
-    events: new EventLog({ root, mode: 'development', sessionId: () => 'session-test' }),
+    events: new EventLog({
+      file: sessionEventsPath(root, 'development', '1'),
+      mode: 'development',
+      sessionId: () => 'session-test',
+    }),
     ...opts.seams,
   };
   const session = new Session({ plan, configPath: path.join(root, 'stackctl.config.ts'), logFile, forked: opts.forked ?? false, interactive: opts.interactive, seams }); // oxfmt-ignore
@@ -607,7 +612,7 @@ describe('shutdown', () => {
     t.server.quitHandler!(curl);
     expect(await t.session.closed).toBe(0);
     const lines = fs
-      .readFileSync(eventsFilePath(t.root, 'development'), 'utf8')
+      .readFileSync(sessionEventsPath(t.root, 'development', '1'), 'utf8')
       .split('\n')
       .filter(Boolean)
       .map((line) => JSON.parse(line) as Record<string, unknown>);
@@ -632,8 +637,8 @@ describe('shutdown', () => {
     await t.session.start();
     await until(() => expect(t.procs).toHaveLength(1));
     t.procs[0]!.crash(3);
-    await until(() => expect(fs.readFileSync(eventsFilePath(t.root, 'development'), 'utf8')).toContain('service-exit')); // oxfmt-ignore
-    const exit = fs.readFileSync(eventsFilePath(t.root, 'development'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.type === 'service-exit'); // oxfmt-ignore
+    await until(() => expect(fs.readFileSync(sessionEventsPath(t.root, 'development', '1'), 'utf8')).toContain('service-exit')); // oxfmt-ignore
+    const exit = fs.readFileSync(sessionEventsPath(t.root, 'development', '1'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.type === 'service-exit'); // oxfmt-ignore
     expect(exit).toMatchObject({ type: 'service-exit', service: 'api', exitCode: 3, signal: null });
   });
 

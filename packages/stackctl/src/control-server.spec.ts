@@ -4,8 +4,9 @@ import path from 'node:path';
 import { describe, expect, afterEach, test, vi } from 'vitest';
 import { createControlClient, type SessionEvent } from './control-client.js';
 import { startControlServer as startServer, type ControlManager } from './control-server.js';
-import { EventLog, type InfraCommandEntry, cliEventLog, eventsFilePath } from './event-log.js';
+import { EventLog, type InfraCommandEntry, cliEventLog } from './event-log.js';
 import { sessionId } from './running.js';
+import { sessionEventsPath } from './session-files.js';
 
 let server: Awaited<ReturnType<typeof startServer>> | null = null;
 let root: string | null = null;
@@ -22,9 +23,15 @@ afterEach(async () => {
 /** The server, writing to an event log in a workspace of its own. */
 function startControlServer(opts: Omit<Parameters<typeof startServer>[0], 'events'>) {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-control-'));
+  // The session's folder, the latest, so a command run beside it writes there too.
+  fs.mkdirSync(path.dirname(sessionEventsPath(root, 'development', '1')), { recursive: true });
   return startServer({
     ...opts,
-    events: new EventLog({ root, mode: 'development', sessionId: () => sessionId() }),
+    events: new EventLog({
+      file: sessionEventsPath(root, 'development', '1'),
+      mode: 'development',
+      sessionId: () => sessionId(),
+    }),
   });
 }
 
@@ -34,7 +41,7 @@ const settled = () => new Promise((resolve) => setImmediate(resolve));
 /** The event log's lines so far. */
 const eventLines = () =>
   fs
-    .readFileSync(eventsFilePath(root!, 'development'), 'utf8')
+    .readFileSync(sessionEventsPath(root!, 'development', '1'), 'utf8')
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);

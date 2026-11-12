@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.0
+
+### Features
+
+- **Each session keeps its log and event log in a folder of its own**, so `stackctl logs`,
+  `stackctl events` and `stackctl status` show one session: the running one, else the latest.
+  See [docs/guide/logs.md](docs/guide/logs.md#log-files).
+- **`stackctl wait` blocks until the mode's session is ready**, for a session started in the
+  background. See [docs/reference/cli.md](docs/reference/cli.md#stackctl-wait).
+
+### Breaking changes
+
+- **Logs and event logs moved to `node_modules/.stackctl/modes/<mode>/sessions/<id>/`**: read
+  `logs.txt` and `events.jsonl` there, or ask `stackctl logs --path` and `stackctl events --path`.
+- **`--log-dir` and `startStack()`'s `logDir` are gone**: a CI job that kept its logs uploads
+  `node_modules/.stackctl/modes/<mode>/sessions/` instead.
+- **A `sessionId` is the session's start time in ms, no longer a UUID**: treat it as an opaque
+  string.
+- **A coding agent's command must name its mode**: pass `--mode development` (or the mode
+  meant) where an agent's script or prompt relied on the default.
+
 ## 0.4.0
 
 ### Features

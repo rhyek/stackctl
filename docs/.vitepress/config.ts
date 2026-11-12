@@ -75,7 +75,7 @@ export default defineConfig({
   },
 
   // llms.txt, llms-full.txt and a Markdown copy of every page, generated from the same files.
-  // `scripts/package-docs.ts` copies them into the npm package for the agent skill to read.
+  // `maintenance/scripts/package-docs.ts` copies them into the npm package for the agent skill to read.
   // The home page's config example (theme/HomeConfig.md) is a snippet, not a page.
   // The index opens by sending a coding agent to the playbook: whatever points an agent at
   // llms.txt (the skill, the rules file, the AGENTS.md block) names this one file.

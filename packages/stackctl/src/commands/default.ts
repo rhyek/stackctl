@@ -15,7 +15,6 @@ export interface StartOptions {
   ui?: boolean;
   headless?: boolean;
   lastAnswers: boolean;
-  logDir?: string;
   killOthers: boolean;
   /** `--detach`: a headless session that outlives the command, which waits until it is ready. */
   detach?: boolean;

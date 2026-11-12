@@ -68,9 +68,10 @@ test('start --detach in CI: the session outlives the command, and stop ends it',
 
   const start = await runCli(['start', '--detach', '-s', 'api'], { cwd: ws(), env: ci });
   expect(start.exit, start.stderr).toEqual({ code: 0, signal: null });
-  const ready = /^test session ready: pid (\d+), control API on (\d+), log (\S+\.log)$/m.exec(
-    start.stdout,
-  );
+  const ready =
+    /^test session ready: pid (\d+), control API on (\d+), log (\S+\/sessions\/\d+\/logs\.txt)$/m.exec(
+      start.stdout,
+    );
   expect(ready, start.stdout).not.toBeNull();
   const pid = Number(ready![1]);
   expect(sessionRecord(ws(), 'test')).toMatchObject({ pid, port: Number(ready![2]) });
