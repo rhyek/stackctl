@@ -3,10 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-const answer = vi.hoisted(() => ({ next: [] as unknown, asked: [] as { label: string }[][] }));
+const answer = vi.hoisted(() => ({ next: true as unknown, asked: [] as string[] }));
 vi.mock('@clack/prompts', () => ({
-  multiselect: (opts: { options: { label: string }[] }) => {
-    answer.asked.push(opts.options);
+  confirm: (opts: { message: string }) => {
+    answer.asked.push(opts.message);
     return Promise.resolve(answer.next);
   },
   isCancel: (value: unknown) => value === 'cancelled',
@@ -34,7 +34,7 @@ let cwd: string;
 beforeEach(() => {
   cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-agent-guidance-')));
   fs.mkdirSync(path.join(cwd, 'node_modules'));
-  answer.next = [];
+  answer.next = true;
   answer.asked = [];
 });
 afterEach(() => fs.rmSync(cwd, { recursive: true, force: true }));
@@ -130,14 +130,12 @@ describe('refreshGuidance', () => {
 });
 
 describe('offerGuidance', () => {
-  test("offers stackctl's own files and the AGENTS.md section, and installs what is picked", async () => {
-    answer.next = ['own'];
+  test("asks one question, and a yes installs stackctl's own files and no AGENTS.md section", async () => {
     expect(await offerGuidance({ cwd, version: '1.2.3' })).toEqual([
       'Installed agent skill and rules file',
     ]);
-    expect(answer.asked[0]!.map((option) => option.label)).toEqual([
-      'A rules file and a skill, under .claude/',
-      'A section in AGENTS.md',
+    expect(answer.asked).toEqual([
+      'Tell coding agents about stackctl in this repo? (a rules file and a skill under .claude/)',
     ]);
     expect(fs.existsSync(path.join(cwd, 'AGENTS.md'))).toBe(false);
     expect(hasDeclined(cwd)).toBe(false);
@@ -145,16 +143,12 @@ describe('offerGuidance', () => {
 
   test('offers only the rules file where the skill is linked', async () => {
     linkSkill();
-    answer.next = ['own', 'agents-md'];
-    expect(await offerGuidance({ cwd, version: '1.2.3' })).toEqual([
-      'Installed agent rules file',
-      'Created AGENTS.md',
-    ]);
-    expect(answer.asked[0]![0]!.label).toBe('A rules file, under .claude/');
+    expect(await offerGuidance({ cwd, version: '1.2.3' })).toEqual(['Installed agent rules file']);
+    expect(answer.asked[0]).toContain('(a rules file under .claude/)');
   });
 
-  test('remembers a no, picked or cancelled', async () => {
-    answer.next = [];
+  test('remembers a no, answered or cancelled', async () => {
+    answer.next = false;
     expect(await offerGuidance({ cwd, version: '1.2.3' })).toBeNull();
     expect(hasDeclined(cwd)).toBe(true);
     expect(fs.existsSync(path.join(cwd, '.claude'))).toBe(false);
@@ -168,7 +162,6 @@ describe('offerGuidance', () => {
 
 describe('guidanceAtStart', () => {
   test('asks a person at a terminal once, while one of the own files is missing', async () => {
-    answer.next = ['own'];
     await guidanceAtStart({ cwd, version: '1.2.3', interactive: true });
     expect(answer.asked).toHaveLength(1);
     expect(fs.existsSync(rulesInstallPath(cwd))).toBe(true);
@@ -179,14 +172,13 @@ describe('guidanceAtStart', () => {
 
   test('asks someone who has the skill but not the rules file, as after an upgrade', async () => {
     installSkill({ cwd, version: '1.0.0' });
-    answer.next = ['own'];
     await guidanceAtStart({ cwd, version: '1.2.3', interactive: true });
     expect(answer.asked).toHaveLength(1);
     expect(readInstalledRules(rulesInstallPath(cwd))?.version).toBe('1.2.3');
   });
 
   test('never asks again after a no', async () => {
-    answer.next = [];
+    answer.next = false;
     await guidanceAtStart({ cwd, version: '1.2.3', interactive: true });
     await guidanceAtStart({ cwd, version: '1.2.3', interactive: true });
     expect(answer.asked).toHaveLength(1);

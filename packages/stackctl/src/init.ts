@@ -28,9 +28,8 @@ export default defineConfig({
  *
  * What it installs for coding agents (see `agent-guidance.ts`):
  *
- * - **Interactively**, it asks, with stackctl's own files checked and the `AGENTS.md` section
- *   unchecked. What is already installed is rewritten without asking, and when stackctl's own
- *   files are all there it asks nothing.
+ * - **Interactively**, it asks one question: whether to install stackctl's own files. What is
+ *   already installed is rewritten without asking, and when they are all there it asks nothing.
  * - **With `yes: true`** (`-y/--yes`, automation) it accepts the defaults without prompting:
  *   stackctl's own files, and no `AGENTS.md` section.
  * - **`agentsMd: true`** (`--agents-md`) adds the section either way.
@@ -97,7 +96,7 @@ export async function runInit(
       cwd,
       version,
       own: own && asked === undefined,
-      agentsMd: block && !(asked ?? []).some((line) => line.includes('AGENTS.md')),
+      agentsMd: block,
     }),
   ];
   for (const line of done) {

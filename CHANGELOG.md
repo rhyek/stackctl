@@ -9,9 +9,10 @@
 - **Each mode keeps an event log of what acts on its stack**, by a key, a control API request or
   a stackctl command, with who asked; `GET /events` streams the same lines and `stackctl events`
   prints them. See [docs/reference/events.md](docs/reference/events.md).
-- **A session's first start offers a rules file for coding agents beside the skill**, and an
-  `AGENTS.md` section, so an agent knows what stackctl runs in the repo without having to pick
-  the skill. See [docs/ai/overview.md](docs/ai/overview.md#agent-guidance).
+- **A session's first start offers a rules file for coding agents beside the skill**, so an
+  agent knows what stackctl runs in the repo without having to pick the skill, and
+  `stackctl init --agents-md` adds the same lines to `AGENTS.md`. See
+  [docs/ai/overview.md](docs/ai/overview.md#agent-guidance).
 - **The package ships its skill in `skills/`**, where `pnpm approve` can link it.
 
 ### Breaking changes

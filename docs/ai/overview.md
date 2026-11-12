@@ -1,5 +1,5 @@
 ---
-description: How stackctl is built for coding agents - the rules file, skill and AGENTS.md section it offers to install, headless mode, the control API, llms.txt on the site and inside the npm package, and the guard rails that protect your session.
+description: How stackctl is built for coding agents - the rules file and skill it offers to install, headless mode, the control API, llms.txt on the site and inside the npm package, and the guard rails that protect your session.
 ---
 
 # Built for agents
@@ -172,44 +172,22 @@ of their own:
 
 ## Agent guidance
 
-The first time you start a session in a terminal, stackctl offers to install a few short
-files. Each says what stackctl runs in this repo and where its docs are:
+The first time you start a session in a terminal, stackctl asks once:
 
 ```
-◆  Tell coding agents about stackctl in this repo? Each is a few lines that point at its docs.
-│  ◼ A rules file and a skill, under .claude/ (stackctl's own files, read by Claude Code)
-│  ◻ A section in AGENTS.md (for the agents that read that file)
+◆  Tell coding agents about stackctl in this repo? (a rules file and a skill under .claude/)
+│  ● Yes / ○ No
 ```
 
-| File                               | Read by                                   | When                              |
-| ---------------------------------- | ----------------------------------------- | --------------------------------- |
-| `.claude/rules/stackctl.md`        | Claude Code                               | At the start of every session.    |
-| `.claude/skills/stackctl/SKILL.md` | Claude Code, and agents that load skills  | When a task matches its description. |
-| A section of `AGENTS.md`           | Codex, Cursor, Copilot and other agents   | At the start of every session.    |
+Both are a few lines that say what stackctl runs here and point at the [index](#llmstxt) inside
+the installed package, so an agent reads the page it needs, for the version you have. Without
+them an agent does what it would in any repo: `kill` whatever holds a port, run a bare
+`docker compose`, run the test script outside a session.
 
-None of them holds documentation. They name what stackctl covers (the dev services, their Docker
-Compose infra, `.env` loading, logs, test sessions) and point at the
-[index](#llmstxt) inside the installed package, so the agent reads the page it needs, for the
-version you have. Without them an agent does what it would in any repo: `kill` whatever holds a
-port, run a bare `docker compose`, run the test script outside a session.
-
-- **Nothing is installed unasked.** The offer comes once, to a person at a terminal: a no is
-  remembered, and an agent, a script or CI is never asked.
-  [`stackctl init`](../reference/cli.md#stackctl-init) installs the same files, and
-  `stackctl init -y` does it without a prompt.
-- **The rules file and the skill are stackctl's own.** Installing a newer stackctl, or starting
-  a session with one, refreshes a copy you haven't edited. A copy you edited is left alone, and
-  `stackctl init` rewrites it. The skill is also written under `.agents/` and `.cursor/` when
-  those directories exist.
-- **`AGENTS.md` is yours**, so its section is the unchecked choice, and
-  `stackctl init --agents-md` for a script. It goes between two `<!-- BEGIN:stackctl -->` /
-  `<!-- END:stackctl -->` markers, in a new file if there is none. What is between the markers
-  is refreshed with the rules file; everything outside them is left as it is.
-- **Claude Code reads `AGENTS.md` only in a repo with no `CLAUDE.md`**, which is why it gets a
-  rules file of its own.
-- **pnpm can link the skill itself.** The package ships it in `skills/`, where `pnpm approve`
-  finds it (pnpm 12.11 and later). Where pnpm's link is there, stackctl offers the rules file
-  alone and keeps no copy of the skill.
+- **Nothing is installed unasked.** A no is remembered, and an agent, a script or CI is never
+  asked. [`stackctl init -y`](../reference/cli.md#stackctl-init) installs them from a script.
+- **They stay current.** A newer stackctl refreshes a copy you haven't edited.
+- **For other agents**, `stackctl init --agents-md` adds the same lines to `AGENTS.md`.
 
 ## Headless mode
 

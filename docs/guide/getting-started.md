@@ -49,8 +49,8 @@ pnpm stackctl init
 
 `init` is interactive and safe to run again. It:
 
-1. Asks which of the [agent guidance](../ai/overview.md#agent-guidance) to install: a rules
-   file and a skill under `.claude/` (recommended), and a section of `AGENTS.md`.
+1. Asks whether to install the [agent guidance](../ai/overview.md#agent-guidance): a rules
+   file and a skill under `.claude/` (recommended).
 2. Creates `stackctl.config.ts` at the repo root. An existing config is left alone.
 3. Adjusts the root `tsconfig.json` so the config type-checks.
 

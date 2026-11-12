@@ -16,10 +16,10 @@ graded Claude Code sessions in a workspace that uses stackctl.
 - **A skill alone is the fragile form.** When the skill listing is over its budget, Claude Code
   shows a new skill by name only, and the pass rate fell to 91%. Text that is always read, a
   rules file or an instructions-file block, stayed at 100% in every condition we tried.
-- **What we chose:** stackctl offers, once, a rules file and a skill of its own under `.claude/`
-  (checked) and a section of `AGENTS.md` (unchecked). Each points at
-  `node_modules/stackctl/docs/llms.txt`, which opens by sending an agent to the playbook.
-  Nothing is installed unasked.
+- **What we chose:** stackctl asks once whether to install a rules file and a skill of its own
+  under `.claude/`. Each points at `node_modules/stackctl/docs/llms.txt`, which opens by sending
+  an agent to the playbook. A section of `AGENTS.md` is written only on request, and nothing is
+  installed unasked.
 
 The harness is [`scripts/agent-eval/`](../../scripts/agent-eval/README.md). The last section is
 a checklist for the next package.
@@ -435,19 +435,20 @@ in a file stackctl owns.
 
 | Piece | Decision | Why |
 | --- | --- | --- |
-| `.claude/rules/stackctl.md` | Offered, checked by default | Always read by Claude Code, whether or not the repo has a `CLAUDE.md`. stackctl's own file: versioned, hashed, refreshed like the skill, removed by deleting it. 100% alone in every condition. |
+| `.claude/rules/stackctl.md` | Offered, in one yes-or-no question | Always read by Claude Code, whether or not the repo has a `CLAUDE.md`. stackctl's own file: versioned, hashed, refreshed like the skill, removed by deleting it. 100% alone in every condition. |
 | The skill | Offered with the rules file | For agents that load skills and read neither instructions file, and as the description of stackctl in a skill listing. Trimmed to 621 characters; its body is only the pointer. |
-| A block in `AGENTS.md` | Offered, unchecked | The only edit to a file the project owns, and it serves agents this experiment didn't run. Claude Code doesn't read it in a repo with a `CLAUDE.md`. |
+| A block in `AGENTS.md` | Only with `stackctl init --agents-md` | The only edit to a file the project owns, and it serves agents this experiment didn't run. Claude Code doesn't read it in a repo with a `CLAUDE.md`. |
 | A block in `CLAUDE.md` | Not shipped | Same score as the rules file, and it would edit the project's file to do what the rules file does without. |
 | Guard-rail lines, an inlined index | Not shipped | No measurable gain; both repeat the docs. |
 | `llms.txt` | Stays the one index | Its first lines send an agent to the playbook, so every pointer names one file. |
 
 How the files get there:
 
-- **A session's first start in a terminal offers them, once.** A no is remembered for the
-  checkout. An agent, a script or CI is never asked, and gets nothing installed.
-- **`stackctl init` offers the same**, `init -y` installs stackctl's own files without asking,
-  and `--agents-md` adds the section.
+- **A session's first start in a terminal asks once**, one question: the rules file and the
+  skill, yes or no. A no is remembered for the checkout. An agent, a script or CI is never
+  asked, and gets nothing installed.
+- **`stackctl init` asks the same**, `init -y` installs stackctl's own files without asking,
+  and `--agents-md` adds the section to `AGENTS.md`.
 - **Installing stackctl writes nothing.** Its postinstall only refreshes files that are already
   there. Before, it installed the skill silently where the package manager ran it.
 - **What is installed is kept current without asking**, at install and at a session's start, as
@@ -537,8 +538,8 @@ out of the repo: they hold the machine's paths and process list.
 4. **Add a skill with the same scope as its description**, under 1,024 characters, the main use
    first, and a body that is only the pointer. Ship it in `skills/<name>/SKILL.md`, where pnpm
    and the skills tools look.
-5. **Offer, don't install.** Ask a person once, at a moment they are at a terminal; give scripts
-   a flag; keep what was accepted current without asking.
+5. **Offer, don't install.** Ask a person one question, once, at a moment they are at a
+   terminal; give scripts a flag; keep what was accepted current without asking.
 6. **Make the CLI's `--help` say enough to act on.** It is what an agent with no guidance finds.
 7. **Measure before and after.** Copy `scripts/agent-eval/`: prompts phrased as a person would,
    a hook that refuses every change, grading on the first command tried. Include tasks that name

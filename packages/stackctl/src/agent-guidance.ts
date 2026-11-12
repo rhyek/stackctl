@@ -22,8 +22,8 @@ import {
  * - **The rules file and the skill** are stackctl's own files under `.claude/`. A person is
  *   offered them the first time they start a session in a terminal; `stackctl init` installs
  *   them too, and is the way for a script. Nothing installs them unasked.
- * - **The `AGENTS.md` section** edits a file of the project's, so it is never the default: it
- *   is the unchecked choice in the offer, and `stackctl init --agents-md`.
+ * - **The `AGENTS.md` section** edits a file of the project's, so it is never offered: only
+ *   `stackctl init --agents-md` writes it.
  * - **Once installed, a file is kept current** without asking, as long as nobody edited it.
  * - **pnpm can link the skill itself** (`pnpm approve`, from the `skills/` folder the package
  *   ships). Where its link is there, stackctl writes no copy of its own.
@@ -173,48 +173,26 @@ export function refreshGuidance(opts: { cwd: string; version: string }): string[
 // ── the offer ─────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Asks which of the missing pieces to install, and installs them: stackctl's own files, checked,
- * and the `AGENTS.md` section, unchecked. Returns what it did, or `null` when the answer was
- * none of them, which is remembered so a session's start doesn't ask again.
+ * Asks one question, whether to install stackctl's own files, and installs them on a yes.
+ * Returns what it did, or `null` on a no, which is remembered so a session's start doesn't ask
+ * again.
  */
 export async function offerGuidance(opts: {
   cwd: string;
   version: string;
 }): Promise<string[] | null> {
-  const state = guidanceState(opts.cwd);
-  const options: { value: 'own' | 'agents-md'; label: string; hint: string }[] = [];
-  if (missesOwnFiles(state)) {
-    options.push({
-      value: 'own',
-      label: state.skill === 'linked' ? 'A rules file, under .claude/' : 'A rules file and a skill, under .claude/', // oxfmt-ignore
-      hint: "stackctl's own files, read by Claude Code",
-    });
-  }
-  if (!state.block) {
-    options.push({
-      value: 'agents-md',
-      label: 'A section in AGENTS.md',
-      hint: 'for the agents that read that file',
-    });
-  }
+  const linked = guidanceState(opts.cwd).skill === 'linked';
   // loaded here, so a start that asks nothing (headless, an agent's) never loads the prompts
-  const { isCancel, multiselect } = await import('@clack/prompts');
-  const picked = await multiselect({
-    message:
-      'Tell coding agents about stackctl in this repo? Each is a few lines that point at its docs.',
-    options,
-    initialValues: options.some((option) => option.value === 'own') ? ['own' as const] : [],
-    required: false,
+  const { confirm, isCancel } = await import('@clack/prompts');
+  const yes = await confirm({
+    message: `Tell coding agents about stackctl in this repo? (${linked ? 'a rules file' : 'a rules file and a skill'} under .claude/)`,
+    initialValue: true,
   });
-  if (isCancel(picked) || picked.length === 0) {
+  if (isCancel(yes) || !yes) {
     recordDeclined(opts.cwd);
     return null;
   }
-  return installGuidance({
-    ...opts,
-    own: picked.includes('own'),
-    agentsMd: picked.includes('agents-md'),
-  });
+  return installGuidance({ ...opts, own: true, agentsMd: false });
 }
 
 /**

@@ -21,12 +21,8 @@ test('a no is remembered: the next start goes straight to the picker', async () 
   fs.rmSync(declined());
   const first = await Pty.start({ cwd: ws(), env: person });
   await first.waitFor(asked);
-  expect(first.text()).toMatch(/◼ A rules file and a skill, under \.claude\//);
-  expect(first.text()).toMatch(/◻ A section in AGENTS\.md/);
-  // unchecks the one checked choice, and answers with none
-  first.press('space');
-  await first.waitFor('◻ A rules file and a skill');
-  first.press('enter');
+  expect(first.text()).toContain('(a rules file and a skill under .claude/)');
+  first.type('n');
   await first.waitFor('choose services');
   expect(fs.existsSync(path.join(ws(), '.claude'))).toBe(false);
   expect(fs.existsSync(declined())).toBe(true);

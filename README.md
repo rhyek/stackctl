@@ -17,6 +17,8 @@ their environment, and shows it all in one place.
   services it needs come with it, started in order and held until they are healthy.
 - **A terminal UI.** One combined, filterable log, with each service's state and memory in
   the footer. Drive it with the keyboard or the mouse.
+- **Built for coding agents.** A headless mode, a localhost control API, an installable skill
+  and `llms.txt`.
 - **Infra included.** Point it at your `docker-compose.yaml`: databases and brokers come up,
   get healthy and get migrated before your services start.
 - **Environment handled.** Layered `.env` files per workspace, service and mode, injected into
@@ -27,8 +29,6 @@ their environment, and shows it all in one place.
   for a CI job, in a mode that runs beside your dev session.
 - **An SDK for scripts and tests.** `startStack()`, `exec()`, `run()` and `resolveEnv()` give your
   own code what the CLI gives a shell, typed and with the same environment.
-- **Built for coding agents.** A headless mode, a localhost control API, an installable skill
-  and `llms.txt`.
 - **Any language.** A service is a `dev` script in `package.json` or a `Makefile` target.
 
 ## Install

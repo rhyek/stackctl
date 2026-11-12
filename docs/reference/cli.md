@@ -332,14 +332,31 @@ stackctl init -y     # accept the defaults
 ```
 
 Creates `stackctl.config.ts` if there is none, adds it to the root `tsconfig.json`, and offers
-the [agent guidance](../ai/overview.md#agent-guidance): a rules file and a skill under
-`.claude/`, and a section of `AGENTS.md`. Safe to run again.
+the [agent guidance](../ai/overview.md#agent-guidance). Safe to run again.
 
 | Flag                    | What it does                                                         |
 | ----------------------- | -------------------------------------------------------------------- |
 | `-y`, `--yes`           | No questions: the config, and the rules file and the skill.          |
-| `--agents-md`           | Also adds the section to `AGENTS.md`.                                |
+| `--agents-md`           | Also adds a stackctl section to `AGENTS.md`.                         |
 | `--workspace-dir <dir>` | Creates the config in that directory.                                |
+
+What the agent guidance is, on disk:
+
+| File                               | Read by                                                        |
+| ---------------------------------- | -------------------------------------------------------------- |
+| `.claude/rules/stackctl.md`        | Claude Code, at the start of every session.                    |
+| `.claude/skills/stackctl/SKILL.md` | Agents that load skills. Also under `.agents/` and `.cursor/` when those exist. |
+| A section of `AGENTS.md`           | Agents that read that file: Codex, Cursor, Copilot. Only with `--agents-md`. |
+
+- **The rules file and the skill are stackctl's own**: a copy you edited is left alone, and
+  `init` rewrites it.
+- **The `AGENTS.md` section sits between two markers**, `<!-- BEGIN:stackctl -->` and
+  `<!-- END:stackctl -->`, in a new file if there is none. Everything outside them is yours.
+- **Claude Code reads `AGENTS.md` only in a repo with no `CLAUDE.md`**, which is why it gets a
+  rules file of its own.
+- **pnpm can link the skill itself.** The package ships it in `skills/`, where `pnpm approve`
+  finds it (pnpm 12.11 and later). Where pnpm's link is there, stackctl keeps no copy of the
+  skill.
 
 ## State
 
