@@ -20,6 +20,8 @@ export interface Stage {
   waitFor(text: string, timeout?: number): Promise<void>;
   /** Waits until the shell's `$` prompt is the last line: the command typed into it has ended. */
   waitForPrompt(timeout?: number): Promise<void>;
+  /** Waits until the scene's `program` has exited: a replay has played to its end. */
+  waitForExit(timeout?: number): Promise<void>;
   /** Double-clicks `offset` cells into where `text` last appears on screen. */
   doubleClick(text: string, offset: number): void;
   /** What stackctl last copied, read from its OSC 52 output; `null` before any copy. */
@@ -268,15 +270,11 @@ export const scenes: Record<string, Scene> = {
   'agent-restart': agentScene(
     'restart',
     "The AI overview page's first agent conversation (docs/ai/overview.md, What it looks like): Claude Code, told the app isn't loading, reads the session's status, log and event log, restarts the backend through stackctl and explains the crash.",
-    // the answer's last word, alone on its line however it wraps
-    'it?',
   ),
 
   'agent-tests': agentScene(
     'tests',
     "The AI overview page's second agent conversation (docs/ai/overview.md, What it looks like), also on the home page (docs/index.md, agents.src): Claude Code, asked to run the backend's tests, starts a test-mode session, waits for it, runs them in its environment and stops it.",
-    // the answer's last word, alone on its line at the page's width
-    'running.',
   ),
 };
 
@@ -286,7 +284,7 @@ export const scenes: Record<string, Scene> = {
  * skill, the rules file or the playbook that would change what it does calls for a new real run
  * (conversations/README.md).
  */
-function agentScene(name: string, description: string, lastWords: string): Scene {
+function agentScene(name: string, description: string): Scene {
   return {
     description: `${description} A replay of a real run: re-recording it changes nothing; a change to what the agent would do calls for a new run (maintenance/scripts/demo/conversations/README.md).`,
     triggers: [
@@ -301,9 +299,10 @@ function agentScene(name: string, description: string, lastWords: string): Scene
     rows: 30,
     program: ['node', '../maintenance/scripts/demo/agent-chat.ts', name],
     async play(t) {
-      await t.waitFor(lastWords, 180_000);
+      // The replay's end, not a word of it: a word can turn up earlier in the conversation.
+      // agent-chat.ts holds its last screen for a moment before it exits.
+      await t.waitForExit();
       t.text(conversationText(conversations[name]!, PAGE_COLS));
-      await t.sleep(2000);
     },
   };
 }
