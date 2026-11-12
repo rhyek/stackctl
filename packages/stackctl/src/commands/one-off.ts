@@ -9,6 +9,7 @@ import { type OneOffCommandEntry, cliEventLog, commandBy, maskSecrets } from '..
 import {
   type OneOffResolution,
   type OneOffSpec,
+  type OneOffWhere,
   ScriptNotFoundError,
   oneOffEnvLayer,
   oneOffEnvResolution,
@@ -52,6 +53,14 @@ async function loadForOneOff(): Promise<string> {
   return root;
 }
 
+/** Where a one-off command running in `cwd` runs, for its event-log lines: a service, or a directory. */
+function whereOf(root: string, cwd: string): OneOffWhere {
+  const service = getRegisteredPackages().find(
+    (pkg) => path.resolve(pkg.absoluteDir) === path.resolve(cwd),
+  )?.name;
+  return service ? { service } : { dir: path.relative(root, cwd) || '.' };
+}
+
 /** Prints what a one-off command can't start for, and exits 1; rethrows anything else. */
 function exitOnOneOffError(err: unknown): never {
   if (
@@ -85,14 +94,11 @@ export async function runOneOffCommand(
   }
   // Written to the session's event log: the service (or directory) it ran in, what it ran, its
   // exit. Its log goes in the same session's folder.
-  const service = getRegisteredPackages().find(
-    (pkg) => path.resolve(pkg.absoluteDir) === path.resolve(spec.cwd),
-  )?.name;
   const entry = cliEventLog(root, currentMode()).begin<OneOffCommandEntry>(
     {
       type: 'one-off-command',
       kind: command.kind,
-      ...(service ? { service } : { dir: path.relative(root, spec.cwd) || '.' }),
+      ...whereOf(root, spec.cwd),
       ...(command.kind === 'exec'
         ? { command: maskSecrets(command.command) }
         : { script: command.script, args: maskSecrets(command.args) }),
@@ -153,6 +159,9 @@ export async function printOneOffResolution(opts: ResolveOneOffRequest): Promise
     spec,
     ...oneOffEnvResolution(target, root, layer),
     logDir: oneOffLogDir(root, currentMode()),
+    root,
+    mode: currentMode(),
+    where: whereOf(root, spec?.cwd ?? target.dir),
   };
   fs.writeSync(RESOLVE_ENV_FD, JSON.stringify(result));
   process.exit(0);

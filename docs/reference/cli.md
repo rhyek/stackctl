@@ -288,6 +288,8 @@ goes in the latest session's folder, under `commands/`.
 - **`run` forwards what follows `--`** to the script. A script that doesn't exist is an error.
 - **`-s` is not accepted.** The target is the first argument.
 - **The exit code is the command's.**
+- **On a terminal, the command gets it**, stdout and stderr each on its own, except for a coding
+  agent, whose command is always piped. Its log then holds no output for that stream.
 
 ## `stackctl logs`
 

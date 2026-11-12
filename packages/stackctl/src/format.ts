@@ -56,3 +56,18 @@ export function logTimestamp(): string {
   lastStamp = { second, text };
   return text;
 }
+
+/**
+ * The command line `/bin/sh -c` would run for `command` and `args`: a script's own text as it is
+ * (`/bin/sh -c <text>`), anything else as its words, each quoted where the shell needs it.
+ */
+export function commandLine(command: string, args: readonly string[]): string {
+  if (command === '/bin/sh' && args.length === 2 && args[0] === '-c') {
+    return args[1]!;
+  }
+  return [command, ...args].map(shellQuote).join(' ');
+}
+
+function shellQuote(word: string): string {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
+}

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { RESOLVE_ENV_FD, assertOutsideCli, rejectUnknownOptions } from '../env-base.js';
+import type { OneOffCommandEntry } from '../event-log.js';
 import type { OneOffResolution } from './resolve.js';
 import { resolverArgs } from './resolver-args.js';
 import type { OneOffResult } from './run.js';
@@ -33,8 +34,9 @@ export type OneOffOptions = {
    */
   workspaceDir?: string;
   /**
-   * `'inherit'` streams the command's output to this process's stdout and stderr; `'pipe'`
-   * collects it into the result. Default: `'inherit'`.
+   * `'inherit'` gives the command this process's stdout and stderr: each one that is a terminal
+   * as it is, so the command sees a terminal, and the others piped through (all of them for a
+   * coding agent). `'pipe'` collects the output into the result. Default: `'inherit'`.
    */
   stdio?: 'inherit' | 'pipe';
 };
@@ -68,7 +70,7 @@ export async function exec(options: ExecOptions): Promise<OneOffResult> {
   if (!Array.isArray(command) || command.length === 0) {
     throw new Error('exec: `command` needs at least the program to run');
   }
-  return runResolved(options, ['--exec', '--', ...command]);
+  return runResolved(options, ['--exec', '--', ...command], { kind: 'exec', command });
 }
 
 /**
@@ -85,18 +87,57 @@ export async function run(options: RunOptions): Promise<OneOffResult> {
   if (typeof options.script !== 'string' || options.script === '') {
     throw new Error('run: `script` names the script or make target to run');
   }
-  return runResolved(options, [`--run=${options.script}`, '--', ...(options.args ?? [])]);
+  const args = options.args ?? [];
+  return runResolved(options, [`--run=${options.script}`, '--', ...args], {
+    kind: 'run',
+    script: options.script,
+    args,
+  });
 }
 
-async function runResolved(options: OneOffOptions, request: string[]): Promise<OneOffResult> {
+/** What `exec()` or `run()` was asked to run, as its event-log lines name it. */
+type Asked = { kind: 'exec'; command: string[] } | { kind: 'run'; script: string; args: string[] };
+
+/**
+ * Resolves the command in a child CLI and runs it here, writing a `one-off-command` begin and end
+ * to the session's event log, as `stackctl exec` and `run` do, with the calling script as `by`.
+ */
+async function runResolved(
+  options: OneOffOptions,
+  request: string[],
+  asked: Asked,
+): Promise<OneOffResult> {
   const args = resolverArgs(options, request);
-  const { spec, logDir } = await resolveInChild(args);
+  const { spec, logDir, root, mode, where } = await resolveInChild(args);
   if (!spec) {
     throw new Error('stackctl: the resolver returned no command');
   }
   // Loaded only now: importing `stackctl` (a config does) mustn't load what runs a command.
-  const { runOneOff } = await import('./run.js');
-  return runOneOff(spec, { stdio: options.stdio ?? 'inherit', logDir });
+  const [{ runOneOff }, { cliEventLog, maskSecrets, sdkBy }, { startedByAgent }] =
+    await Promise.all([
+      import('./run.js'),
+      import('../event-log.js'),
+      import('../agent-detection.js'),
+    ]);
+  const entry = cliEventLog(root, mode).begin<OneOffCommandEntry>(
+    {
+      type: 'one-off-command',
+      kind: asked.kind,
+      ...where,
+      ...(asked.kind === 'exec'
+        ? { command: maskSecrets(asked.command) }
+        : { script: asked.script, args: maskSecrets(asked.args) }),
+    },
+    sdkBy(root, { agent: startedByAgent(), cwd: process.cwd() }),
+  );
+  try {
+    const result = await runOneOff(spec, { stdio: options.stdio ?? 'inherit', logDir });
+    entry.end({ ok: result.exitCode === 0, exitCode: result.exitCode, signal: result.signal });
+    return result;
+  } catch (err) {
+    entry.end({ ok: false, exitCode: null, signal: null });
+    throw err;
+  }
 }
 
 /**

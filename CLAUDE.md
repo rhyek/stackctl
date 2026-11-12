@@ -241,7 +241,8 @@ a temp workspace (`fixture.ts`) with three plain Node services, `api`, `web` (wh
 It covers the picker (keys, clicks, a locked dependency's toast, the filter) and the step into the
 run screen with its startup footer; footer clicks and the commands menu; the log filter; Ctrl+C
 once and twice; a SIGTERM at the first frame; a failed startup; a crash; and, without a TTY, a
-headless run, `start --detach` + `stop`, and a `--kill-others` takeover. Each exit is checked for
+headless run, `start --detach` + `stop`, and a `--kill-others` takeover; and `exec` handing its
+terminal to the command, or piping it without one and for an agent. Each exit is checked for
 its code and for the terminal given back (mouse reporting off, the alternate screen left).
 
 Infra, the dev reverse proxy and the `R` reset stay manual: drive them through the PTY with the

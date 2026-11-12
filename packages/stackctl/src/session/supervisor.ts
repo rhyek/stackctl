@@ -18,7 +18,7 @@ import {
   envKeysFile,
   packageEnvLayer,
 } from '../env.js';
-import { logTimestamp } from '../format.js';
+import { commandLine, logTimestamp } from '../format.js';
 import {
   type InternalLoggers,
   createInternalLogger,
@@ -183,21 +183,6 @@ function paintFor(color: string | undefined, index: number): Paint {
     return chalk[color as 'red'];
   }
   return unpainted;
-}
-
-/**
- * A command line `/bin/sh -c` runs as `spec` would spawn: a script's own text as it is, anything
- * else (a make target, the shell that reports a missing script) as its words, each quoted.
- */
-function commandLine(spec: ExecSpec): string {
-  if (spec.cmd === '/bin/sh' && spec.args.length === 2 && spec.args[0] === '-c') {
-    return spec.args[1]!;
-  }
-  return [spec.cmd, ...spec.args].map(shellQuote).join(' ');
-}
-
-function shellQuote(word: string): string {
-  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 }
 
 interface Service {
@@ -437,7 +422,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       const env = this.envFor(svc.config);
       if (typeof command === 'string') {
         const exec = scriptExec(svc.config, command, [], env);
-        spec = { command: commandLine(exec), env: exec.env };
+        spec = { command: commandLine(exec.cmd, exec.args), env: exec.env };
       } else {
         spec = { command: command.shell, env };
       }
@@ -635,7 +620,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     }
     const proc: SupervisedProcess = this.createProcess({
       name,
-      command: commandLine(spec),
+      command: commandLine(spec.cmd, spec.args),
       cwd: config.absoluteDir,
       env: spec.env,
       onLine: (text, isError) => this.line(svc, proc, text, isError),

@@ -67,6 +67,7 @@ describe('describeBy', () => {
     expect(describeBy({ kind: 'ui', key: 'r' })).toBe('key r');
     expect(describeBy({ kind: 'control-api', request: 'POST /command/quit', userAgent: 'curl/8.7.1' })).toBe('control API (curl/8.7.1)'); // oxfmt-ignore
     expect(describeBy({ ...cli, agent: true })).toBe('cli: infra restart -s db (an agent)');
+    expect(describeBy({ kind: 'sdk', argv: ['scripts/seed.ts', '--rows=10'], cwd: '.', agent: false })).toBe('sdk: node scripts/seed.ts --rows=10 (a person)'); // oxfmt-ignore
     expect(describeBy({ kind: 'session' })).toBe('the session');
   });
 });

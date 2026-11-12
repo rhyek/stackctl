@@ -139,7 +139,7 @@ const { exitCode, stdout } = await run({
 | `target`       | the current directory  | A service's name, or a directory.                                            |
 | `mode`         | as the CLI resolves it | The mode.                                                                    |
 | `workspaceDir` | nearest config         | The directory holding `stackctl.config.ts`.                                  |
-| `stdio`        | `'inherit'`            | `'inherit'` streams the output. `'pipe'` collects it into `stdout` and `stderr`. |
+| `stdio`        | `'inherit'`            | `'inherit'` gives the command this process's stdout and stderr, [as the CLI does](../guide/commands.md#output-and-exit-code). `'pipe'` collects them into `stdout` and `stderr`. |
 
 - **A non-zero exit resolves**, with its `exitCode` or the `signal` that ended it. The caller
   judges the result.
@@ -148,6 +148,8 @@ const { exitCode, stdout } = await run({
 - **The calling process is untouched**: its `process.env` and working directory don't change,
   and neither function calls `process.exit`.
 - **Signals are forwarded** to the command.
+- **Each call is in the [event log](./events.md)** and writes a
+  [log file](../guide/logs.md#log-files), as `stackctl exec` and `run` do.
 
 ## `resolveEnv`
 

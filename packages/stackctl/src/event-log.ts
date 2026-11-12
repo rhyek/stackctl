@@ -22,6 +22,8 @@ export type EventBy =
   | { kind: 'control-api'; request: string; userAgent: string | null }
   /** A stackctl command run from a shell: its own arguments, where, and whether an agent ran it. */
   | { kind: 'cli'; argv: string[]; cwd: string; agent: boolean }
+  /** A Node script calling the SDK's `exec()` or `run()`: node's arguments, where, whether an agent ran it. */
+  | { kind: 'sdk'; argv: string[]; cwd: string; agent: boolean }
   /** The session itself: its start-up infra step. */
   | { kind: 'session' };
 
@@ -168,6 +170,20 @@ export function commandBy(
     kind: 'cli',
     argv: maskSecrets(process.argv.slice(2)),
     cwd: path.relative(root, opts.invocationCwd) || '.',
+    agent: opts.agent,
+  };
+}
+
+/**
+ * Who asked, for the lines of an SDK `exec()` or `run()`: the Node script that called it, its
+ * path relative to `root` and its arguments, run in `cwd`.
+ */
+export function sdkBy(root: string, opts: { agent: boolean; cwd: string }): EventBy {
+  const [script, ...args] = process.argv.slice(1);
+  return {
+    kind: 'sdk',
+    argv: maskSecrets([...(script ? [path.relative(root, script) || '.'] : []), ...args]),
+    cwd: path.relative(root, opts.cwd) || '.',
     agent: opts.agent,
   };
 }

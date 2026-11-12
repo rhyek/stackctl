@@ -133,6 +133,8 @@ export function describeBy(by: EventBy): string {
       return `control API${by.userAgent ? ` (${by.userAgent})` : ''}`;
     case 'cli':
       return `cli: ${by.argv.join(' ')} (${by.agent ? 'an agent' : 'a person'})`;
+    case 'sdk':
+      return `sdk: node ${by.argv.join(' ')} (${by.agent ? 'an agent' : 'a person'})`;
     case 'session':
       return 'the session';
   }

@@ -90,6 +90,7 @@ Every command says who asked in `by`:
 | `ui`          | `key`: `r`, `s`, `R`, `m` or `^c`         | A person at the terminal UI.                          |
 | `control-api` | `request` (`POST /command/…`), `userAgent` | A control API request: `curl/8.7.1`, or `stackctl/<version>` from a stackctl command (`service`, `stop`, a takeover). |
 | `cli`         | `argv`, `cwd`, `agent`                    | A stackctl command run in a shell: its arguments, where it ran, and whether a coding agent ran it. |
+| `sdk`         | `argv`, `cwd`, `agent`                    | A Node script calling [`exec()` or `run()`](./sdk.md#exec-and-run): the script and its arguments, where it ran, and whether a coding agent ran it. |
 | `session`     |                                           | The session itself: bringing its infra up as it starts. |
 
 A session's infra keys and its control API's infra requests run `stackctl infra <action>` as a

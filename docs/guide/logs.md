@@ -75,7 +75,8 @@ node_modules/.stackctl/modes/<mode>/sessions/<id>/
 ```
 
 - **A one-off command belongs to the latest session**, running or not: its log goes in that
-  folder's `commands/`.
+  folder's `commands/`. It holds the command, its piped output and how it ended; output that
+  went to a terminal isn't in it. See [Output and exit code](./commands.md#output-and-exit-code).
 - **A session's folder is kept for 7 days**, then deleted when a session starts.
 
 ## Reading a session's log

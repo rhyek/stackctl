@@ -155,4 +155,12 @@ export function oneOffEnvResolution(
 export interface OneOffResolution extends SerializedEnvResolution {
   spec: OneOffSpec | null;
   logDir: string;
+  /** The workspace root and the mode: where the command's event-log lines go. */
+  root: string;
+  mode: string;
+  /** Where the command runs, as its event-log lines name it. */
+  where: OneOffWhere;
 }
+
+/** Where a one-off command runs, as its event-log lines name it: a service, or a directory. */
+export type OneOffWhere = { service: string } | { dir: string };

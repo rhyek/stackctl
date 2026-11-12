@@ -9,6 +9,9 @@
   See [docs/guide/logs.md](docs/guide/logs.md#log-files).
 - **`stackctl wait` blocks until the mode's session is ready**, for a session started in the
   background. See [docs/reference/cli.md](docs/reference/cli.md#stackctl-wait).
+- **`stackctl exec` and `run` give the terminal to the command**, so its prompts, colors and
+  watch-mode keys work. See [docs/guide/commands.md](docs/guide/commands.md#output-and-exit-code).
+- **The SDK's `exec()` and `run()` are in the event log**, as `stackctl exec` and `run` are.
 
 ### Fixes
 
