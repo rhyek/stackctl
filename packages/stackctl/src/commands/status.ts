@@ -45,26 +45,35 @@ export interface EventRow {
 export function recentRows(lines: EventLine[], count = RECENT): EventRow[] {
   const rows: EventRow[] = [];
   const byId = new Map<string, EventRow>();
-  for (const line of lines) {
+  const add = (line: EventLine): void => {
     if (
       line.type === 'service-state' ||
       line.type === 'infra-state' ||
       line.type === 'session-state'
     ) {
-      continue;
+      return;
     }
     if ('phase' in line) {
       const open = byId.get(line.id);
       if (line.phase === 'end' && open) {
         open.outcome = outcomeOf(line);
-        continue;
+        return;
       }
       const row = { time: line.time, type: line.type, what: whatOf(line), outcome: line.phase === 'end' ? outcomeOf(line) : 'no end yet', by: describeBy(line.by) }; // oxfmt-ignore
       byId.set(line.id, row);
       rows.push(row);
-      continue;
+      return;
     }
     rows.push({ time: line.time, type: line.type, what: whatOf(line), outcome: '', by: null });
+  };
+  for (const line of lines) {
+    // A line this version can't word (another version's, a cut-off write) is skipped, like a
+    // type it doesn't know: the log outlives the stackctl that wrote it.
+    try {
+      add(line);
+    } catch {
+      continue;
+    }
   }
   return rows.slice(-count);
 }

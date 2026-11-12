@@ -22,6 +22,32 @@ describe('recentRows', () => {
     ]);
   });
 
+  test('skips a line it cannot read, as another version or a cut-off write would leave one', () => {
+    const odd = [
+      {
+        type: 'service-command',
+        phase: 'begin',
+        id: 'x1',
+        action: 'restart',
+        service: 'api',
+        time: '2026-11-11T11:50:00.000-06:00',
+        ...envelope,
+      }, // no `by`
+      {
+        type: 'infra-command',
+        phase: 'begin',
+        id: 'x2',
+        action: 'start',
+        by: cli,
+        time: '2026-11-11T11:50:01.000-06:00',
+        ...envelope,
+      }, // no `requested`
+      null,
+      'a string',
+    ] as unknown as EventLine[];
+    expect(recentRows([...odd, lines[0]!]).map((row) => row.type)).toEqual(['session-start']);
+  });
+
   test('keeps the last ones', () => {
     expect(recentRows(lines, 1).map((r) => r.type)).toEqual(['service-command']);
   });
