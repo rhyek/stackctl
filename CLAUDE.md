@@ -27,8 +27,10 @@ use a neutral placeholder instead. When in doubt, ask before committing.
 The documentation is one set of Markdown pages in `docs/`, read three ways:
 
 - **The site, https://stackctl.dev.** VitePress over `docs/` (`docs/.vitepress/config.ts` has
-  the nav and sidebar). `pnpm docs:dev` previews it on port 21070; `docs.yaml` deploys it to
-  GitHub Pages on a push to `main` that touches `docs/`.
+  the nav and sidebar). `pnpm dev` runs it under stackctl itself (the root `stackctl.config.ts`),
+  at http://docs.localhost:21072, or at `https://docs.<ROOT_DOMAIN>` with that set in
+  `.env.development.local`; `pnpm docs:dev` runs VitePress alone on port 21070. `docs.yaml`
+  deploys it to GitHub Pages on a push to `main` that touches `docs/`.
 - **`llms.txt`.** `vitepress-plugin-llms` writes an index (`llms.txt`), the whole site in one
   file (`llms-full.txt`) and a Markdown copy of every page into the site build. Each page's
   frontmatter `description` is its line in the index, so write it for an agent choosing what

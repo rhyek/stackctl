@@ -19,6 +19,11 @@ function versioned(url: string): string {
   return `${path}?v=${hash}`;
 }
 
+// Under stackctl (`pnpm dev`) the dev server is reached through the dev reverse proxy, at the
+// `PUBLIC_ORIGIN` it is handed: that host must be allowed, and the HMR client told to connect to
+// the port the page came from. Unset when the site is built, or run with `pnpm docs:dev`.
+const publicOrigin = process.env.PUBLIC_ORIGIN ? new URL(process.env.PUBLIC_ORIGIN) : undefined;
+
 export default defineConfig({
   title: 'stackctl',
   description:
@@ -56,6 +61,14 @@ export default defineConfig({
   // The index opens by sending a coding agent to the playbook: whatever points an agent at
   // llms.txt (the skill, the rules file, the AGENTS.md block) names this one file.
   vite: {
+    ...(publicOrigin && {
+      server: {
+        allowedHosts: [publicOrigin.hostname],
+        hmr: {
+          clientPort: Number(publicOrigin.port) || (publicOrigin.protocol === 'https:' ? 443 : 80),
+        },
+      },
+    }),
     plugins: [
       llmstxt({
         ignoreFiles: ['.vitepress/**'],
