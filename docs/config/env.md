@@ -17,7 +17,7 @@ export default defineConfig({
     }),
     override: ['NODE_OPTIONS'],
     additionalFiles: ({ mode }) => [
-      { file: `.env.${mode}.pre`, before: 'mode' },
+      { file: `.env.${mode}.generated`, after: 'mode' },
     ],
   },
   services: {/* … */},
@@ -98,18 +98,18 @@ higher-ranked one always wins. With `LOG_LEVEL=info` in the workspace's `.env` a
 
 Extra `.env` files, each loaded just before or after one of stackctl's four.
 
+A file a setup script writes, say, which your own `.env.<mode>.local` can still override:
+
 ```ts
 env: {
   additionalFiles: ({ mode }) => [
-    { file: `.env.${mode}.pre`, before: 'mode' },
-    { file: `.env.${mode}.pre.local`, before: 'mode' },
+    { file: `.env.${mode}.generated`, after: 'mode' },
   ],
 },
 ```
 
-With `--mode development`, each scope then loads `.env`, `.env.local`,
-`.env.development.pre`, `.env.development.pre.local`, `.env.development`,
-`.env.development.local`.
+With `--mode development`, each scope then loads `.env`, `.env.local`, `.env.development`,
+`.env.development.generated`, `.env.development.local`.
 
 | Field              | Value                                                                                       |
 | ------------------ | ------------------------------------------------------------------------------------------- |
@@ -117,42 +117,13 @@ With `--mode development`, each scope then loads `.env`, `.env.local`,
 | `before` / `after` | Exactly one. The stackctl file it loads next to: `'base'` (`.env`), `'local'` (`.env.local`), `'mode'` (`.env.<mode>`) or `'modeLocal'` (`.env.<mode>.local`). |
 | `scope`            | `'workspace'` or `'service'` to look in one place only. Unset: both, like stackctl's own.   |
 
-- **It is an ordinary `.env` file at its place.** A later file wins, and `${VAR}` expands
-  against the files before it.
+- **It is an ordinary `.env` file at its place.** It wins over the files before it and loses
+  to the files after it.
 - **Files on the same anchor load in array order.**
 - **They are read everywhere stackctl's own are**, and watched the same way: creating, editing
   or removing one restarts the services that read it.
 - **Mistakes fail at load**: both or neither of `before` and `after`, a path for `file`, one of
   stackctl's own names, or a duplicate.
-
-### Per-checkout ports
-
-The case it is for: values derived from inputs that differ per checkout. Say each git worktree
-gets its own ports, and the committed `.env.development` derives URLs from them:
-
-```sh
-# .env.development (committed)
-DATABASE_URL=postgres://localhost:${POSTGRES_PORT}/app
-API_URL=http://localhost:${API_PORT}
-```
-
-A `${VAR}` expands against what was read *before* it, so the ports must load earlier. With
-the config above, that is the `.pre` tier:
-
-```sh
-# .env.development.pre (committed): the main checkout's ports
-POSTGRES_PORT=21000
-API_PORT=21001
-```
-
-```sh
-# .env.development.pre.local (git-ignored): written by a setup script in each worktree
-POSTGRES_PORT=21050
-API_PORT=21051
-```
-
-`.env.development.local` couldn't hold them: it loads after `.env.development`, too late for
-the references there.
 
 ## `env.decrypt`
 

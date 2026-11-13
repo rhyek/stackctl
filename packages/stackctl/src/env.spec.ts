@@ -471,6 +471,137 @@ describe('resolveEnvFrom with additional files', () => {
   });
 });
 
+describe('resolveEnvFrom expands references against the final values', () => {
+  const resolve = (opts: { override?: string[]; ambient?: Record<string, string> } = {}) =>
+    resolveEnvFrom({ cwd, relativeDir: 'packages/api', ambient: {}, ...opts }).env;
+
+  test('a reference sees the value a higher-ranked file gives the variable (Vite order)', () => {
+    write('.env', 'URL=http://localhost:${PORT}\n');
+    write('.env.development', 'PORT=4000\n');
+    write('.env.development.local', 'PORT=21600\n');
+    expect(resolve()).toEqual({ URL: 'http://localhost:21600', PORT: '21600' });
+  });
+
+  test("a workspace file's reference sees the service's own value", () => {
+    write('.env', 'URL=http://localhost:$PORT\nPORT=1\n');
+    write('packages/api/.env', 'PORT=2\n');
+    expect(resolve().URL).toBe('http://localhost:2');
+  });
+
+  test('a chain of references resolves whatever order the files define it in', () => {
+    write('.env', 'C=${B}/c\n');
+    write('.env.local', 'B=${A}/b\n');
+    write('.env.development', 'A=a\n');
+    expect(resolve()).toEqual({ C: 'a/b/c', B: 'a/b', A: 'a' });
+  });
+
+  test('a default applies only when no file sets the variable', () => {
+    write('.env', 'X=${P:-none}\nY=${Q:-none}\n');
+    write('.env.local', 'P=5\n');
+    expect(resolve()).toMatchObject({ X: '5', Y: 'none' });
+  });
+
+  test("a reference to the variable's own name sees the value it overrides", () => {
+    write('.env', 'FLAGS=a\n');
+    write('.env.local', 'FLAGS="${FLAGS} b"\n');
+    write('packages/api/.env.development', 'FLAGS="${FLAGS} c"\nOUT=[$FLAGS]\n');
+    expect(resolve()).toEqual({ FLAGS: 'a b c', OUT: '[a b c]' });
+  });
+
+  test("an overridden variable's self-references extend the shell's value, file by file", () => {
+    write('.env', 'NODE_OPTS="${NODE_OPTS} --a"\nCMD="node $NODE_OPTS"\n');
+    write('packages/api/.env.development', 'NODE_OPTS="${NODE_OPTS} --b"\n');
+    const env = resolve({ override: ['NODE_OPTS'], ambient: { NODE_OPTS: '--x' } });
+    expect(env).toEqual({ NODE_OPTS: '--x --a --b', CMD: 'node --x --a --b' });
+  });
+
+  test("a config var's reference sees a file that replaces it", () => {
+    write('.env', 'B=${A}/b\n');
+    write('.env.local', 'A=file\n');
+    const { env } = resolveEnvFrom({
+      cwd,
+      relativeDir: 'packages/api',
+      ambient: {},
+      vars: { A: 'config' },
+    });
+    expect(env).toEqual({ A: 'file', B: 'file/b' });
+  });
+
+  test('a single-quoted value stays literal, and so does an escaped dollar', () => {
+    write('.env', "L='$HOME'\nR=${L}x\nE=\\$PORT\n");
+    write('.env.local', 'PORT=1\n');
+    expect(resolve()).toMatchObject({ L: '$HOME', R: '$HOMEx', E: '$PORT' });
+  });
+
+  test('a command substitution sees the final values, and only the winning line runs', () => {
+    const counter = path.join(cwd, 'counter');
+    write('.env', `V=$(echo lost >> ${counter})\nW=$(echo $P)\n`);
+    write('.env.local', `V=$(echo won >> ${counter}; echo ran)\nP=final\n`);
+    expect(resolve()).toMatchObject({ V: 'ran', W: 'final' });
+    expect(fs.readFileSync(counter, 'utf8')).toBe('won\n');
+  });
+
+  test('a reference loop expands to nothing, and says so on stderr', { timeout: 5000 }, () => {
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args.join(' '));
+    });
+    write('.env', 'A=${B}a\nB=${A}b\nC=ok\n');
+    expect(resolve()).toEqual({ A: 'ba', B: 'b', C: 'ok' });
+    expect(errors).toEqual(['stackctl: A → B → A loops, so ${A} in B expands to nothing']);
+  });
+
+  test("a reference inside a default sees a later file's value", () => {
+    write('.env', 'X=${MISSING:-${P}}\nY=${MISSING:-$P}/y\n');
+    write('.env.local', 'P=5\n');
+    expect(resolve()).toMatchObject({ X: '5', Y: '5/y' });
+  });
+
+  test('a longer reference loop is named in full', () => {
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args.join(' '));
+    });
+    write('.env', 'A=${B}\nB=${C}\nC=$A\n');
+    expect(resolve()).toEqual({ A: '', B: '', C: '' });
+    expect(errors).toEqual(['stackctl: A → B → C → A loops, so ${A} in C expands to nothing']);
+  });
+
+  test('a command that fails leaves its value as written', () => {
+    write('.env', 'V=$(exit 3)\n');
+    expect(resolve().V).toBe('$(exit 3)');
+  });
+
+  // Where no file references a later one, resolving against the final values is what reading the
+  // lines in order gives: dotenvx's own parse, the syntax rules included.
+  test("resolves a file with no forward reference exactly as dotenvx's parse does", () => {
+    const source = [
+      'export A="a\\nb"',
+      "B='x\\ny $A'",
+      'C=`t $A`',
+      'D=  spaced  # comment',
+      'E=${A:-d}${MISSING:-d}${A:+p}${MISSING:+p}${A-d}${MISSING-d}',
+      'F="q \\"in\\" ${A}"',
+      'G=',
+      'H=\\$A',
+      'I="multi',
+      'line $A"',
+      'J=$A${C}$B',
+      'K=$(echo cmd)',
+      'win: colon',
+    ].join('\r\n');
+    write('.env', source);
+    const ambient = { HOME: '/home/someone', PATH: process.env.PATH ?? '' };
+    const { parsed } = primitives.parseSync(source, {
+      processEnv: { ...ambient },
+      overload: false,
+      fk: [],
+      ek: '*',
+    });
+    expect(resolveEnvFrom({ cwd, relativeDir: '.', ambient }).env).toEqual(parsed);
+  });
+});
+
 describe('resolveEnvFrom precedence against the ambient environment', () => {
   test('the ambient environment wins over a file var of the same name', () => {
     withAmbient({ STACKCTL_ENV_OVERRIDE: 'ambient' }, () => {
@@ -1247,6 +1378,61 @@ describe('encrypted values', () => {
     const layer = workspaceEnvLayer({ cwd, decrypt: true, read: files.read });
     expect(layer).toMatchObject({ SECRET: 's3cret', PLAIN: '1' });
     expect(readFileSync.mock.calls.filter(([p]) => String(p).endsWith('.env.keys'))).toEqual([]);
+  });
+
+  test("expands a decrypted value's references unless single-quoted, and a reference to it", () => {
+    const { publicKey, privateKey } = primitives.keypair();
+    const url = primitives.encrypt(publicKey, 'db:${PORT}');
+    write('.env', `DOTENV_PUBLIC_KEY="${publicKey}"\nURL="${url}"\nLIT='${url}'\nOUT=$URL/x\n`);
+    write('.env.local', 'PORT=5432\n');
+    const { env } = resolveEnvFrom({
+      cwd,
+      relativeDir: '.',
+      decrypt: true,
+      ambient: { DOTENV_PRIVATE_KEY: privateKey },
+    });
+    expect(env).toMatchObject({ URL: 'db:5432', LIT: 'db:${PORT}', OUT: 'db:5432/x' });
+  });
+
+  test('decrypts each definition of a name, the later one winning', () => {
+    const { publicKey, privateKey } = primitives.keypair();
+    write(
+      '.env',
+      `DOTENV_PUBLIC_KEY="${publicKey}"\nSECRET="${primitives.encrypt(publicKey, 'base')}"\nLOW=$SECRET\n`,
+    );
+    write('.env.local', `SECRET="${primitives.encrypt(publicKey, 'local')}"\n`);
+    const { env } = resolveEnvFrom({
+      cwd,
+      relativeDir: '.',
+      decrypt: true,
+      ambient: { DOTENV_PRIVATE_KEY: privateKey },
+    });
+    expect(env).toMatchObject({ SECRET: 'local', LOW: 'local' });
+  });
+
+  test("decrypts a file's value for a variable env.override lets win over the shell", () => {
+    const privateKey = secret();
+    const { env } = resolveEnvFrom({
+      cwd,
+      relativeDir: '.',
+      decrypt: true,
+      override: ['SECRET'],
+      ambient: { SECRET: 'from-shell', DOTENV_PRIVATE_KEY: privateKey },
+    });
+    expect(env.SECRET).toBe('s3cret');
+  });
+
+  test('neither decrypts nor reports a value the shell wins over', () => {
+    secret();
+    const error = vi.spyOn(console, 'error');
+    const { env } = resolveEnvFrom({
+      cwd,
+      relativeDir: '.',
+      decrypt: true,
+      ambient: { SECRET: 'from-shell' },
+    });
+    expect(env).toMatchObject({ SECRET: 'from-shell', PLAIN: '1' });
+    expect(error).not.toHaveBeenCalled();
   });
 
   test('leaves a value it has no key for as it is, and says which one on stderr', () => {

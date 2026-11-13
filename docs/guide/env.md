@@ -30,6 +30,10 @@ At each scope, in this order, each overriding the one before:
 3. `.env.<mode>`
 4. `.env.<mode>.local`
 
+So a mode's files win over the generic ones, `.env.local` included, and each `.local` file wins
+over the same file without it. This is
+[Vite's order](https://vite.dev/guide/env-and-mode#env-files).
+
 Only files that exist are read. Commit `.env` and `.env.<mode>`, and keep `.env*.local` out of
 git for personal overrides. To commit secrets too, encrypt them with dotenvx and turn on
 [`env.decrypt`](../config/env.md#envdecrypt).
@@ -54,8 +58,8 @@ files of your own between stackctl's, use
 A mode picks the `.env.<mode>` files, and gives the session its own state.
 
 ```sh
-sctl                 # development
-sctl --mode test     # .env.test and .env.test.local
+sctl              # .env, .env.local, .env.development, .env.development.local
+sctl --mode test  # .env, .env.local, .env.test, .env.test.local
 ```
 
 - **Without `--mode`**, the mode is `STACKCTL_MODE` if set, else `test` in CI (`CI` set and not
@@ -112,8 +116,15 @@ when stackctl starts. Restart stackctl to pick those up.
 
 ## Details
 
-- **`${VAR}` expands to the value that wins** for that variable: the shell's, or an
-  already-loaded file's when the shell has none or `env.override` names it.
+- **`${VAR}` expands to the value that wins** for that variable, whichever file sets it: the
+  shell's, or the highest-ranked file's, as in Vite. So `.env` can hold
+  `DATABASE_URL=postgres://localhost:${DB_PORT}/app` while each `.env.<mode>` sets `DB_PORT`,
+  and a git worktree's `.env.<mode>.local` sets its own.
+- **A reference to a variable's own name sees the value it overrides**: a lower-ranked file's,
+  or the shell's. `NODE_OPTIONS="$NODE_OPTIONS --flag"` extends it, file by file, with
+  [`env.override`](../config/env.md#envoverride) when the shell sets it.
+- **A reference loop expands to nothing**, `A=$B` with `B=$A` say, and stackctl names it on
+  stderr.
 - **A file that can't be read yet holds the services, not the session.** macOS, for one,
   blocks a read of a Dropbox or iCloud folder until you allow access. The services show as
   `waiting`, the log names the file, and the session still answers its control API.

@@ -338,25 +338,172 @@ export function assignedNames(source: string): Set<string> {
   return new Set(Array.from(lines, (line) => line[1] ?? ''));
 }
 
+/** One assignment of a variable, in rank order: a file's line, or a value given whole. */
+interface Definition {
+  name: string;
+  value: string;
+  /**
+   * Whether `value` is a template to resolve, unless it is still encrypted: a file's line that
+   * isn't single-quoted. A value given whole (the config's, the shell's) is data.
+   */
+  template: boolean;
+}
+
 /**
- * Variables as the source of a `.env` file, so they resolve by the very rules a file's do: a
- * later line replaces them, and a later line's `${VAR}` references them.
- *
- * Each line assigns the variable from a placeholder that holds its value — `placeholders`, for
- * the environment the source is expanded against — so nothing in the value has to survive
- * dotenv's own syntax: quotes, newlines, a `#`.
+ * The names a value may reference, as dotenvx finds them: `$VAR`, and `${VAR}` with or without
+ * an operator (`${VAR:-default}`), a reference inside a default included. Not one escaped as
+ * `\$`. A name found that the value turns out not to use costs a lookup, nothing else.
  */
-function asEnvSource(
-  vars: Record<string, string>,
-  placeholderPrefix: string,
-): { source: string; placeholders: Record<string, string> } {
-  const placeholders: Record<string, string> = {};
-  const lines = Object.entries(vars).map(([name, value], i) => {
-    const placeholder = `${placeholderPrefix}${String(i)}`;
-    placeholders[placeholder] = value;
-    return `${name}=\${${placeholder}}`;
+const REFERENCE_RE = /(?<!\\)\$(?:\{([^{}:+-]+)|([A-Za-z_][A-Za-z0-9_]*))/g;
+
+/**
+ * Resolves `defs` into each variable's value, the last definition of a name winning, except that
+ * `winning` (the ambient environment's, where it wins) wins over every one.
+ *
+ * A reference resolves against the final values, not just the lines before it, as in Vite: a
+ * `${PORT}` in `.env` sees the `PORT` of `.env.development.local`. A reference to the variable's
+ * own name sees the value its definition overrides, the one before it, so
+ * `NODE_OPTIONS="$NODE_OPTIONS --flag"` extends that, file by file. Only the definitions a
+ * winning value needs are resolved, so the `$(command)` of a line a later file overrides never
+ * runs. A reference that loops back through other variables expands to nothing, and stderr says
+ * so. The syntax (`${VAR:-default}`, `$(command)`, `\$`) is dotenvx's own `expand` and `evaluate`.
+ */
+function resolveDefinitions(
+  defs: Definition[],
+  winning: Record<string, string>,
+  standIn: string,
+): Record<string, string> {
+  const byName = new Map<string, number[]>();
+  defs.forEach(({ name }, i) => {
+    const indices = byName.get(name);
+    if (indices) {
+      indices.push(i);
+    } else {
+      byName.set(name, [i]);
+    }
   });
-  return { source: lines.join('\n'), placeholders };
+  // dotenvx scans what it substitutes for references, and a `$(command)` runs with these as its
+  // environment: every value passed in has its `$` hidden (see {@link hideDollars}).
+  const hiddenWinning = hideDollars(winning, standIn);
+  const resolved = new Map<number, string>();
+  const resolving: number[] = [];
+
+  /** The value of `name`: the winning one, or else that of its last definition before `below`. */
+  const valueOf = (name: string, below = defs.length): string | undefined => {
+    if (Object.hasOwn(winning, name)) {
+      return winning[name];
+    }
+    const i = byName.get(name)?.findLast((index) => index < below);
+    return i === undefined ? undefined : resolve(i);
+  };
+
+  const resolve = (i: number): string | undefined => {
+    const done = resolved.get(i);
+    if (done !== undefined) {
+      return done;
+    }
+    const def = defs[i];
+    if (def === undefined) {
+      return undefined;
+    }
+    const at = resolving.indexOf(i);
+    if (at !== -1) {
+      const loop = [...resolving.slice(at), i].map((index) => defs[index]?.name ?? '');
+      console.error(
+        `stackctl: ${loop.join(' → ')} loops, so \${${def.name}} in ${loop.at(-2) ?? ''} expands to nothing`,
+      );
+      return undefined;
+    }
+    if (!def.template || primitives.encrypted(def.value)) {
+      resolved.set(i, def.value);
+      return def.value;
+    }
+    resolving.push(i);
+    const refs: Record<string, string> = {};
+    for (const [, braced, bare] of def.value.matchAll(REFERENCE_RE)) {
+      const name = braced ?? bare ?? '';
+      const value = name === def.name ? valueOf(name, i) : valueOf(name);
+      if (value !== undefined) {
+        refs[name] = value.replaceAll('$', standIn);
+      }
+    }
+    resolving.pop();
+    // As dotenvx's parse does: a value a `$(command)` changed is expanded no further, and only an
+    // expanded one has its `\$` unescaped. A command that fails leaves the value as it is.
+    let value = def.value;
+    try {
+      value = primitives.evaluate(value, { processEnv: hiddenWinning, runningParsed: refs });
+    } catch {
+      // As written.
+    }
+    if (value === def.value) {
+      value = primitives.expand(value, { processEnv: {}, runningParsed: refs });
+      value = value.replace(/\\\$/g, '$');
+    }
+    value = value.replaceAll(standIn, '$');
+    resolved.set(i, value);
+    return value;
+  };
+
+  const env: Record<string, string> = {};
+  for (const name of byName.keys()) {
+    env[name] = valueOf(name) ?? '';
+  }
+  return env;
+}
+
+/** The definitions in a `.env` source, in order, each a template unless single-quoted. */
+function scanDefinitions(text: string): Definition[] {
+  const defs: Definition[] = [];
+  primitives.scan(text, ({ name, value, quote }) => {
+    defs.push({ name, value, template: quote !== "'" });
+    return value;
+  });
+  return defs;
+}
+
+/**
+ * The ambient environment's private keys, and nothing else: dotenvx gives a variable in the
+ * environment it decrypts with that variable's value, in place of decrypting.
+ */
+function ambientPrivateKeys(ambient: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(ambient).filter(([name]) => name.startsWith('DOTENV_PRIVATE_KEY')),
+  );
+}
+
+/**
+ * Decrypts the encrypted values among `defs` in place, with the private keys in `keys`. A value
+ * with no key to decrypt it stays as it is, and stderr says which, as dotenvx does.
+ */
+function decryptDefinitions(defs: Definition[], keys: Record<string, string>): void {
+  const encrypted = defs.filter((def) => primitives.encrypted(def.value));
+  if (encrypted.length === 0) {
+    return;
+  }
+  // Each single-quoted, so dotenvx decrypts it and resolves nothing in it. A file's public keys go
+  // first, which tells dotenvx which private key to try first.
+  const publicKeys = defs.filter((def) => def.name.startsWith('DOTENV_PUBLIC_KEY'));
+  const source = [...publicKeys, ...encrypted]
+    .map(({ name, value }) => `${name}='${value}'`)
+    .join('\n');
+  const { parsed, errors } = primitives.parsearraysSync(source, {
+    processEnv: keys,
+    overload: false,
+    fk: [],
+  });
+  const next = new Map<string, number>();
+  for (const def of encrypted) {
+    const n = next.get(def.name) ?? 0;
+    next.set(def.name, n + 1);
+    const value = parsed[def.name]?.[n];
+    if (value !== undefined) {
+      def.value = value;
+    }
+  }
+  for (const error of errors) {
+    console.error(error.message);
+  }
 }
 
 /** The options {@link resolveEnv} takes, checked at runtime since a JavaScript caller bypasses the types. */
@@ -498,52 +645,47 @@ export function resolveEnvFrom(opts: ResolveEnvOptions, given?: EnvFileReader): 
     return { env: {}, files, candidates, packageNames };
   }
 
+  // dotenvx's syntax, taken from the package it lives in: `@dotenvx/dotenvx` wraps the same
+  // functions in a CLI's worth of tooling, which costs every command its load time. Each file is
+  // scanned into its lines, unresolved, and resolved here (see {@link resolveDefinitions}).
+  const fileDefs = texts.flatMap(scanDefinitions);
+
   // An ambient variable the files may override stops being ambient for this resolution: it
-  // becomes the first line read, ahead of the config's own variables and every file. So the
-  // lines that assign it win, each one's reference to it sees what the lines before left —
-  // the ambient value, for the first — and every later reference sees the result. The rest of
-  // the ambient environment wins as ever, for the variable itself and for references to it.
+  // becomes the first definition, ahead of the config's own variables and every file. So the
+  // lines that assign it win, and its first line's reference to it sees the ambient value. The
+  // rest of the ambient environment wins as ever, for the variable itself and for references.
   const { override } = opts;
-  const assigned = new Set([...Object.keys(vars), ...assignedNames(texts.join('\n'))]);
+  const assigned = new Set([...Object.keys(vars), ...fileDefs.map((def) => def.name)]);
   const isOverridden = (key: string) =>
     assigned.has(key) && (override === true || (Array.isArray(override) && override.includes(key)));
   const winning: Record<string, string> = {};
-  const overridable: Record<string, string> = {};
-  for (const [key, value] of Object.entries(ambient)) {
-    (isOverridden(key) ? overridable : winning)[key] = value;
+  const wholeValues: Definition[] = [];
+  for (const [name, value] of Object.entries(ambient)) {
+    if (isOverridden(name)) {
+      wholeValues.push({ name, value, template: false });
+    } else {
+      winning[name] = value;
+    }
+  }
+  for (const [name, value] of Object.entries(vars)) {
+    wholeValues.push({ name, value, template: false });
   }
 
-  const fromAmbient = asEnvSource(overridable, '__STACKCTL_AMBIENT_');
-  const fromVars = asEnvSource(vars, '__STACKCTL_VAR_');
-  const final = { ...winning, ...fromAmbient.placeholders, ...fromVars.placeholders };
-  const standIn = dollarStandIn([...Object.values(final), ...texts]);
-  // dotenvx's parser, taken from the service it lives in: `@dotenvx/dotenvx` wraps the same
-  // call in a CLI's worth of tooling, which costs every command its load time. It reads from
-  // `processEnv` for `$VAR` lookups but writes to neither it nor the real process.env, so
-  // nothing is mutated. It reads no `.env.keys` itself (`fk`): with `decrypt`, the keys come
-  // through `read` like the files, each under a name of its own, so they can't shadow a
-  // variable; without it, nothing is decrypted (`ek`). The patch in `patches/` loads its crypto
-  // code only once a value is decrypted, and keeps a key and a decrypted value for the process,
-  // since a config's env is parsed once per scope. It is why the version is pinned: a new one
-  // needs the patch made again (`pnpm patch`).
-  const source = [fromAmbient.source, fromVars.source, ...texts].join('\n');
-  const processEnv = hideDollars(final, standIn);
-  const { parsed, errors } = opts.decrypt
-    ? primitives.parseSync(source, {
-        processEnv: { ...processEnv, ...privateKeys(read(envKeysFile(opts.cwd))) },
-        overload: false,
-        fk: [],
-      })
-    : primitives.parseSync(source, { processEnv, overload: false, fk: [], ek: '*' });
-  // An encrypted value with no key to decrypt it stays as it is; say which, as dotenvx does.
-  for (const error of errors) {
-    console.error(error.message);
+  // dotenvx reads no `.env.keys` itself (`fk`): with `decrypt`, the keys come through `read` like
+  // the files, each under a name of its own, so they can't shadow a variable; without it, nothing
+  // is decrypted. A value the ambient environment wins over needs no decrypting. The patch in
+  // `patches/` loads dotenvx's crypto code only once a value is decrypted, and keeps a key and a
+  // decrypted value for the process, since a config's env is resolved once per scope. It is why
+  // the version is pinned: a new one needs the patch made again (`pnpm patch`).
+  if (opts.decrypt) {
+    decryptDefinitions(
+      fileDefs.filter((def) => !Object.hasOwn(winning, def.name)),
+      { ...ambientPrivateKeys(ambient), ...privateKeys(read(envKeysFile(opts.cwd))) },
+    );
   }
 
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(parsed)) {
-    env[key] = value.replaceAll(standIn, '$');
-  }
+  const standIn = dollarStandIn([...Object.values(ambient), ...Object.values(vars), ...texts]);
+  const env = resolveDefinitions([...wholeValues, ...fileDefs], winning, standIn);
   return { env, files, candidates, packageNames };
 }
 

@@ -309,13 +309,12 @@ export type EnvInput<T = TokenRecord> =
        * Extra `.env` files, each placed just `before` or `after` one of stackctl's own: `'base'`
        * (`.env`), `'local'` (`.env.local`), `'mode'` (`.env.<mode>`) or `'modeLocal'`
        * (`.env.<mode>.local`). Files on the same anchor load in array order. Each is an ordinary
-       * `.env` file at its place: a later file wins, and a `${VAR}` expands against what the
-       * files before it set. Looked for at both scopes unless `scope` says `'workspace'` or
-       * `'service'`, and read wherever stackctl reads its own files. An array, or a callback
-       * over `{ mode }`:
+       * `.env` file at its place: it wins over the files before it and loses to those after.
+       * Looked for at both scopes unless `scope` says `'workspace'` or `'service'`, and read
+       * wherever stackctl reads its own files. An array, or a callback over `{ mode }`:
        *
        * ```ts
-       * additionalFiles: ({ mode }) => [{ file: `.env.${mode}.pre`, before: 'mode' }]
+       * additionalFiles: ({ mode }) => [{ file: `.env.${mode}.generated`, after: 'mode' }]
        * ```
        */
       additionalFiles?: EnvAdditionalFile[] | EnvAdditionalFilesResolver;
