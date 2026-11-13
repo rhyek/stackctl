@@ -5,8 +5,7 @@ paths:
   - "docs/.vitepress/config.ts"
   - "packages/stackctl/package.json"
   - "packages/stackctl/src/cli.ts"
-  - "docs/public/logo.svg"
-  - "docs/public/logo-small.svg"
+  - "logo/**"
 ---
 
 # How stackctl describes itself — one wording and one icon, everywhere, in lockstep
@@ -52,20 +51,25 @@ Where each one lives:
 
 ## The icon
 
-`docs/public/logo.svg` is the icon: a prompt in front of three log lines, the middle one yellow,
-on a dark rounded tile. `docs/public/logo-small.svg` is the same icon for small sizes, with the
-three lines as thick as the prompt's stroke. Everything else is made from one of the two, so a
-change to the icon is a change to both and to all of these, in the same change:
+`logo/` holds the icon and everything made from it. `logo/logo.svg` is the icon: a prompt in
+front of three log lines, the middle one yellow, on a dark rounded tile. `logo/logo-small.svg` is
+the same icon for small sizes, with the three lines as thick as the prompt's stroke. Everything
+else is made from one of the two, so a change to the icon is a change to both and to all of
+these, in the same change:
 
 | Place                                   | File                               | Wired in                                   |
 | --------------------------------------- | ---------------------------------- | ------------------------------------------ |
-| The browser tab                         | `logo-small.svg`, and `favicon-32.png` | `head` in `docs/.vitepress/config.ts`  |
-| An iPhone's home screen                 | `apple-touch-icon.png` (180 px, square: iOS rounds it) | `head`                 |
+| The browser tab                         | `logo-small.svg`, and `site/favicon-32.png` | `head` in `docs/.vitepress/config.ts` |
+| An iPhone's home screen                 | `site/apple-touch-icon.png` (180 px, square: iOS rounds it) | `head`            |
 | The site's nav bar                      | `logo-small.svg`                   | `themeConfig.logo`                         |
 | The home page, beside the headline      | `logo.svg`                         | `hero.image` in `docs/index.md`            |
-| A link's preview (Slack, X, …)          | `og-image.png` (512 px, square corners: Slack rounds it) | `og:image` in `head`   |
-| `stackctl.config.*` in VS Code's icon themes | `maintenance/icon-themes/` (from `logo-small.svg`) | upstream, by pull request ([its README](../../maintenance/icon-themes/README.md)) |
+| A link's preview (Slack, X, …)          | `site/og-image.png` (512 px, square corners: Slack rounds it) | `og:image` in `head` |
+| `stackctl.config.*` in VS Code's icon themes | `icon-themes/vscode/<theme id>/` (from `logo-small.svg`) | upstream, by pull request ([its README](../../logo/icon-themes/README.md)) |
 
+- **The site serves them through links.** VitePress only serves files from `docs/public/`, so
+  each file the site uses has a relative symlink there, under the name its URL uses
+  (`docs/public/logo.svg` → `../../logo/logo.svg`). A new file the site needs gets one too.
+  `docs.yaml` deploys on a change to `logo/` as well as `docs/`.
 - **The PNGs are renders of the SVGs.** Re-render all three when either changes, at their sizes,
   from a browser (headless Chrome with a transparent background): `favicon-32.png` from
   `logo-small.svg`; the touch icon and the preview from `logo.svg` with the tile's corners

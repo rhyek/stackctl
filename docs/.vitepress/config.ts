@@ -33,8 +33,9 @@ export default defineConfig({
   // Contributor internals and working notes live in docs/ too, but aren't part of the site.
   srcExclude: ['architecture/**', 'superpowers/**'],
   sitemap: { hostname: site },
-  // The icon at its small size (docs/public/logo-small.svg) in the browser tab, with a PNG for
-  // browsers that don't take an SVG one, and the square one iOS rounds for a home-screen bookmark.
+  // The icon at its small size (logo/logo-small.svg, linked into docs/public/) in the browser
+  // tab, with a PNG for browsers that don't take an SVG one, and the square one iOS rounds for a
+  // home-screen bookmark.
   head: [
     ['link', { rel: 'icon', href: versioned('/logo-small.svg'), type: 'image/svg+xml' }],
     [

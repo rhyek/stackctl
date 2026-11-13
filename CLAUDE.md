@@ -6,6 +6,9 @@ Monorepo for the published `stackctl` npm package.
 - `example/` — a self-contained example monorepo that consumes the package via
   `stackctl: link:../packages/stackctl` (see `example/package.json`).
 - `maintenance/` — the project's own notes and tooling. See [Maintenance](#maintenance).
+- `logo/` — the icon, its renders for the site and its files for VS Code's icon themes. The site
+  serves its files through symlinks in `docs/public/`; see
+  [`.claude/rules/project-wording.md`](.claude/rules/project-wording.md#the-icon).
 
 ## No worktrees — work in the main checkout
 
@@ -170,8 +173,7 @@ with neither the package nor the site.
 | `maintenance/scripts/format-docs-snippets.ts` | Keeps the docs' `ts` snippets within 75 columns (`pnpm format`, `pnpm lint`). |
 | `maintenance/scripts/changelog.ts`            | Reads the release state out of `CHANGELOG.md`, for CI and `release.yaml`. |
 | `maintenance/scripts/check-source-maps.ts`    | Checks that the built source maps point into `src/`, in CI. |
-| `maintenance/icon-themes/`                    | stackctl's file icon for VS Code's icon themes (Material Icon Theme, vscode-icons), to add to them by pull request. Its README has the entries. |
-| `maintenance/scripts/icon-themes.ts`          | Writes `maintenance/icon-themes/` from `docs/public/logo-small.svg`. |
+| `maintenance/scripts/icon-themes.ts`          | Writes `logo/icon-themes/` from `logo/logo-small.svg`. |
 
 - **A note goes in `maintenance/docs/`, a script in `maintenance/scripts/`**, and each gets a
   row here. A script runs from the repo root, as `node maintenance/scripts/<name>.ts`.

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // Writes stackctl's file icon for VS Code's two most used icon themes into
-// maintenance/icon-themes/vscode/<theme id>/, from the icon's small version,
-// docs/public/logo-small.svg.
+// logo/icon-themes/vscode/<theme id>/, from the icon's small version, logo/logo-small.svg.
 //
 //   node maintenance/scripts/icon-themes.ts
 //
@@ -18,8 +17,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const root = path.join(import.meta.dirname, '../..');
-const source = path.join(root, 'docs/public/logo-small.svg');
-const out = path.join(root, 'maintenance/icon-themes/vscode');
+const source = path.join(root, 'logo/logo-small.svg');
+const out = path.join(root, 'logo/icon-themes/vscode');
 
 type Element = { tag: 'rect' | 'path'; attrs: Record<string, string> };
 

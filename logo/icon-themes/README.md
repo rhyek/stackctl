@@ -9,7 +9,7 @@ request. Nothing here ships with the package or the site.
 | Material Icon Theme | [material-extensions/vscode-material-icon-theme](https://github.com/material-extensions/vscode-material-icon-theme) | `vscode/material-icon-theme/stackctl.svg`, `stackctl_light.svg` |
 | vscode-icons | [vscode-icons/vscode-icons](https://github.com/vscode-icons/vscode-icons) | `vscode/vscode-icons/file_type_stackctl.svg` |
 
-`node maintenance/scripts/icon-themes.ts` writes them from `docs/public/logo-small.svg`, so run it
+`node maintenance/scripts/icon-themes.ts` writes them from `logo/logo-small.svg`, so run it
 whenever that changes and commit both together. The script's header says how each theme's
 version differs.
 
