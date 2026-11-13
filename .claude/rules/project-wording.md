@@ -64,11 +64,15 @@ change to the icon is a change to both and to all of these, in the same change:
 | The site's nav bar                      | `logo-small.svg`                   | `themeConfig.logo`                         |
 | The home page, beside the headline      | `logo.svg`                         | `hero.image` in `docs/index.md`            |
 | A link's preview (Slack, X, …)          | `og-image.png` (512 px, square corners: Slack rounds it) | `og:image` in `head`   |
+| `stackctl.config.*` in VS Code's icon themes | `maintenance/icon-themes/` (from `logo-small.svg`) | upstream, by pull request ([its README](../../maintenance/icon-themes/README.md)) |
 
 - **The PNGs are renders of the SVGs.** Re-render all three when either changes, at their sizes,
   from a browser (headless Chrome with a transparent background): `favicon-32.png` from
   `logo-small.svg`; the touch icon and the preview from `logo.svg` with the tile's corners
   squared.
+- **The icon themes' SVGs are written from `logo-small.svg`** by
+  `node maintenance/scripts/icon-themes.ts`. Run it when that changes; a theme that already
+  carries the icon then needs a pull request of its own.
 - **Every URL to them carries a hash of the file** (`versioned()` in the site config), so a
   changed icon is a new URL and no browser or CDN keeps the old one. Reference a public file
   through it, never by its bare path.

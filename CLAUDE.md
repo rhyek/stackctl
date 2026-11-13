@@ -170,6 +170,8 @@ with neither the package nor the site.
 | `maintenance/scripts/format-docs-snippets.ts` | Keeps the docs' `ts` snippets within 75 columns (`pnpm format`, `pnpm lint`). |
 | `maintenance/scripts/changelog.ts`            | Reads the release state out of `CHANGELOG.md`, for CI and `release.yaml`. |
 | `maintenance/scripts/check-source-maps.ts`    | Checks that the built source maps point into `src/`, in CI. |
+| `maintenance/icon-themes/`                    | stackctl's file icon for VS Code's icon themes (Material Icon Theme, vscode-icons), to add to them by pull request. Its README has the entries. |
+| `maintenance/scripts/icon-themes.ts`          | Writes `maintenance/icon-themes/` from `docs/public/logo-small.svg`. |
 
 - **A note goes in `maintenance/docs/`, a script in `maintenance/scripts/`**, and each gets a
   row here. A script runs from the repo root, as `node maintenance/scripts/<name>.ts`.
