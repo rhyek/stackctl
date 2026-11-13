@@ -16,10 +16,40 @@ declare module '@dotenvx/primitives' {
     /** Values that could not be decrypted. */
     errors: { code: string; message: string }[];
   }
+  /** One assignment `scan` read: its value unquoted and unescaped, still unresolved. */
+  interface ScannedLine {
+    name: string;
+    value: string;
+    /** The quote around the value: `'`, `"`, `` ` `` or none (`''`). */
+    quote: string;
+  }
+  interface ResolveOptions {
+    /** Variables looked up first, and the environment of a `$(command)`. */
+    processEnv?: Record<string, string>;
+    /** Variables looked up after `processEnv`. */
+    runningParsed?: Record<string, string>;
+  }
   interface Primitives {
     parseSync(source: string, options?: ParseOptions): ParseResult;
-    /** Every assignment in `source`, each name's values in order, unresolved. */
-    scan(source: string): { scanned: Record<string, string[]> };
+    /** {@link parseSync}, with each name's values in the order `source` assigns them. */
+    parsearraysSync(
+      source: string,
+      options?: ParseOptions,
+    ): Omit<ParseResult, 'parsed'> & { parsed: Record<string, string[]> };
+    /**
+     * Every assignment in `source`, each name's values in order, unresolved; `line` is called
+     * with each, in order.
+     */
+    scan(
+      source: string,
+      line?: (assignment: ScannedLine) => string,
+    ): { scanned: Record<string, string[]> };
+    /** `value` with its `${VAR}` and `$VAR` references replaced. */
+    expand(value: string, options: ResolveOptions): string;
+    /** `value` with each `$(command)` replaced by what it prints; throws when one fails. */
+    evaluate(value: string, options: ResolveOptions): string;
+    /** Whether `value` is one dotenvx encrypted (`encrypted:…`). */
+    encrypted(value: string): boolean;
     keypair(): { publicKey: string; privateKey: string };
     encrypt(publicKey: string, value: string): string;
   }

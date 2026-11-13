@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0
+
+### Features
+
+- **A `${VAR}` in a `.env` file expands to the variable's final value, whichever file sets it**,
+  as in Vite, so `.env` can build URLs from ports each mode's file sets. See
+  [docs/guide/env.md](docs/guide/env.md#details).
+
+### Breaking changes
+
+- **A `${VAR}` sees the value a later file gives the variable, not the one before it**: where a
+  reference needs the earlier value, give that value a name of its own.
+
 ## 0.6.0
 
 ### Features
