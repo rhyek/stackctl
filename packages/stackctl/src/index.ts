@@ -10,9 +10,6 @@ export type {
   CustomField,
   CustomFields,
 } from './log-formatter.js';
-// Re-exported so a hand-written `logs.formatter` can validate structured log lines with zod
-// without adding a direct dependency (stackctl already bundles it).
-export { z } from 'zod';
 export type {
   ServiceConfigInput,
   ServiceInput,

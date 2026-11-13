@@ -13,6 +13,7 @@ import type { InfraAction } from '../infra/control.js';
 import { InfraManager } from '../infra/manager.js';
 import { createInfraReporter, type InfraReporter } from '../infra/report.js';
 import { InfraError, type InfraRunSummary } from '../infra/types.js';
+import { endCommandsOnSignals } from '../spawn.js';
 import { loadConfigOrExit } from './workspace.js';
 
 // `stackctl infra …`: the services the packages need but that aren't packages. Every subcommand
@@ -106,6 +107,8 @@ export async function runInfra(
   invocationCwd: string,
 ): Promise<never> {
   const { manager, mode } = await loadInfraOrExit();
+  // A `kill <pid>` of this command ends the Compose run or migration it is waiting on, too.
+  endCommandsOnSignals();
   const root = process.cwd();
   const entry = cliEventLog(root, mode).begin<InfraCommandEntry>(
     { type: 'infra-command', action: command, requested: services },

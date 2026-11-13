@@ -13,7 +13,7 @@
  *    exists (precisely to avoid the permission prompt when we don't need it).
  */
 import { Buffer } from 'node:buffer';
-import { execa } from 'execa';
+import { runCommand } from './spawn.js';
 
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
@@ -51,14 +51,20 @@ function nativeClipboardCommands(): [string, string[]][] {
   }
 }
 
-async function copyViaNativeCommand(text: string): Promise<boolean> {
-  for (const [cmd, args] of nativeClipboardCommands()) {
-    try {
-      await execa(cmd, args, { input: text });
+/**
+ * Pipes `text` into the first of `commands` that runs and exits 0; `false` when none does. A
+ * program not installed is skipped like one that failed.
+ */
+export async function copyViaNativeCommand(
+  text: string,
+  commands: [string, string[]][] = nativeClipboardCommands(),
+): Promise<boolean> {
+  for (const [cmd, args] of commands) {
+    const end = await runCommand(cmd, args, { input: text, collect: false }).done;
+    if (end.exitCode === 0) {
       return true;
-    } catch {
-      // Binary missing or failed — try the next candidate.
     }
+    // Not installed, or failed: the next candidate.
   }
   return false;
 }

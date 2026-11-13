@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { Config } from '../../config.js';
 import type { Envs } from '../../env.js';
-import type { Exec, ExecResult, Stream } from '../exec.js';
+import type { Exec, ExecResult, Stream } from '../../spawn.js';
 import { InfraError, type InfraEvent, type ResolvedDockerComposeInfra } from '../types.js';
 import {
   DockerComposeProvider,
@@ -39,6 +39,8 @@ const sub = (call: Call) =>
 function setup(
   respond: (args: string[], call: Call) => ExecResult | undefined = () => undefined,
   resolved: Partial<ResolvedDockerComposeInfra> = {},
+  /** The change feed `watchStates` reads; by default one that never says anything. */
+  stream: Stream = () => ({ stop: () => {}, done: new Promise<number>(() => {}) }),
 ) {
   const calls: Call[] = [];
   const inherited: Call[] = [];
@@ -68,6 +70,7 @@ function setup(
         inherited.push({ command, args, ...opts });
         return 7;
       },
+      stream,
       pollIntervalMs: 1,
     },
   );
@@ -258,10 +261,12 @@ describe('watchStates', () => {
         done: new Promise<number>((resolve) => (end = resolve)),
       };
     };
-    const { provider, subs } = setup((args) =>
-      args[0] === 'ps' ? (dbState === null ? ok() : ndjson(row('db', dbState))) : undefined,
+    const { provider, subs } = setup(
+      (args) =>
+        args[0] === 'ps' ? (dbState === null ? ok() : ndjson(row('db', dbState))) : undefined,
+      {},
+      stream,
     );
-    (provider as unknown as { runtime: { stream: Stream } }).runtime.stream = stream;
     const reports: string[] = [];
     const watch = provider.watchStates(['db'], (states) => reports.push(states.get('db')!));
     return {

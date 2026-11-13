@@ -1,4 +1,3 @@
-import path from 'node:path';
 import {
   type Config,
   type TokenRecord,
@@ -7,7 +6,8 @@ import {
 } from '../config.js';
 import type { ControlClient } from '../control-client.js';
 import type { Envs, Mode } from '../env.js';
-import type { Exec, ExecOptions, ExecResult, LineStream, SpawnInherit, Stream } from './exec.js';
+import { hookExec } from '../hook-exec.js';
+import type { Exec, LineStream, SpawnInherit, Stream } from '../spawn.js';
 import {
   InfraError,
   type InfraCallbackContext,
@@ -53,10 +53,12 @@ export interface ProviderRuntime {
   envs: Envs;
   /** The config's top-level `tokens`. */
   tokens: TokenRecord;
+  /** Runs a command to completion, captured: {@link execLines}, or a stand-in in specs. */
   exec: Exec;
+  /** Runs a command with the terminal handed over: {@link spawnInherit}, or a stand-in. */
   spawnInherit: SpawnInherit;
-  /** Starts a long-running command read line by line; defaults to {@link streamLines}. */
-  stream?: Stream;
+  /** Starts a long-running command read line by line: {@link streamLines}, or a stand-in. */
+  stream: Stream;
   /**
    * Finds the running dev session of this config and mode, for a callback's `control`;
    * `undefined` when there is none. Absent, callbacks get no `control`.
@@ -269,8 +271,8 @@ export abstract class InfraProvider {
   protected abstract readStatuses(targets: string[]): Promise<Map<string, Readiness>>;
   /** Text explaining why a service failed (its log tail, say); empty when there is none. */
   protected abstract failureDetail(service: string): Promise<string>;
-  /** Runs the provider's tool, for the helper {@link toolContext} hands callbacks. */
-  protected abstract runTool(args: string[], opts: ExecOptions): Promise<ExecResult>;
+  /** The command line that runs the provider's tool with `args`, for its callback helper. */
+  protected abstract toolCommand(args: string[]): [command: string, args: string[]];
   /**
    * What the provider adds to its callbacks' context: its tool's helper (Docker Compose's
    * `compose`), given `run`, which runs the tool with the callback's environment and settles its
@@ -563,26 +565,12 @@ export abstract class InfraProvider {
     run: Run,
     control: ControlClient | undefined,
   ): InfraCallbackContext<TokenRecord, G> {
-    const { workspaceDir, mode, config, tokens, exec } = this.runtime;
+    const { workspaceDir, mode, config, tokens } = this.runtime;
     const { emit } = run;
     const envs = { ...this.runtime.envs, ...this.extraEnv() };
     const output = (line: string, isError: boolean) =>
       emit({ type: 'output', service, line, isError });
-    const execOptions = (opts: InfraRunOptions | undefined): ExecOptions => ({
-      cwd: path.resolve(workspaceDir, opts?.cwd ?? '.'),
-      env: { ...envs, ...opts?.env },
-      onLine: output,
-    });
-    const settle = (
-      label: string,
-      result: ExecResult,
-      opts: InfraRunOptions | undefined,
-    ): InfraRunResult => {
-      if (result.exitCode !== 0 && opts?.reject !== false) {
-        throw new Error(`\`${label}\` exited with code ${String(result.exitCode)}`);
-      }
-      return result;
-    };
+    const exec = hookExec({ dir: workspaceDir, env: envs, onLine: output, run: this.runtime.exec });
     return {
       service: infraServiceDetails(service, this.serviceConfig[service]),
       buildAddress: infraBuildAddress(service, this.serviceConfig[service], config),
@@ -592,15 +580,16 @@ export abstract class InfraProvider {
       workspaceDir,
       envs,
       tokens,
-      ...this.toolContext(async (args, opts) =>
-        settle(
+      ...this.toolContext((args, opts) =>
+        exec(
+          ...this.toolCommand(args),
+          // The provider's variables last: whatever `env` a callback passes, the tool stays on
+          // this project.
+          { ...opts, env: { ...opts?.env, ...this.extraEnv() } },
           [this.toolLabel(), ...args].join(' '),
-          await this.runTool(args, execOptions(opts)),
-          opts,
         ),
       ),
-      exec: async (command, args = [], opts) =>
-        settle([command, ...args].join(' '), await exec(command, args, execOptions(opts)), opts),
+      exec: (command, args, opts) => exec(command, args, opts),
       log: (message) => {
         for (const line of message.split('\n')) {
           output(line, false);

@@ -59,6 +59,10 @@ in a pipeline. The exit code is the command's own.
 - **Each call writes a [log file](./logs.md#log-files)**: the command and its directory, every
   line that was piped, and how it ended and how long it took. Output that went to a terminal
   isn't in it.
+- **Inside a command stackctl runs**, such as a dev script `sctl exec -- node --watch
+  src/main.ts`, a menu command, or another `exec` or `run`, they only set up the environment,
+  then become the command: no stackctl process stays between them. The outer command keeps
+  the log and the [event](../reference/events.md), so nothing is recorded twice.
 
 ## From a script
 

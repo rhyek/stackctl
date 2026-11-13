@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { inspect } from 'node:util';
-import type { z } from 'zod';
+import * as v from 'valibot';
 import {
   type InfraServiceSchema,
   type ServiceConfigSchema,
@@ -319,6 +319,15 @@ export type EnvInput<T = TokenRecord> =
        * ```
        */
       additionalFiles?: EnvAdditionalFile[] | EnvAdditionalFilesResolver;
+      /**
+       * Decrypt the `.env` values dotenvx encrypted (`encrypted:…`), with the private keys in
+       * `.env.keys` at the workspace root and in any `DOTENV_PRIVATE_KEY*` variable of the
+       * environment stackctl starts with. Off by default: an encrypted value stays as written.
+       * A value with no key to decrypt it stays as written, and stackctl says which one.
+       *
+       * @see https://github.com/dotenvx/dotenvx#encryption
+       */
+      decrypt?: boolean;
     };
 
 /** What an `env.additionalFiles` callback is given. */
@@ -529,14 +538,11 @@ export type ServiceConfigInput<
        * when you want a rendering the built-in one can't express:
        *
        * ```ts
-       * import { defineConfig, z } from 'stackctl';
-       * const Log = z.object({ level: z.string(), msg: z.string() });
-       * // ...
        * logs: {
        *   formatter: (line) => {
        *     try {
        *       const o = JSON.parse(line);
-       *       if (!Log.safeParse(o).success) return line;
+       *       if (typeof o.level !== 'string' || typeof o.msg !== 'string') return line;
        *       return `${o.level} ${o.msg}`;
        *     } catch {
        *       return line; // not JSON — leave it as-is
@@ -1180,6 +1186,8 @@ export interface Config<
   envMode: Mode;
   /** Variables whose `.env` or `env.vars` value may beat the ambient environment. */
   envOverride?: EnvOverride;
+  /** Whether dotenvx's encrypted values are decrypted (`env.decrypt`). */
+  envDecrypt: boolean;
   /** The config's own variables (`env.vars`), resolved, or `undefined` when it declares none. */
   envVars?: Record<string, string>;
   /** Whether to prefix on-screen log lines with a timestamp (defaults to `false`). */
@@ -1411,15 +1419,58 @@ function resolveUrls(urls: UrlsInput | undefined, scope: UrlScope): UrlEntry[] |
 }
 
 /** A parsed service plus the `name` taken from the key it was declared under. */
-type ParsedPackage = z.infer<typeof ServiceConfigSchema> & { name: string };
+type ParsedPackage = v.InferOutput<typeof ServiceConfigSchema> & { name: string };
+
+type Issue = v.BaseIssue<unknown>;
+
+/** The keys an issue's path walks, from the value parsed. */
+const keysOf = (issue: Issue): string[] => (issue.path ?? []).map((item) => String(item.key));
+
+/** An issue with a strict object's keys, rather than its value: its path ends at the key. */
+const onKey = (issue: Issue) =>
+  issue.type === 'strict_object' && issue.path?.at(-1)?.origin === 'key';
+/** A key a strict object doesn't know. */
+const isUnknownKey = (issue: Issue) => onKey(issue) && issue.expected === 'never';
+/** A key a strict object requires and the value lacks. */
+const isMissingKey = (issue: Issue) => onKey(issue) && issue.expected !== 'never';
 
 /**
- * Renders a Zod parse failure into a readable, multi-line message. `at` is where in the config the
- * parsed value came from, in front of each issue's path.
+ * How much an issue from one form of a failed union says about the value: a bad value in a field
+ * the form has, most; then a key no form has; then a field that belongs to another form; then a
+ * key the form needs and the value lacks, least, since the value was most likely meant as another
+ * form.
  */
-function formatConfigError(err: z.ZodError, at?: string): string {
-  const lines = err.issues.map((issue) => {
-    const where = [...(at === undefined ? [] : [at]), ...issue.path.map(String)].join('.');
+const telling = (issue: Issue) =>
+  isMissingKey(issue) ? 0 : issue.type === 'never' ? 1 : isUnknownKey(issue) ? 2 : 3;
+
+/**
+ * The issue to report for `issue`, and the keys to it from the value parsed. A union that no
+ * form matched holds every form's issues, with paths from the union: the most telling one inside
+ * the value is reported, since a misspelled key or a bad field says more than "expected one of
+ * these". When no form got past the union itself, the union's own issue is.
+ */
+function reported(issue: Issue): { issue: Issue; keys: string[] } {
+  const keys = keysOf(issue);
+  if (issue.type !== 'union' || !issue.issues) {
+    return { issue, keys };
+  }
+  let best: { issue: Issue; keys: string[] } | undefined;
+  for (const inner of issue.issues.map(reported)) {
+    if (inner.keys.length > 0 && (!best || telling(inner.issue) > telling(best.issue))) {
+      best = inner;
+    }
+  }
+  return best ? { issue: best.issue, keys: [...keys, ...best.keys] } : { issue, keys };
+}
+
+/**
+ * Renders a valibot parse failure into a readable, multi-line message: each issue's own message,
+ * after its path. `at` is where in the config the parsed value came from, in front of each path.
+ */
+function formatConfigError(issues: readonly Issue[], at?: string): string {
+  const lines = issues.map((top) => {
+    const { issue, keys } = reported(top);
+    const where = [...(at === undefined ? [] : [at]), ...keys].join('.');
     return `  - ${where || '(root)'}: ${issue.message}`;
   });
   return `invalid stackctl config:\n${lines.join('\n')}`;
@@ -1429,17 +1480,17 @@ function formatConfigError(err: z.ZodError, at?: string): string {
  * `value` parsed by `schema`, or the config error its failure gives, each issue under `at`.
  * `note` follows the issues, for a value a callback returned: what it ran with.
  */
-function parseAt<S extends z.ZodType>(
+function parseAt<S extends v.GenericSchema>(
   schema: S,
   value: unknown,
   at: string,
   note = '',
-): z.output<S> {
-  const result = schema.safeParse(value);
+): v.InferOutput<S> {
+  const result = v.safeParse(schema, value);
   if (!result.success) {
-    throw new Error(`${formatConfigError(result.error, at)}${note}`);
+    throw new Error(`${formatConfigError(result.issues, at)}${note}`);
   }
-  return result.data;
+  return result.output;
 }
 
 /** Which `.env` files a failed callback had to read from, for its error message. */
@@ -1464,7 +1515,7 @@ function resolveAdditionalFiles(
     ? `\n  (returned by the env.additionalFiles callback for mode "${mode}")`
     : '';
   const result = parseAt(
-    EnvAdditionalFileSchema.array(),
+    v.array(EnvAdditionalFileSchema),
     computed ? input({ mode }) : input,
     'env.additionalFiles',
     called,
@@ -1505,7 +1556,7 @@ function resolveAdditionalFiles(
  * in the style of a service `port`. An `undefined` one is left out.
  */
 function resolveEnvVars(
-  vars: NonNullable<z.infer<typeof DefineConfigSchema>['env']>['vars'],
+  vars: NonNullable<v.InferOutput<typeof DefineConfigSchema>['env']>['vars'],
   ctx: () => ConfigContext,
   envFilesLoaded: () => string[],
 ): Record<string, string> | undefined {
@@ -1598,7 +1649,7 @@ function resolveInfraEnabled(
 }
 
 /** An infra service as parsed, before anything about it is resolved. */
-type ParsedInfraService = z.infer<typeof InfraServiceSchema>;
+type ParsedInfraService = v.InferOutput<typeof InfraServiceSchema>;
 
 /**
  * Resolves one infra service: `enabled` first, then — only for a service that runs — its `port`
@@ -1815,7 +1866,7 @@ const HOSTNAME_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[
  * about it names the env files loaded, in the style of a service `port`.
  */
 function resolveReverseProxy(
-  block: NonNullable<z.infer<typeof DefineConfigSchema>['reverseProxy']>,
+  block: NonNullable<v.InferOutput<typeof DefineConfigSchema>['reverseProxy']>,
   ctx: () => ConfigContext,
   envFilesLoaded: () => string[],
 ): ResolvedReverseProxy {
@@ -1890,7 +1941,7 @@ function isRouteSubdomain(value: string): boolean {
  * entries list. The services each entry names are checked once the services are known.
  */
 function resolveRoutes(
-  routes: z.output<typeof ReverseProxyRouteSchema>[],
+  routes: v.InferOutput<typeof ReverseProxyRouteSchema>[],
 ): ResolvedReverseProxyRoute[] {
   /** Each subdomain, and the entry that lists it. */
   const listedBy = new Map<string, string>();
@@ -2204,11 +2255,11 @@ export function defineConfig<
   // `Record<K, unknown>` infers the service names, for `reverseProxy.routes` to name.
   opts: DefineConfigOptions<Top, P, K, RootDir, I> & { infra?: { 'docker-compose'?: true | { services?: Record<I, unknown> } } }, // oxfmt-ignore
 ): Config<K, P, Top, I> {
-  const result = DefineConfigSchema.safeParse(opts);
+  const result = v.safeParse(DefineConfigSchema, opts);
   if (!result.success) {
-    throw new Error(formatConfigError(result.error));
+    throw new Error(formatConfigError(result.issues));
   }
-  const parsed = result.data;
+  const parsed = result.output;
 
   const workspaceDir = parsed.workspaceDir ?? recordedConfigDir() ?? process.cwd();
   workspaceRoot = path.resolve(workspaceDir);
@@ -2299,14 +2350,15 @@ export function defineConfig<
     resolveAdditionalFiles(parsed.env?.additionalFiles, currentMode()),
   );
   const envOverride = parsed.env?.override;
+  const envDecrypt = parsed.env?.decrypt ?? false;
 
   const baseEnv = () => baseEnvs(workspaceRoot);
 
   // Every `.env` file a callback may read, read as the first one does: see `configEnvReader`.
   const envReader = once(() =>
     configEnvReader([
-      ...new Set([
-        ...[
+      ...new Set(
+        [
           '.',
           ...parsedPackages.flatMap((config) => {
             try {
@@ -2320,14 +2372,21 @@ export function defineConfig<
         ].flatMap((relativeDir) =>
           envCandidatePaths({ cwd: workspaceDir, relativeDir, files: envFiles }),
         ),
-        envKeysFile(),
-      ]),
+      ),
+      ...(envDecrypt ? [envKeysFile(workspaceDir)] : []),
     ]),
   );
   const loadEnv = (relativeDir: string, vars?: Record<string, string>) =>
     once(() =>
       resolveEnvFrom(
-        { cwd: workspaceDir, relativeDir, files: envFiles, override: envOverride, vars },
+        {
+          cwd: workspaceDir,
+          relativeDir,
+          files: envFiles,
+          override: envOverride,
+          decrypt: envDecrypt,
+          vars,
+        },
         envReader(),
       ),
     );
@@ -2492,6 +2551,7 @@ export function defineConfig<
     envFiles,
     envMode: currentMode(),
     envOverride,
+    envDecrypt,
     envVars,
     logTimestamps: parsed.logs?.timestamps ?? true,
   };

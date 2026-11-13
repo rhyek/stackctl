@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { defineConfig } from '../config.js';
-import type { Exec } from './exec.js';
+import { type Exec, execLines } from '../spawn.js';
 import { InfraManager } from './manager.js';
 import { type InfraInput, InfraError } from './types.js';
 
@@ -134,6 +134,38 @@ describe('InfraManager', () => {
     // What Compose interpolates `${DB_PORT}` in the compose file with.
     expect(calls[0]!.env).toMatchObject({ DB_PORT: '21061', DB_URL: 'postgres://localhost:21061' });
     expect(seen).toBe('postgres://localhost:21061');
+  });
+
+  test("a callback's exec runs the command with the workspace env, in the workspace, for real", async () => {
+    fs.writeFileSync(path.join(ws, '.env.development'), 'DB_PORT=21051\nSHARED=from-file\n');
+    fs.mkdirSync(path.join(ws, 'libs', 'db'), { recursive: true });
+    const docker = scriptedDocker();
+    // Docker is scripted; anything else a callback runs is run.
+    const exec: Exec = (command, args, opts) =>
+      command === 'docker' ? docker.exec(command, args, opts) : execLines(command, args, opts);
+    const printed: string[] = [];
+    const print = 'console.log([process.cwd(), process.env.DB_PORT, process.env.SHARED, process.env.COMPOSE_PROJECT_NAME, process.env.STACKCTL_MODE].join(" "))'; // oxfmt-ignore
+    const config = configWith({
+      'docker-compose': {
+        services: {
+          db: {
+            afterReady: async ({ exec }) => {
+              printed.push((await exec(process.execPath, ['-e', print])).stdout.trim());
+              const there = { cwd: 'libs/db', env: { SHARED: 'from-call' } };
+              printed.push((await exec(process.execPath, ['-e', print], there)).stdout.trim());
+            },
+          },
+        },
+      },
+    });
+    const manager = (await InfraManager.fromConfig(config, { exec }))!;
+    expect((await manager.up({ services: ['db'] })).ok).toBe(true);
+    const project = `${path.basename(ws).toLowerCase()}-development`;
+    const real = fs.realpathSync(ws);
+    expect(printed).toEqual([
+      `${real} 21051 from-file ${project} development`,
+      `${path.join(real, 'libs', 'db')} 21051 from-call ${project} development`,
+    ]);
   });
 
   test('hands callbacks the config tokens, and brings up only the services named', async () => {

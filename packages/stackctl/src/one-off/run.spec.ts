@@ -149,7 +149,26 @@ describe('runOneOff', () => {
     await expect(runOneOff(spec, { stdio: 'pipe', logDir })).rejects.toThrow('stackctl-no-such-command'); // oxfmt-ignore
     expect(logLines(logsIn(logDir)[0]!)).toEqual([
       `▶ running: stackctl-no-such-command (in ${tmp})`,
-      expect.stringMatching(/^✘ couldn't start: .*stackctl-no-such-command/),
+      "✘ couldn't start stackctl-no-such-command: not found",
+    ]);
+  });
+
+  test("a directory that doesn't exist is named, not the command", async () => {
+    const logDir = path.join(tmp, 'logs');
+    const spec = { ...node(''), cwd: path.join(tmp, 'missing') };
+    await expect(runOneOff(spec, { stdio: 'pipe', logDir })).rejects.toThrow(
+      `couldn't start ${spec.command}: no directory ${spec.cwd}`,
+    );
+  });
+
+  test('a last line with no newline is logged, before the end', async () => {
+    const logDir = path.join(tmp, 'logs');
+    const result = await runOneOff(node("process.stdout.write('one\\ntwo')"), { stdio: 'pipe', logDir }); // oxfmt-ignore
+    expect(result.stdout).toBe('one\ntwo');
+    expect(logLines(logsIn(logDir)[0]!).slice(1)).toEqual([
+      'one',
+      'two',
+      expect.stringMatching(/^✔ finished in /),
     ]);
   });
 
@@ -312,5 +331,57 @@ describe('runOneOff hands a terminal to the command', () => {
     });
     expect(handedOver()).toEqual([false, false]);
     expect(result.stdout).toBe('hi\n');
+  });
+});
+
+describe('runOneOff inside a command stackctl runs', () => {
+  /** A command that writes `STACKCTL_NESTED` as it sees it to `file`, and prints nothing. */
+  const markerTo = (file: string) =>
+    node(
+      `require('fs').writeFileSync(${JSON.stringify(file)},String(process.env.STACKCTL_NESTED))`,
+    );
+
+  test('outside one, the command it runs is marked, so an exec or run there is nested', async () => {
+    const file = path.join(tmp, 'marker');
+    await runOneOff(markerTo(file), { stdio: 'pipe', logDir: tmp, nested: false });
+    expect(fs.readFileSync(file, 'utf8')).toBe('1');
+  });
+
+  test('inside one, the mark goes no further: what the command runs is its own', async () => {
+    const file = path.join(tmp, 'marker');
+    await runOneOff(markerTo(file), { stdio: 'pipe', logDir: tmp, nested: true });
+    expect(fs.readFileSync(file, 'utf8')).toBe('undefined');
+  });
+
+  test('inside one, the streams go straight through and no log is written', async () => {
+    const logDir = path.join(tmp, 'logs');
+    // As an agent's piped command would be, which only the outer command pipes.
+    await runOneOff(fdsOf(), {
+      stdio: 'inherit',
+      logDir,
+      isTerminal: () => false,
+      agent: true,
+      nested: true,
+    });
+    expect(handedOver()).toEqual([true, true]);
+    expect(fs.existsSync(logDir)).toBe(false);
+  });
+
+  test("inside one, 'pipe' still collects, and still writes no log", async () => {
+    const logDir = path.join(tmp, 'logs');
+    const result = await runOneOff(node("console.log('hi')"), {
+      stdio: 'pipe',
+      logDir,
+      nested: true,
+    });
+    expect(result).toMatchObject({ exitCode: 0, stdout: 'hi\n' });
+    expect(fs.existsSync(logDir)).toBe(false);
+  });
+
+  test("inside one, a command that can't start still rejects", async () => {
+    const spec = { ...node(''), command: 'stackctl-no-such-command', args: [] };
+    await expect(runOneOff(spec, { stdio: 'pipe', logDir: tmp, nested: true })).rejects.toThrow(
+      'stackctl-no-such-command',
+    );
   });
 });

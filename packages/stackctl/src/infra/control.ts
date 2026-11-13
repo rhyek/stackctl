@@ -1,6 +1,6 @@
 import chalk from 'chalk';
-import { execa, type ResultPromise } from 'execa';
 import { EVENT_BY_ENV, type EventBy } from '../event-log.js';
+import { type Running, runCommand, startFailure } from '../spawn.js';
 import { stripTitleSequences } from '../terminal-title.js';
 import { callEach } from '../util.js';
 import type { InfraWatch } from './provider.js';
@@ -46,8 +46,8 @@ export interface InfraControlOptions {
   cwd: string;
   /** Receives every line an action prints, and the lines marking where it starts and ends. */
   log: (service: string, text: string, isError: boolean) => void;
-  /** Called with each child spawned, for the session record's orphan sweep. */
-  track?: (proc: ResultPromise, cwd: string) => void;
+  /** Called with the pid of each child spawned, for the session record's orphan sweep. */
+  track?: (pid: number, cwd: string) => void;
 }
 
 /**
@@ -61,7 +61,7 @@ export interface InfraControlOptions {
 export class InfraControl {
   private readonly states = new Map<string, InfraServiceState>();
   private readonly busy = new Map<string, InfraAction>();
-  private readonly procs = new Set<ResultPromise>();
+  private readonly procs = new Set<Running>();
   private readonly listeners = new Set<() => void>();
   private watch: InfraWatch | null = null;
   /** Set by {@link stop}: a stopped control starts nothing, so nothing it runs outlives the session. */
@@ -159,7 +159,7 @@ export class InfraControl {
   }
 
   /** Hands over the commands still running, for a shutdown to kill and wait on. */
-  takeLiving(): ResultPromise[] {
+  takeLiving(): Running[] {
     const living = [...this.procs];
     this.procs.clear();
     return living;
@@ -192,31 +192,38 @@ export class InfraControl {
     const title = `stackctl ${args.join(' ')}`;
     this.opts.log(service, chalk.cyan(`▶ running: ${title}`), false);
     const [node, ...cliArgs] = this.opts.cli;
-    const child = execa(node!, [...cliArgs, ...args, '--mode', this.opts.mode], {
+    // A line is logged without blanks or terminal-title sequences, which would retitle the TUI.
+    const log = (line: string, isError: boolean) => {
+      const text = stripTitleSequences(line);
+      if (text.trim() !== '') {
+        this.opts.log(service, text, isError);
+      }
+    };
+    const proc = runCommand(node!, [...cliArgs, ...args, '--mode', this.opts.mode], {
       cwd: this.opts.cwd,
       env: { ...colorEnv(), [EVENT_BY_ENV]: JSON.stringify(by) },
       // Its own process group, so a shutdown can take down whatever it spawned with it.
       detached: true,
-      stdin: 'ignore',
-      stdout: 'pipe',
-      stderr: 'pipe',
-      buffer: false,
-      reject: false,
+      onLine: log,
+      collect: false,
     });
-    this.procs.add(child);
-    this.opts.track?.(child, this.opts.cwd);
-    forEachLine(child.stdout, (line) => this.opts.log(service, line, false));
-    forEachLine(child.stderr, (line) => this.opts.log(service, line, true));
+    this.procs.add(proc);
+    if (proc.pid) {
+      this.opts.track?.(proc.pid, this.opts.cwd);
+    }
 
-    const { exitCode } = await child;
-    this.procs.delete(child);
+    const ended = await proc.done;
+    this.procs.delete(proc);
     if (this.stopped) {
       return;
     }
-    const code = exitCode ?? 1;
-    if (code === 0) {
+    if (ended.error) {
+      const why = startFailure(ended.error, this.opts.cwd);
+      this.opts.log(service, chalk.red(`✘ couldn't start ${title}: ${why}`), true);
+    } else if (ended.exitCode === 0) {
       this.opts.log(service, chalk.green(`✔ ${title} finished`), false);
     } else {
+      const code = ended.exitCode ?? 1;
       this.opts.log(service, chalk.red(`✘ ${title} exited with code ${String(code)}`), true);
     }
   }
@@ -228,31 +235,4 @@ export class InfraControl {
  */
 function colorEnv(): NodeJS.ProcessEnv {
   return chalk.level === 0 ? process.env : { ...process.env, FORCE_COLOR: String(chalk.level) };
-}
-
-/**
- * Calls `onLine` with each line `stream` carries that isn't blank, without its newline (nor a
- * `\r` before it) and with any terminal-title sequences taken out. The last line goes out when the
- * stream ends, newline or not.
- */
-function forEachLine(stream: NodeJS.ReadableStream | null, onLine: (line: string) => void): void {
-  if (!stream) {
-    return;
-  }
-  let partial = '';
-  const send = (line: string) => {
-    if (line.trim() !== '') {
-      onLine(line);
-    }
-  };
-  stream.on('data', (chunk: Buffer) => {
-    partial += stripTitleSequences(chunk.toString());
-    let newline = partial.indexOf('\n');
-    while (newline !== -1) {
-      send(partial.slice(0, newline).replace(/\r$/, ''));
-      partial = partial.slice(newline + 1);
-      newline = partial.indexOf('\n');
-    }
-  });
-  stream.on('end', () => send(partial));
 }

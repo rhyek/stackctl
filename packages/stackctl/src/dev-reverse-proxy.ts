@@ -6,7 +6,10 @@ import picomatch from 'picomatch/posix.js';
 import type { Config, ResolvedReverseProxyRoute } from './config.js';
 import { infraServicesOf } from './config.js';
 import type { ProxyTls } from './dev-tls.js';
+import { routeHosts } from './route-hosts.js';
 import { createUpstreamPool, isBodyless } from './upstream-pool.js';
+
+export { routeHosts } from './route-hosts.js';
 
 /**
  * The built-in dev reverse proxy.
@@ -133,15 +136,6 @@ export function resolvedRoutesOf(entries: DevReverseProxyEntry[]): ResolvedRever
       ? { subdomain: entry.subdomain, service: nameOf(entry.target) }
       : { subdomain: entry.subdomain, paths: Object.fromEntries(entry.paths.map((p) => [p.glob, nameOf(p.target)])) }, // oxfmt-ignore
   );
-}
-
-/**
- * Every hostname a route names, under each domain: each subdomain but `'*'`, in the order the
- * routes list them. (A host `'*'` routes is any other one, so it has no name to list.)
- */
-export function routeHosts(routes: { subdomain: string[] }[], domains: string[]): string[] {
-  const subdomains = routes.flatMap((entry) => entry.subdomain.filter((s) => s !== '*'));
-  return domains.flatMap((domain) => subdomains.map((subdomain) => `${subdomain}.${domain}`));
 }
 
 /** What the proxy needs from the process manager. `ProcessManager` satisfies it structurally. */

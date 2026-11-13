@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import module from 'node:module';
 import path from 'node:path';
 import { Command, Option } from 'commander';
 import { startedByAgent } from './agent-detection.js';
@@ -15,6 +16,7 @@ import {
   markCliProcess,
   publishModeSource,
   resolveMode,
+  takeNested,
 } from './env-base.js';
 import { exitOnFatalError } from './errors.js';
 import { takeHandedBy } from './event-log.js';
@@ -29,6 +31,11 @@ import { locateWorkspace, needsNoWorkspace, resolveWorkspaceDirArg } from './wor
 // The entry point: Commander wiring only. What a command runs lives under `commands/` and is
 // imported by its action, so a command loads its own code and nothing else's — `--help` and
 // `logs` don't pay for the config, `exec` doesn't pay for a session.
+
+// Node's compile cache, in its default place under the temp directory: what the command's action
+// imports next (the config, its schema, the runner) starts from V8's cached code, not a fresh
+// compile. A third of `exec`'s start. `NODE_DISABLE_COMPILE_CACHE` turns it off, as for any Node.
+module.enableCompileCache();
 
 // Before anything loads the config: from here on, `resolveEnv()`, `exec()` and `run()` throw
 // rather than start another stackctl, which would load the config, and call them again.
@@ -107,6 +114,9 @@ delete process.env.STACKCTL_WORKSPACE_DIR;
 takeHandedBy();
 // The id `start --detach` handed the session it starts: the session takes it, its services don't.
 takeHandedSessionId();
+// Whether this runs inside a command stackctl runs: an `exec` or `run` there only sets up the
+// environment. What this runs doesn't pass it on.
+takeNested();
 
 /**
  * Very early step (runs for every command): find the workspace (`--workspace-dir` exactly, else the

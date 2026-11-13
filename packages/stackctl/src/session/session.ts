@@ -126,6 +126,8 @@ export interface SessionSeams {
   startProxy?: (controlPort: number) => Promise<DevReverseProxyServer | null>;
   startControlServer?: (opts: Parameters<typeof startControlServer>[0]) => Promise<ControlServer>;
   runInfra?: (onEvent: (event: InfraEvent) => void) => Promise<SessionInfra | undefined>;
+  /** The command an infra action runs the CLI with; this stackctl's own `[node, cli.js]` unless given. */
+  infraCli?: string[];
   createProcess?: (opts: ServiceProcessOptions) => SupervisedProcess;
   probe?: (name: string) => Promise<boolean>;
   /** The git branch for the first frame; {@link readGitBranch} unless given. */
@@ -503,25 +505,23 @@ export class Session implements ControlManager, DevReverseProxyManager {
     const infra = this.infraControl;
     infra?.stop();
     const living = infra?.takeLiving() ?? [];
+    const livingPids = living.flatMap((proc) => (proc.pid ? [proc.pid] : []));
     // Kept for a second request: a leader that has exited by then no longer lists its group.
     for (const pids of groups.values()) {
       pids.forEach((pid) => this.waitedGroups.add(pid));
     }
-    for (const proc of living) {
-      if (proc.pid) {
-        this.waitedGroups.add(proc.pid);
-      }
-    }
+    livingPids.forEach((pid) => this.waitedGroups.add(pid));
     if (groups.size > 0 || living.length > 0) {
       this.supervisor.log.system.warn('shutting down...');
     }
-    for (const proc of living) {
-      if (proc.pid) {
-        this.signalGroup(proc.pid, 'SIGTERM');
-      }
+    for (const pid of livingPids) {
+      this.signalGroup(pid, 'SIGTERM');
     }
     await bounded(
-      Promise.all([this.supervisor.stopAll(), bounded(Promise.all(living), SHUTDOWN_GRACE_MS)]),
+      Promise.all([
+        this.supervisor.stopAll(),
+        bounded(Promise.all(living.map((p) => p.done)), SHUTDOWN_GRACE_MS),
+      ]),
       SHUTDOWN_TIMEOUT_MS,
     );
     // A quick leader can leave members of its group behind.
@@ -530,10 +530,8 @@ export class Session implements ControlManager, DevReverseProxyManager {
         this.signalGroup(pid, 'SIGKILL');
       }
     }
-    for (const proc of living) {
-      if (proc.pid) {
-        this.signalGroup(proc.pid, 'SIGKILL');
-      }
+    for (const pid of livingPids) {
+      this.signalGroup(pid, 'SIGKILL');
     }
 
     // What a startup step under way produces is closed below; its own deadlines bound the wait.
@@ -840,15 +838,14 @@ export class Session implements ControlManager, DevReverseProxyManager {
     this.infraControl = new InfraControl({
       services: infra.services.map((s) => s.name),
       watch: infra.watch,
-      cli: [process.execPath, fileURLToPath(new URL('../cli.js', import.meta.url))],
+      cli: this.seams.infraCli ?? [
+        process.execPath,
+        fileURLToPath(new URL('../cli.js', import.meta.url)),
+      ],
       mode: currentMode(),
       cwd: this.plan.cwd ?? process.cwd(),
       log: (service, text, isError) => this.appendInfra(service, text, isError),
-      track: (proc, cwd) => {
-        if (proc.pid) {
-          records.add(proc.pid, cwd);
-        }
-      },
+      track: (pid, cwd) => records.add(pid, cwd),
     });
     this.infraControl.subscribe(() => this.changed());
   }

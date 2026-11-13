@@ -27,6 +27,8 @@ export interface SessionPlan {
   envFiles?: EnvFileOrder;
   /** Variables whose `.env` or `env.vars` value may beat the ambient environment. */
   envOverride?: EnvOverride;
+  /** Whether dotenvx's encrypted values are decrypted (`env.decrypt`); absent means not. */
+  envDecrypt?: boolean;
   /** The config's own variables (`env.vars`), ranked as a file below the `.env` files. */
   envVars?: Record<string, string>;
   /** Whether lines show their timestamp on screen when their service doesn't say; absent means on. */

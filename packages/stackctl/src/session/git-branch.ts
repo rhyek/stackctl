@@ -1,5 +1,5 @@
+import { spawnSync } from 'node:child_process';
 import { type FSWatcher, watch } from 'node:fs';
-import { execaSync } from 'execa';
 
 /**
  * The checked-out git branch: its name, the short SHA on a detached HEAD, `null` outside a
@@ -17,11 +17,9 @@ export function readGitBranch(cwd = process.cwd()): string | null {
 
 /** A command's trimmed output, or `null` when it fails or prints nothing. */
 function gitOutput(cwd: string, ...args: string[]): string | null {
-  try {
-    return execaSync('git', args, { cwd }).stdout.trim() || null;
-  } catch {
-    return null;
-  }
+  // git's complaint outside a repository is ignored: it would land on the TUI.
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); // oxfmt-ignore
+  return result.status === 0 ? result.stdout.trim() || null : null;
 }
 
 /**

@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { execa } from 'execa';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { INJECTED_ENV_VAR } from '../env-base.js';
+import { runCommand } from '../spawn.js';
 
 /**
  * The SDK's `exec()` and `run()`, against a workspace on disk. They resolve by running the CLI
@@ -58,7 +58,7 @@ beforeAll(async () => {
   const tsPackage = fileURLToPath(import.meta.resolve('typescript/package.json'));
   const tsc = path.join(path.dirname(tsPackage), 'bin', 'tsc');
   fs.rmSync(buildDir, { recursive: true, force: true });
-  await execa(
+  const build = await runCommand(
     'node',
     [
       tsc,
@@ -74,7 +74,10 @@ beforeAll(async () => {
       'false',
     ],
     { cwd: packageDir },
-  );
+  ).done;
+  if (build.exitCode !== 0) {
+    throw new Error(`the build failed:\n${build.stdout}${build.stderr}`);
+  }
   sdk = (await import(pathToFileURL(path.join(buildDir, 'index.js')).href)) as IndexModule;
 
   ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-sdk-')));
@@ -208,10 +211,9 @@ describe('exec()', () => {
         `const r = await exec({ workspaceDir: ${JSON.stringify(noisy)}, command: ['echo', 'from-the-command'], stdio: 'pipe' });`,
         'process.stdout.write(JSON.stringify(r.stdout));',
       ].join('\n');
-      const result = await execa('node', ['--input-type=module', '-e', caller], {
+      const result = await runCommand('node', ['--input-type=module', '-e', caller], {
         cwd: noisy,
-        reject: false,
-      });
+      }).done;
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stdout).toBe(JSON.stringify('from-the-command\n'));
       expect(result.stderr).toContain('from-the-config');
@@ -249,6 +251,27 @@ describe('exec()', () => {
     expect(lines[1]).toMatchObject({ ok: false, exitCode: 2, signal: null });
   });
 
+  test('inside a command stackctl runs, it writes no event and no log: that command has them', async () => {
+    const sessions = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+    const logs = () =>
+      fs.readdirSync(sessions).flatMap((id) => {
+        const dir = path.join(sessions, id, 'commands');
+        return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+      });
+    const before = logs().length;
+    process.env.STACKCTL_NESTED = '1';
+    try {
+      const result = await inDir(ws, () =>
+        sdk.exec({ command: ['sh', '-c', 'echo nested-sdk'], stdio: 'pipe' }),
+      );
+      expect(result.stdout).toBe('nested-sdk\n');
+    } finally {
+      delete process.env.STACKCTL_NESTED;
+    }
+    expect(oneOffEvents().filter((line) => line.command?.includes('echo nested-sdk'))).toEqual([]);
+    expect(logs()).toHaveLength(before);
+  });
+
   test("a command that can't start still ends its event", async () => {
     await expect(
       inDir(ws, () => sdk.exec({ command: ['stackctl-no-such-evented'], stdio: 'pipe' })),
@@ -264,10 +287,9 @@ describe('exec()', () => {
       const names = ['PORT', 'SCRIPTS_VAR', 'FROM_CONFIG'];
       const js = `console.log(JSON.stringify([process.cwd(),${names.map((n) => `process.env.${n}??null`).join(',')}]))`; // oxfmt-ignore
       const command: [string, ...string[]] = ['node', '-e', js];
-      const viaCli = await execa('node', [cli, 'exec', target, '--', ...command], {
+      const viaCli = await runCommand('node', [cli, 'exec', target, '--', ...command], {
         cwd: ws,
-        reject: false,
-      });
+      }).done;
       expect(viaCli.exitCode, viaCli.stderr).toBe(0);
       const viaSdk = await inDir(ws, () => sdk.exec({ target, command, stdio: 'pipe' }));
       expect(JSON.parse(viaSdk.stdout!)).toEqual(JSON.parse(viaCli.stdout));
@@ -374,10 +396,9 @@ describe('resolveEnv()', () => {
         `const { resolveEnv } = await import(${JSON.stringify(index)});`,
         `process.stdout.write(JSON.stringify(Object.keys(resolveEnv({ workspaceDir: ${JSON.stringify(noisy)} }).env)));`,
       ].join('\n');
-      const result = await execa('node', ['--input-type=module', '-e', caller], {
+      const result = await runCommand('node', ['--input-type=module', '-e', caller], {
         cwd: noisy,
-        reject: false,
-      });
+      }).done;
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stdout).not.toContain('from-the-config');
       expect(() => JSON.parse(result.stdout) as unknown).not.toThrow();
@@ -461,11 +482,10 @@ describe("inside stackctl's own process", () => {
     async (fn, call) => {
       const { dir, loads } = recursiveWorkspace(call);
       try {
-        const result = await execa('node', [cli, 'show-config'], {
+        const result = await runCommand('node', [cli, 'show-config'], {
           cwd: dir,
-          reject: false,
           timeout: 20_000,
-        });
+        }).done;
         expect(result.exitCode).toBe(1);
         expect(result.stderr).toContain(`${fn}() can't be called inside stackctl's own process`);
         expect(loads()).toBe(1);
@@ -484,11 +504,10 @@ describe("inside stackctl's own process", () => {
         `const { resolveEnv } = await import(${JSON.stringify(index)});`,
         `resolveEnv({ workspaceDir: ${JSON.stringify(dir)} });`,
       ].join('\n');
-      const result = await execa('node', ['--input-type=module', '-e', caller], {
+      const result = await runCommand('node', ['--input-type=module', '-e', caller], {
         cwd: dir,
-        reject: false,
         timeout: 20_000,
-      });
+      }).done;
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("resolveEnv() can't be called inside stackctl's own process");
       expect(loads()).toBe(1);

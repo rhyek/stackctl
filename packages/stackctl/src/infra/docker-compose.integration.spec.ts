@@ -10,7 +10,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import type { Config } from '../config.js';
 import { ambientEnv, baseEnvs } from '../env.js';
-import { execLines } from './exec.js';
+import { execLines, streamLines } from '../spawn.js';
 import { DockerComposeProvider } from './providers/docker-compose.js';
 import type { ResolvedDockerComposeInfra } from './types.js';
 
@@ -74,6 +74,7 @@ function provider(
         envs: baseEnvs(ws),
         tokens: {},
         exec: execLines,
+        stream: streamLines,
         // Captured, not inherited: `down`'s output has no business in the test run's.
         spawnInherit: async (command, args, opts) =>
           (await execLines(command, args, opts)).exitCode,

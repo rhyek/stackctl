@@ -13,26 +13,17 @@ import type {
 } from '../config.js';
 import type { ControlClient } from '../control-client.js';
 import type { Envs, Mode } from '../env.js';
+import type { HookExecOptions, HookExecResult } from '../hook-exec.js';
 import type { InfraAction } from './control.js';
 
 /** How long `infra start` waits for the services to become ready, when the config doesn't say. */
 export const DEFAULT_READY_TIMEOUT_MS = 300_000;
 
 /** Options for the `compose` and `exec` helpers an infra callback receives. */
-export interface InfraRunOptions {
-  /** Working directory; a relative path resolves against `workspaceDir`, which is the default. */
-  cwd?: string;
-  /** Extra variables for this one command, merged over the callback's `envs`. */
-  env?: Record<string, string>;
-  /** Set `false` to get the result of a failing command instead of a rejection. */
-  reject?: boolean;
-}
+export type InfraRunOptions = HookExecOptions;
 
-export interface InfraRunResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
+/** How a command an infra callback ran ended, with what it printed. */
+export type InfraRunResult = HookExecResult;
 
 /**
  * What started an infra run, as its callbacks get it in `trigger`:

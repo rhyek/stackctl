@@ -2,8 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startedByAgent } from '../agent-detection.js';
 import { getRegisteredPackages } from '../config.js';
-import { proxyTlsFor } from '../dev-tls.js';
-import { currentMode } from '../env-base.js';
+import { currentMode, isNested } from '../env-base.js';
 import { RESOLVE_ENV_FD } from '../env.js';
 import { type OneOffCommandEntry, cliEventLog, commandBy, maskSecrets } from '../event-log.js';
 import {
@@ -48,6 +47,8 @@ async function loadForOneOff(): Promise<string> {
   const config = await loadedConfigOrExit();
   const root = process.cwd();
   if (config.reverseProxy?.tls === 'self-signed') {
+    // Loaded only here: the TLS module is a good part of a one-off command's start.
+    const { proxyTlsFor } = await import('../dev-tls.js');
     await proxyTlsFor(config, root);
   }
   return root;
@@ -92,19 +93,28 @@ export async function runOneOffCommand(
   } catch (err) {
     exitOnOneOffError(err);
   }
+  // Inside a command stackctl runs, which logs and records it, nothing is left to do: this process
+  // becomes the command. Returns only when it can't, and the command runs as a child instead.
+  if (isNested()) {
+    const { execInPlace } = await import('../one-off/in-place.js');
+    await execInPlace(spec);
+  }
   // Written to the session's event log: the service (or directory) it ran in, what it ran, its
-  // exit. Its log goes in the same session's folder.
-  const entry = cliEventLog(root, currentMode()).begin<OneOffCommandEntry>(
-    {
-      type: 'one-off-command',
-      kind: command.kind,
-      ...whereOf(root, spec.cwd),
-      ...(command.kind === 'exec'
-        ? { command: maskSecrets(command.command) }
-        : { script: command.script, args: maskSecrets(command.args) }),
-    },
-    commandBy(root, { agent: startedByAgent(), invocationCwd: context.invocationCwd }),
-  );
+  // exit. Its log goes in the same session's folder. Inside a command stackctl runs, that command
+  // is the one recorded, so this writes nothing.
+  const entry = isNested()
+    ? { end: () => {} }
+    : cliEventLog(root, currentMode()).begin<OneOffCommandEntry>(
+        {
+          type: 'one-off-command',
+          kind: command.kind,
+          ...whereOf(root, spec.cwd),
+          ...(command.kind === 'exec'
+            ? { command: maskSecrets(command.command) }
+            : { script: command.script, args: maskSecrets(command.args) }),
+        },
+        commandBy(root, { agent: startedByAgent(), invocationCwd: context.invocationCwd }),
+      );
   try {
     const result = await runOneOff(spec, {
       stdio: 'inherit',

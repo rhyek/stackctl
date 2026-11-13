@@ -385,6 +385,34 @@ export function ambientEnv(): Record<string, string> {
 }
 
 /**
+ * Set by stackctl on every command it runs: a session's dev processes and commands-menu commands,
+ * and what `exec` and `run` run. An `exec` or `run` started under it, a dev script's
+ * `sctl exec -- node --watch src/main.ts` say, is part of that command, which already logs its
+ * output and records it: it only sets up the environment. Taken out by the CLI as it starts
+ * ({@link takeNested}), so the command it runs doesn't pass it on.
+ */
+export const NESTED_ENV_VAR = 'STACKCTL_NESTED';
+
+/** Whether this CLI process was started with {@link NESTED_ENV_VAR}, which {@link takeNested} took out. */
+let nestedAtStart = false;
+
+/** Takes {@link NESTED_ENV_VAR} out of `env`, remembering it for {@link isNested}. The CLI calls it first thing. */
+export function takeNested(env: NodeJS.ProcessEnv = process.env): void {
+  if (env[NESTED_ENV_VAR]) {
+    nestedAtStart = true;
+  }
+  delete env[NESTED_ENV_VAR];
+}
+
+/**
+ * Whether this process runs inside a command stackctl runs ({@link NESTED_ENV_VAR}): the CLI's
+ * as it started, and a script's that calls the SDK as it is now.
+ */
+export function isNested(env: NodeJS.ProcessEnv = process.env): boolean {
+  return nestedAtStart || Boolean(env[NESTED_ENV_VAR]);
+}
+
+/**
  * Names, comma-separated, the variables stackctl gave a child that the shell stackctl was started
  * in didn't — the `.env` values, the config's own variables, `PORT`. A stackctl started from such a
  * child (an e2e suite that `stackctl run` started, say) drops them first, so they don't count as

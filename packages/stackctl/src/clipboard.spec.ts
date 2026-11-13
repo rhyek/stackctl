@@ -1,6 +1,9 @@
 import { Buffer } from 'node:buffer';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, test, expect } from 'vitest';
-import { copyToClipboard, osc52 } from './clipboard.js';
+import { copyToClipboard, copyViaNativeCommand, osc52 } from './clipboard.js';
 
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
@@ -44,5 +47,41 @@ describe('copyToClipboard', () => {
     const writes: string[] = [];
     copyToClipboard('', (data) => writes.push(data));
     expect(writes).toEqual([]);
+  });
+});
+
+describe('copyViaNativeCommand', () => {
+  /** A stand-in clipboard command: writes what it reads on stdin to `file`, then exits `code`. */
+  const writer = (file: string, code = 0): [string, string[]] => [
+    process.execPath,
+    ['-e', `let t = ''; process.stdin.on('data', (c) => (t += c)).on('end', () => { require('node:fs').writeFileSync(${JSON.stringify(file)}, t); process.exit(${code}); })`],
+  ]; // oxfmt-ignore
+
+  test('pipes the text into the first command that runs, skipping one not installed', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-clipboard-'));
+    try {
+      const file = path.join(dir, 'copied');
+      const ok = await copyViaNativeCommand('línea 1\nline 2 世', [
+        ['stackctl-no-such-clipboard', []],
+        writer(file),
+      ]);
+      expect(ok).toBe(true);
+      expect(fs.readFileSync(file, 'utf8')).toBe('línea 1\nline 2 世');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a command that fails is skipped too, and none working is false', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-clipboard-'));
+    try {
+      const failed = path.join(dir, 'failed');
+      const second = path.join(dir, 'second');
+      expect(await copyViaNativeCommand('x', [writer(failed, 1), writer(second)])).toBe(true);
+      expect(fs.readFileSync(second, 'utf8')).toBe('x');
+      expect(await copyViaNativeCommand('x', [['stackctl-no-such-clipboard', []], writer(failed, 1)])).toBe(false); // oxfmt-ignore
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

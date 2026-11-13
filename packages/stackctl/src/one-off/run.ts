@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import tty from 'node:tty';
-import { execa } from 'execa';
 import { startedByAgent } from '../agent-detection.js';
+import { NESTED_ENV_VAR, isNested } from '../env-base.js';
 import { maskSecrets } from '../event-log.js';
 import { commandLine, formatDuration, logTimestamp, stripAnsi } from '../format.js';
 import { getDefaultLogFile } from '../log-files.js';
+import { forEachLine, spawnCommand, startFailure } from '../spawn.js';
 
 // Running a one-off command, once it is resolved: shared by the CLI's `exec`/`run` and the SDK's
 // `exec()`/`run()`, which resolve it differently (in-process, or in a child CLI).
@@ -67,7 +68,7 @@ const listeners = new Map(
   ]),
 );
 
-/** An exit while commands run ends them: execa's own cleanup is off (see {@link runOneOff}). */
+/** An exit of this process while commands run ends them. */
 const onExit = () => {
   for (const child of live) {
     child.kill('SIGTERM');
@@ -113,7 +114,10 @@ function tookFor(ms: number): string {
  * A log file in `logDir` (a session's `commands/` folder) records every run: a first line with the
  * command (secrets masked) and its directory, what was piped (line-buffered, timestamped and
  * ANSI-stripped, as a session logs), a line for each stream that went to the terminal instead,
- * and a last line with how it ended and how long it took. SIGTERM and SIGHUP sent to this process
+ * and a last line with how it ended and how long it took. Inside a command stackctl runs
+ * ({@link isNested}), which logs the output already, the streams go straight through and no log is
+ * written; outside one, the command gets {@link NESTED_ENV_VAR}, so an `exec` or `run` it starts
+ * does the same. SIGTERM and SIGHUP sent to this process
  * are forwarded to the command while it runs, and so is SIGINT, unless the command shares this
  * process's terminal; the listeners are removed once no command runs. Never exits the process.
  * Rejects with a {@link CommandStartError} when the command can't start.
@@ -127,21 +131,31 @@ export async function runOneOff(
     isTerminal?: (fd: 0 | OutputFd) => boolean;
     /** Whether a coding agent started this process; a seam for tests. Default: {@link startedByAgent}. */
     agent?: boolean;
+    /** Whether this runs inside a command stackctl runs; a seam for tests. Default: {@link isNested}. */
+    nested?: boolean;
   },
 ): Promise<OneOffResult> {
   const isTerminal = opts.isTerminal ?? ((fd) => tty.isatty(fd));
   const agent = opts.agent ?? startedByAgent();
+  // Inside a command stackctl runs (a dev script's `sctl exec -- node --watch …`), that command
+  // already logs the output and hands over its terminal: this one passes its streams straight
+  // through, and writes no log.
+  const nested = opts.nested ?? isNested();
   // A terminal is handed over, so the command behaves as it would run bare: a prompt, colors, a
   // watch mode's keys. Never to an agent, whose log then holds everything, as in CI.
-  const toTerminal = (fd: OutputFd) => opts.stdio === 'inherit' && !agent && isTerminal(fd);
+  const toTerminal = (fd: OutputFd) =>
+    opts.stdio === 'inherit' && (nested || (!agent && isTerminal(fd)));
   const handed = ([1, 2] as const).filter(toTerminal);
-  const logFile = getDefaultLogFile(opts.logDir);
   let logFd: number | undefined;
   let tracked: LiveChild | undefined;
   try {
-    const fd = fs.openSync(logFile, 'w');
+    const fd = nested ? undefined : fs.openSync(getDefaultLogFile(opts.logDir), 'w');
     logFd = fd;
-    const log = (text: string) => fs.writeSync(fd, `${logTimestamp()} ${text}\n`);
+    const log = (text: string) => {
+      if (fd !== undefined) {
+        fs.writeSync(fd, `${logTimestamp()} ${text}\n`);
+      }
+    };
     const startedAt = Date.now();
     log(`▶ running: ${commandLine(spec.command, maskSecrets(spec.args))} (in ${spec.cwd})`);
     if (handed.length > 0) {
@@ -149,80 +163,52 @@ export async function runOneOff(
       log(`${names} went to the terminal, not to this log`);
     }
     const collected = { stdout: '', stderr: '' };
-    // Tee one piped child stream: to the terminal or the result, then line-buffered timestamped
-    // and stripped lines to the logfile. One decoder per stream, so a character split across
-    // chunks stays whole. Returns a flush for what is left once the stream ends.
-    const tee = (src: NodeJS.ReadableStream | null, name: 'stdout' | 'stderr'): (() => void) => {
+    // Tee one piped child stream: as it is to the terminal, or into the result, and its lines,
+    // timestamped and stripped, to the log.
+    const tee = (src: NodeJS.ReadableStream | null, name: 'stdout' | 'stderr') => {
       if (!src) {
-        return () => {};
+        return;
       }
-      const decoder = new StringDecoder('utf8');
-      let buf = '';
-      const take = (text: string) => {
-        if (opts.stdio === 'pipe') {
-          collected[name] += text;
-        }
-        buf += text;
-        let nl: number;
-        while ((nl = buf.indexOf('\n')) !== -1) {
-          log(stripAnsi(buf.slice(0, nl)));
-          buf = buf.slice(nl + 1);
-        }
-      };
-      src.on('data', (chunk: Buffer) => {
-        if (opts.stdio === 'inherit') {
-          process[name].write(chunk);
-        }
-        take(decoder.write(chunk));
-      });
-      return () => {
-        take(decoder.end());
-        if (buf.length > 0) {
-          log(stripAnsi(buf));
-          buf = '';
-        }
-      };
+      if (opts.stdio === 'inherit') {
+        src.on('data', (chunk: Buffer) => process[name].write(chunk));
+      } else {
+        const decoder = new StringDecoder('utf8');
+        src.on('data', (chunk: Buffer) => (collected[name] += decoder.write(chunk)));
+        src.on('end', () => (collected[name] += decoder.end()));
+      }
+      forEachLine(src, (line) => log(stripAnsi(line)));
     };
 
-    const child = execa(spec.command, spec.args, {
+    const child = spawnCommand(spec.command, spec.args, {
       cwd: spec.cwd,
-      env: spec.env,
-      extendEnv: false,
-      stdin: 'inherit',
-      stdout: toTerminal(1) ? 'inherit' : 'pipe',
-      stderr: toTerminal(2) ? 'inherit' : 'pipe',
-      buffer: false,
-      reject: false,
-      // execa's own cleanup answers a signal to this process by sending the command SIGTERM,
-      // ahead of the signal forwarded here. Only an exit while the command runs ends it, here.
-      cleanup: false,
+      // An `exec` or `run` the command starts is part of it, as this one is of its own.
+      env: nested ? spec.env : { ...spec.env, [NESTED_ENV_VAR]: '1' },
+      stdio: ['inherit', toTerminal(1) ? 'inherit' : 'pipe', toTerminal(2) ? 'inherit' : 'pipe'],
     });
     tracked = {
       kill: (signal) => void child.kill(signal),
       sharesTerminal: opts.stdio === 'inherit' && isTerminal(0),
     };
     track(tracked);
-    const flushOut = tee(child.stdout, 'stdout');
-    const flushErr = tee(child.stderr, 'stderr');
-    const result = await child;
-    flushOut();
-    flushErr();
+    tee(child.stdout, 'stdout');
+    tee(child.stderr, 'stderr');
+    const ended = await child.done;
     const took = tookFor(Date.now() - startedAt);
-    if (result.exitCode === undefined && result.signal === undefined) {
-      const why = result.shortMessage ?? `couldn't start ${spec.command}`;
-      log(`✘ couldn't start: ${stripAnsi(why.split('\n')[0]!)}`);
+    if (ended.error) {
+      const why = `couldn't start ${spec.command}: ${startFailure(ended.error, spec.cwd)}`;
+      log(`✘ ${why}`);
       throw new CommandStartError(why);
     }
-    if (result.signal) {
-      log(`✘ ended by ${result.signal} after ${took}`);
-    } else if (result.exitCode === 0) {
+    if (ended.signal) {
+      log(`✘ ended by ${ended.signal} after ${took}`);
+    } else if (ended.exitCode === 0) {
       log(`✔ finished in ${took}`);
     } else {
-      log(`✘ exited with code ${String(result.exitCode)} after ${took}`);
+      log(`✘ exited with code ${String(ended.exitCode)} after ${took}`);
     }
     return {
-      exitCode: result.exitCode ?? null,
-      signal: result.signal ?? null,
+      exitCode: ended.exitCode,
+      signal: ended.signal,
       ...(opts.stdio === 'pipe' ? collected : {}),
     };
   } finally {

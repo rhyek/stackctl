@@ -8,12 +8,12 @@ import {
   getDevScript,
   getRegisteredPackages,
 } from '../config.js';
-import { sessionTrustFile } from '../dev-tls.js';
 import { type EnvWatch, type WatchTarget, watchEnvFiles } from '../env-watch.js';
 import {
   type EnvFileOrder,
   EnvFileSnapshot,
   envCandidatePaths,
+  ENV_KEYS_FILENAME,
   envFileOrder,
   envKeysFile,
   packageEnvLayer,
@@ -28,6 +28,7 @@ import { defaultFormatter } from '../log-formatter.js';
 import { type ExecSpec, scriptExec, menuCommandsOf, definesDevScript } from '../scripts.js';
 import { depsOf } from '../selection-plan.js';
 import type { ServiceGroups } from '../service-usage.js';
+import { sessionTrustFile } from '../trust-file.js';
 import { callEach } from '../util.js';
 import type { LogStore } from './log-store.js';
 import { waitsFor } from './plan.js';
@@ -290,7 +291,10 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
       );
     }, ENV_READ_WARN_MS);
     this.firstRead = this.snapshot
-      .refresh([envKeysFile(), ...this.plan.sortedPackages.flatMap((p) => this.envPaths(p))])
+      .refresh([
+        ...this.plan.sortedPackages.flatMap((p) => this.envPaths(p)),
+        ...(this.plan.envDecrypt ? [envKeysFile(this.root)] : []),
+      ])
       .catch(() => {})
       .then(() => {
         this.envRead = true;
@@ -790,6 +794,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
         cwd: this.root,
         files: this.envFiles,
         override: this.plan.envOverride,
+        decrypt: this.plan.envDecrypt,
         vars: this.plan.envVars,
         extraCaCerts: sessionTrustFile(this.root),
         read: this.snapshot.read,
@@ -799,7 +804,8 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
 
   /**
    * (Re)watches the `.env` files: the workspace's restart every service, a service directory's
-   * that service. Each change also reads the files again.
+   * that service, and with `env.decrypt` so does `.env.keys`. Each change also reads the files
+   * again.
    */
   private watchEnv(): void {
     this.watch?.();
@@ -818,7 +824,10 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     const targets: WatchTarget[] = [
       {
         dir: root,
-        filenames: this.envFiles.workspace,
+        filenames: [
+          ...this.envFiles.workspace,
+          ...(this.plan.envDecrypt ? [ENV_KEYS_FILENAME] : []),
+        ],
         onChange: () => changed(root, [...this.services.keys()]),
       },
     ];

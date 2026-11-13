@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { type AnyServiceConfig, type Config, getLoadedConfig } from '../config.js';
-import { sessionTrustFile } from '../dev-tls.js';
 import {
   type SerializedEnvResolution,
   assignedNames,
@@ -11,6 +10,7 @@ import {
 } from '../env.js';
 import { scriptExec, definesScript } from '../scripts.js';
 import { type ResolvedTarget, resolveTarget } from '../target.js';
+import { sessionTrustFile } from '../trust-file.js';
 import type { OneOffSpec } from './run.js';
 
 // Resolving a one-off command where the config is loaded: the CLI's own process for `exec` and
@@ -63,6 +63,7 @@ export function oneOffEnvLayer(target: ResolvedTarget, root: string): Record<str
     cwd: root,
     files: config.envFiles ?? envFileNames(),
     override: config.envOverride,
+    decrypt: config.envDecrypt,
     vars: config.envVars,
     extraCaCerts: sessionTrustFile(root),
   });

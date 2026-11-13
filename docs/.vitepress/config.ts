@@ -33,10 +33,11 @@ export default defineConfig({
   // Contributor internals and working notes live in docs/ too, but aren't part of the site.
   srcExclude: ['architecture/**', 'superpowers/**'],
   sitemap: { hostname: site },
-  // The icon (docs/public/logo.svg) in the browser tab, with a PNG for browsers that don't take
-  // an SVG one, and the square one iOS rounds for a home-screen bookmark.
+  // The icon at its small size (logo/logo-small.svg, linked into docs/public/) in the browser
+  // tab, with a PNG for browsers that don't take an SVG one, and the square one iOS rounds for a
+  // home-screen bookmark.
   head: [
-    ['link', { rel: 'icon', href: versioned('/logo.svg'), type: 'image/svg+xml' }],
+    ['link', { rel: 'icon', href: versioned('/logo-small.svg'), type: 'image/svg+xml' }],
     [
       'link',
       { rel: 'icon', href: versioned('/favicon-32.png'), type: 'image/png', sizes: '32x32' },
@@ -108,7 +109,7 @@ export default defineConfig({
   },
 
   themeConfig: {
-    logo: { src: versioned('/logo.svg'), alt: '' },
+    logo: { src: versioned('/logo-small.svg'), alt: '' },
     nav: [
       { text: 'Guide', link: '/guide/getting-started', activeMatch: '^/guide/' },
       { text: 'Config', link: '/config/config-file', activeMatch: '^/config/' },

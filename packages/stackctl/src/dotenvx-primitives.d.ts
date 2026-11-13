@@ -6,18 +6,20 @@ declare module '@dotenvx/primitives' {
     processEnv?: Record<string, string | undefined>;
     /** Let the source's values win over `processEnv`'s. */
     overload?: boolean;
-    /** The `.env.keys` files to read private keys from; `.env.keys` in the working directory if not given. */
+    /** The files to read private keys from; `.env.keys` in the working directory if not given. */
     fk?: string[];
+    /** Variable names (globs) whose values are not decrypted; `'*'` decrypts none. */
+    ek?: string | string[];
   }
   interface ParseResult {
     parsed: Record<string, string>;
-    /** Values that could not be decrypted, among other failures. */
+    /** Values that could not be decrypted. */
     errors: { code: string; message: string }[];
   }
   interface Primitives {
     parseSync(source: string, options?: ParseOptions): ParseResult;
     /** Every assignment in `source`, each name's values in order, unresolved. */
-    scan(source: string): { parsed: Record<string, string[]> };
+    scan(source: string): { scanned: Record<string, string[]> };
     keypair(): { publicKey: string; privateKey: string };
     encrypt(publicKey: string, value: string): string;
   }

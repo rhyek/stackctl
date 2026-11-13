@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execa } from 'execa';
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import type { AnyServiceConfig } from './config.js';
 import {
@@ -13,6 +12,7 @@ import {
   menuCommandsOf,
   makeTargetsOf,
 } from './scripts.js';
+import { runCommand } from './spawn.js';
 
 let dir: string;
 function pkg(over: Partial<AnyServiceConfig> & { absoluteDir: string }): AnyServiceConfig {
@@ -77,7 +77,7 @@ describe('package script spawn spec', () => {
   let bare: string; // no name, no version, no node_modules
   const run = (p: AnyServiceConfig, script: string, args: string[] = [], env = process.env) => {
     const spec = scriptExec(p, script, args, env);
-    return execa(spec.cmd, spec.args, { cwd: p.absoluteDir, env: spec.env, reject: false });
+    return runCommand(spec.cmd, spec.args, { cwd: p.absoluteDir, env: spec.env }).done;
   };
   const PRINT_ARGV = 'node -e "console.log(JSON.stringify(process.argv.slice(1)))" x';
 
@@ -149,7 +149,7 @@ describe('package script spawn spec', () => {
       ...process.env,
       npm_package_version: '9.9.9',
     });
-    expect(result.stdout).toBe('undefined');
+    expect(result.stdout).toBe('undefined\n');
   });
 
   test('extra args reach the script intact, whatever shell syntax they contain', async () => {
@@ -165,7 +165,7 @@ describe('package script spawn spec', () => {
   test('a script that does not exist fails with exit code 1, naming it', async () => {
     const result = await run(pkg({ absoluteDir: app }), 'nope');
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toBe('Missing script: "nope"');
+    expect(result.stderr).toBe('Missing script: "nope"\n');
   });
 
   test('a make target gets the given environment unchanged', () => {
@@ -205,8 +205,8 @@ describe('a script run as scriptExec says', () => {
 
   test("runs the script in the package directory, with the package's and the workspace root's node_modules/.bin on PATH", async () => {
     const { cmd, args, env } = scriptExec(pkg({ absoluteDir: app }), 'build');
-    const result = await execa(cmd, args, { cwd: app, env });
-    expect(String(result.stdout).split('\n')).toEqual(['appbin-OK', 'rootbin-OK', app]);
+    const result = await runCommand(cmd, args, { cwd: app, env }).done;
+    expect(result.stdout).toBe(['appbin-OK', 'rootbin-OK', app, ''].join('\n'));
   });
 });
 

@@ -11,3 +11,5 @@ allowBuilds:
 minimumReleaseAge: 0
 # Don't install a package's peer dependencies for it; the workspace declares the ones it uses.
 autoInstallPeers: false
+patchedDependencies:
+  '@dotenvx/primitives@4.4.0': patches/@dotenvx__primitives@4.4.0.patch

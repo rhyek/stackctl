@@ -31,7 +31,8 @@ At each scope, in this order, each overriding the one before:
 4. `.env.<mode>.local`
 
 Only files that exist are read. Commit `.env` and `.env.<mode>`, and keep `.env*.local` out of
-git for personal overrides.
+git for personal overrides. To commit secrets too, encrypt them with dotenvx and turn on
+[`env.decrypt`](../config/env.md#envdecrypt).
 
 ## Which value wins
 
@@ -121,3 +122,5 @@ when stackctl starts. Restart stackctl to pick those up.
   it changed. A stackctl started from that process (an e2e suite that calls `startStack()`,
   say) drops the first and restores the second, so its own `.env` files load as from the shell
   the outer one was started in. It stays in the outer mode unless `--mode` says otherwise.
+  It also gets `STACKCTL_NESTED`, which makes an `sctl exec` or `sctl run` there part of the
+  outer command (see [One-off commands](./commands.md#output-and-exit-code)).

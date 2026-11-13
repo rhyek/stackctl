@@ -149,7 +149,8 @@ const { exitCode, stdout } = await run({
   and neither function calls `process.exit`.
 - **Signals are forwarded** to the command.
 - **Each call is in the [event log](./events.md)** and writes a
-  [log file](../guide/logs.md#log-files), as `stackctl exec` and `run` do.
+  [log file](../guide/logs.md#log-files), as `stackctl exec` and `run` do, except
+  [inside a command stackctl runs](../guide/commands.md#output-and-exit-code).
 
 ## `resolveEnv`
 
@@ -190,8 +191,6 @@ logging.formatter(config?);
 logging.nodejs.pino.formatter(config?);
 logging.nodejs.winston.formatter(config?);
 ```
-
-`z`, from zod, is re-exported for a hand-written formatter.
 
 ## Types
 

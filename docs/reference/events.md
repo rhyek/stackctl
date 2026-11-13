@@ -82,6 +82,8 @@ no `end` is a command still running, or one whose process was killed.
   `service-state` lines.
 - **A `quit` ends** when the session's services are down, just before its `session-end`.
 - **A `reset`'s lines open** the new file, since the reset deleted the old one.
+- **An `exec` or `run` inside a command stackctl runs writes no line**, such as one in a
+  service's dev script. The outer command is the one recorded.
 
 Every command says who asked in `by`:
 
