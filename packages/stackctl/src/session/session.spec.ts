@@ -603,6 +603,39 @@ describe('shutdown', () => {
     expect(t.lines()).not.toContain('[stackctl] [WARN] shutting down...');
   });
 
+  test('an infra action still running is sent SIGTERM by process group, and waited on', async () => {
+    const action = [process.execPath, '-e', "console.log('action ' + process.pid); setInterval(() => {}, 1e9)", '--']; // oxfmt-ignore
+    const t = setup({
+      services: { api: {} },
+      seams: {
+        runInfra: () => Promise.resolve({ services: [{ provider: 'docker-compose', name: 'db' }] }),
+        infraCli: action,
+        // Recorded, and sent: the action has to end for the shutdown to finish waiting.
+        signalGroup: (pid, signal) => {
+          t.signalled.push([pid, signal]);
+          try {
+            process.kill(-pid, signal);
+          } catch {
+            /* gone */
+          }
+        },
+      },
+    });
+    await t.session.start();
+    expect(t.session.runInfra('db', 'restart', BY)).toBe('accepted');
+    let pid = 0;
+    await until(() => {
+      pid = Number(/action (\d+)/.exec(t.lines().join('\n'))?.[1] ?? 0);
+      expect(pid).toBeGreaterThan(0);
+    });
+    await t.session.shutdown('user');
+    expect(t.signalled).toContainEqual([pid, 'SIGTERM']);
+    expect(() => process.kill(pid, 0)).toThrow('ESRCH');
+    expect(t.lines()).toContain('[stackctl] [WARN] shutting down...');
+    // A shutdown logs no end line for what it waited on.
+    expect(t.lines().filter((line) => line.includes('exited with code'))).toEqual([]);
+  });
+
   test('writes what acts on it to the event log: its start, each command and who asked, the quit, its end', async () => {
     const t = setup({ services: { api: {}, web: {} } });
     await t.session.start();

@@ -46,6 +46,7 @@ export function buildSessionPlan(selected: string[]): SessionPlan {
     topLevelUrls: config?.urls?.map(normalizeUrlEntry),
     envFiles: config?.envFiles,
     envOverride: config?.envOverride,
+    envDecrypt: config?.envDecrypt,
     envVars: config?.envVars,
     logTimestamps: config?.logTimestamps,
     cwd: process.cwd(),

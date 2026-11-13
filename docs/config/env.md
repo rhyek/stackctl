@@ -1,5 +1,5 @@
 ---
-description: The env option of stackctl.config.ts - env.vars for variables set in the config, env.override to let files win over the shell, and env.additionalFiles for extra .env files.
+description: The env option of stackctl.config.ts - env.vars for variables set in the config, env.override to let files win over the shell, env.additionalFiles for extra .env files, and env.decrypt for values encrypted with dotenvx.
 ---
 
 # Environment
@@ -29,6 +29,7 @@ export default defineConfig({
 | [`vars`](#envvars)                        | Sets variables from the config itself.                     |
 | [`override`](#envoverride)                | Names variables where a file wins over the shell.          |
 | [`additionalFiles`](#envadditionalfiles)  | Loads extra `.env` files among stackctl's own.             |
+| [`decrypt`](#envdecrypt)                  | Decrypts values encrypted with dotenvx.                    |
 
 ## `env.vars`
 
@@ -152,3 +153,27 @@ API_PORT=21051
 
 `.env.development.local` couldn't hold them: it loads after `.env.development`, too late for
 the references there.
+
+## `env.decrypt`
+
+- **Type:** `boolean` (default `false`)
+
+Decrypts the values [encrypted with dotenvx](https://github.com/dotenvx/dotenvx#encryption),
+so a `.env` file of secrets can be committed.
+
+```ts
+env: { decrypt: true },
+```
+
+```sh
+# .env.development (committed), after `dotenvx encrypt -f .env.development`
+DOTENV_PUBLIC_KEY_DEVELOPMENT="03f8…"
+DATABASE_URL="encrypted:BDqD…"
+```
+
+- **The private keys** come from `.env.keys` at the workspace root, which stays out of git,
+  and from any `DOTENV_PRIVATE_KEY*` variable stackctl is started with, which is how CI gets
+  one.
+- **A value with no key to decrypt it** stays as written, and stackctl prints which one.
+- **Editing `.env.keys` restarts every service**, as a workspace `.env` file does.
+- **Without it, `encrypted:…` is an ordinary string**, passed on as written.

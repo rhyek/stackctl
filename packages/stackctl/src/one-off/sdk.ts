@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { RESOLVE_ENV_FD, assertOutsideCli, rejectUnknownOptions } from '../env-base.js';
+import { RESOLVE_ENV_FD, assertOutsideCli, isNested, rejectUnknownOptions } from '../env-base.js';
 import type { OneOffCommandEntry } from '../event-log.js';
 import type { OneOffResolution } from './resolve.js';
 import { resolverArgs } from './resolver-args.js';
@@ -119,17 +119,20 @@ async function runResolved(
       import('../event-log.js'),
       import('../agent-detection.js'),
     ]);
-  const entry = cliEventLog(root, mode).begin<OneOffCommandEntry>(
-    {
-      type: 'one-off-command',
-      kind: asked.kind,
-      ...where,
-      ...(asked.kind === 'exec'
-        ? { command: maskSecrets(asked.command) }
-        : { script: asked.script, args: maskSecrets(asked.args) }),
-    },
-    sdkBy(root, { agent: startedByAgent(), cwd: process.cwd() }),
-  );
+  // Inside a command stackctl runs, that command is the one recorded.
+  const entry = isNested()
+    ? { end: () => {} }
+    : cliEventLog(root, mode).begin<OneOffCommandEntry>(
+        {
+          type: 'one-off-command',
+          kind: asked.kind,
+          ...where,
+          ...(asked.kind === 'exec'
+            ? { command: maskSecrets(asked.command) }
+            : { script: asked.script, args: maskSecrets(asked.args) }),
+        },
+        sdkBy(root, { agent: startedByAgent(), cwd: process.cwd() }),
+      );
   try {
     const result = await runOneOff(spec, { stdio: options.stdio ?? 'inherit', logDir });
     entry.end({ ok: result.exitCode === 0, exitCode: result.exitCode, signal: result.signal });

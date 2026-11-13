@@ -1,12 +1,28 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { execa, execaSync } from 'execa';
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import { HANDOFF_FORCE_KILL_MS } from '../shutdown-timing.js';
+import { type Running, runCommand } from '../spawn.js';
 import { resetMode, runReset, runStop, stopSession, stoppedLine } from './stop.js';
+
+/**
+ * Starts `command` as these specs run one: this process's environment under `env`, and its output
+ * without the newline it printed last, to compare whole.
+ */
+function start(
+  command: string,
+  args: string[],
+  opts: { cwd?: string; env?: Record<string, string>; timeout?: number } = {},
+): Running {
+  const child = runCommand(command, args, { ...opts, env: { ...process.env, ...opts.env } });
+  const trim = (text: string) => text.replace(/\r?\n$/, '');
+  const done = child.done.then((end) => ({ ...end, stdout: trim(end.stdout), stderr: trim(end.stderr) })); // oxfmt-ignore
+  return Object.assign(child, { done });
+}
 
 /**
  * `stackctl stop` and `stackctl reset`, against real sessions of the CLI compiled from the current
@@ -76,7 +92,7 @@ beforeAll(async () => {
   const tsPackage = fileURLToPath(import.meta.resolve('typescript/package.json'));
   const tsc = path.join(path.dirname(tsPackage), 'bin', 'tsc');
   fs.rmSync(buildDir, { recursive: true, force: true });
-  await execa(
+  const build = await start(
     'node',
     [
       tsc,
@@ -92,7 +108,10 @@ beforeAll(async () => {
       'false',
     ],
     { cwd: packageDir },
-  );
+  ).done;
+  if (build.exitCode !== 0) {
+    throw new Error(`the build failed:\n${build.stdout}${build.stderr}`);
+  }
 
   ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-stop-')));
   fs.writeFileSync(path.join(ws, 'package.json'), JSON.stringify({ name: 'stoproot', type: 'module' })); // oxfmt-ignore
@@ -135,19 +154,19 @@ const alive = (pid: number) => {
  * checks it first, so that it only ever signals a process the test's own process started.
  */
 function parentPid(pid: number): number | null {
-  const { stdout, exitCode } = execaSync('ps', ['-o', 'ppid=', '-p', String(pid)], { reject: false }); // oxfmt-ignore
-  const ppid = Number.parseInt(String(stdout).trim(), 10);
-  return exitCode === 0 && ppid > 0 ? ppid : null;
+  const { stdout, status } = spawnSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }); // oxfmt-ignore
+  const ppid = Number.parseInt(stdout.trim(), 10);
+  return status === 0 && ppid > 0 ? ppid : null;
 }
 
 /** Sessions and stand-ins a test started, ended after it whatever happened; and the ones that have exited. */
-const sessions: ReturnType<typeof execa>[] = [];
-const ended = new WeakSet<ReturnType<typeof execa>>();
-const fakes: ReturnType<typeof execa>[] = [];
+const sessions: Running[] = [];
+const ended = new WeakSet<Running>();
+const fakes: Running[] = [];
 /** Keeps a stand-in the test started, ended after it should it still run. */
-function fake(child: ReturnType<typeof execa>) {
+function fake(child: Running) {
   fakes.push(child);
-  void child.then(() => ended.add(child));
+  void child.done.then(() => ended.add(child));
 }
 afterEach(async () => {
   for (const child of fakes.splice(0)) {
@@ -155,7 +174,7 @@ afterEach(async () => {
     if (!ended.has(child)) {
       child.kill('SIGKILL');
     }
-    await child;
+    await child.done;
   }
   for (const child of sessions.splice(0)) {
     await endSession(child);
@@ -168,12 +187,12 @@ afterEach(async () => {
  * groups of the services its record names whose leader is still its child, which a SIGKILLed
  * session leaves running.
  */
-async function endSession(child: ReturnType<typeof execa>): Promise<void> {
+async function endSession(child: Running): Promise<void> {
   if (ended.has(child) || !(child.pid! > 0)) {
-    await child;
+    await child.done;
     return;
   }
-  const exited = child.then(() => true);
+  const exited = child.done.then(() => true);
   child.kill('SIGTERM');
   if (await Promise.race([exited, new Promise<false>((r) => setTimeout(() => r(false), 15_000))])) {
     return;
@@ -200,18 +219,17 @@ async function endSession(child: ReturnType<typeof execa>): Promise<void> {
     }
   }
   child.kill('SIGKILL');
-  await child;
+  await child.done;
 }
 
 /** Starts a headless session of `service` in `mode`, resolving with its subprocess once the service has started. */
 async function startSession(mode: string, service: string, extra: string[] = []) {
-  const child = execa('node', [cli, '--mode', mode, '--headless', '-s', service, ...extra], {
+  const child = start('node', [cli, '--mode', mode, '--headless', '-s', service, ...extra], {
     cwd: ws,
     env: { CI: '1' },
-    reject: false,
   });
   sessions.push(child);
-  void child.then(() => ended.add(child));
+  void child.done.then(() => ended.add(child));
   let output = '';
   child.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()));
   // Labels are padded to the longest in the session: `stackctl`, in these fixtures.
@@ -228,12 +246,11 @@ async function startSession(mode: string, service: string, extra: string[] = [])
         resolve();
       }
     });
-    void child.then(() => {
+    void child.done.then(() => {
       clearTimeout(giveUp);
       reject(new Error(`exited before printing ${until}:\n${output}`));
     });
   });
-  // Wrapped: the subprocess is a thenable, which an async function would wait out.
   return { child };
 }
 
@@ -246,14 +263,15 @@ async function startFake(
   { mode = 'development', startedAt }: { mode?: string; startedAt?: number | null } = {},
 ) {
   const sessionId = `fake-${behavior}`;
-  const child = execa('node', [path.join(ws, 'fake-session.mjs'), behavior, mode, sessionId], {
+  const child = start('node', [path.join(ws, 'fake-session.mjs'), behavior, mode, sessionId], {
     cwd: ws,
-    reject: false,
   });
   fake(child);
   const first = await new Promise<{ port?: number }>((resolve, reject) => {
     child.stdout.once('data', (chunk: Buffer) => resolve(JSON.parse(chunk.toString()) as { port?: number })); // oxfmt-ignore
-    void child.then((result) => reject(new Error(`the stand-in exited: ${String(result.stderr)}`)));
+    void child.done.then((result) =>
+      reject(new Error(`the stand-in exited: ${String(result.stderr)}`)),
+    );
   });
   const port = first.port ?? (await freePort());
   fs.mkdirSync(modeDir(mode), { recursive: true });
@@ -302,23 +320,23 @@ describe('stackctl stop', () => {
       expect(startedAt as number).toBeLessThanOrEqual(Date.now());
     }
 
-    const result = await execa('node', [cli, '--mode', 'test', 'stop'], { cwd: ws, reject: false });
+    const result = await start('node', [cli, '--mode', 'test', 'stop'], { cwd: ws }).done;
     expect(result.stdout).toBe(`stopped test session (pid ${String(testSession.pid)})`);
     expect(result.exitCode).toBe(0);
     // `stop` returned once it was gone, so it has exited; the development one runs on.
-    await testSession;
+    await testSession.done;
     expect(alive(development.pid!)).toBe(true);
     expect(records()).toEqual(['development/running.json']);
 
-    const second = await execa('node', [cli, 'stop', '--mode', 'development'], { cwd: ws, reject: false }); // oxfmt-ignore
+    const second = await start('node', [cli, 'stop', '--mode', 'development'], { cwd: ws }).done; // oxfmt-ignore
     expect(second.stdout).toBe(`stopped development session (pid ${String(development.pid)})`);
-    await development;
+    await development.done;
     expect(records()).toEqual([]);
   }, 60_000);
 
   test("with none of its mode running, names the mode's source and the other mode's session", async () => {
     const { child: testSession } = await startSession('test', 'worker');
-    const result = await execa('node', [cli, 'stop'], { cwd: ws, reject: false });
+    const result = await start('node', [cli, 'stop'], { cwd: ws }).done;
     expect(result.stdout.split('\n')).toEqual([
       'No development stackctl session is running (development is the default mode; pass --mode to choose another).',
       `A test session is running (pid ${String(testSession.pid)}): stackctl --mode test stop`,
@@ -327,13 +345,13 @@ describe('stackctl stop', () => {
     expect(alive(testSession.pid!)).toBe(true);
 
     // In CI, the mode is the CI default; from STACKCTL_MODE, it says so.
-    const ci = await execa('node', [cli, 'stop'], { cwd: ws, env: { CI: 'true', STACKCTL_MODE: '' }, reject: false }); // oxfmt-ignore
+    const ci = await start('node', [cli, 'stop'], { cwd: ws, env: { CI: 'true', STACKCTL_MODE: '' } }).done; // oxfmt-ignore
     expect(ci.stdout).toContain(`stopped test session (pid ${String(testSession.pid)})`);
-    const fromEnv = await execa('node', [cli, 'stop'], { cwd: ws, env: { STACKCTL_MODE: 'qa' }, reject: false }); // oxfmt-ignore
+    const fromEnv = await start('node', [cli, 'stop'], { cwd: ws, env: { STACKCTL_MODE: 'qa' } }).done; // oxfmt-ignore
     expect(fromEnv.stdout).toBe(
       'No qa stackctl session is running (qa is from STACKCTL_MODE; pass --mode to choose another).',
     );
-    const named = await execa('node', [cli, '--mode', 'qa', 'stop'], { cwd: ws, reject: false });
+    const named = await start('node', [cli, '--mode', 'qa', 'stop'], { cwd: ws }).done;
     expect(named.stdout).toBe('No qa stackctl session is running.');
   }, 60_000);
 
@@ -360,15 +378,15 @@ describe('stackctl stop', () => {
   });
 
   test('stop with nothing running', async () => {
-    const result = await execa('node', [cli, '--mode', 'development', 'stop'], { cwd: ws, reject: false }); // oxfmt-ignore
+    const result = await start('node', [cli, '--mode', 'development', 'stop'], { cwd: ws }).done; // oxfmt-ignore
     expect(result.stdout).toBe('No development stackctl session is running.');
     expect(result.exitCode).toBe(0);
   });
 
   test('a record whose session is gone is no session', async () => {
-    const gone = execa('node', ['-e', '']);
+    const gone = start('node', ['-e', '']);
     const pid = gone.pid;
-    await gone;
+    await gone.done;
     fs.mkdirSync(modeDir('development'), { recursive: true });
     fs.writeFileSync(recordOf('development'), JSON.stringify({ port: await freePort(), pid })); // oxfmt-ignore
     expect(await stopSession(ws, 'development')).toBeNull();
@@ -387,7 +405,7 @@ describe('stackctl stop', () => {
     // Another session answering on the record's port, as itself.
     const { port } = await startFake('hang');
     // The record's pid: a process of this test's own, in the workspace, standing in for a reused pid.
-    const standIn = execa('node', ['-e', 'setInterval(()=>{},1e9)'], { cwd: ws, reject: false });
+    const standIn = start('node', ['-e', 'setInterval(()=>{},1e9)'], { cwd: ws });
     const pid = standIn.pid!;
     fake(standIn);
     const record = recordOf('development');
@@ -410,7 +428,7 @@ describe('stackctl stop', () => {
   test('a hung record whose pid started after the record was written is no session, and is not signalled', async () => {
     // A process of this test's own, in the workspace, answering nothing: a pid the system gave
     // to something else after the session that wrote the record ended.
-    const standIn = execa('node', ['-e', 'setInterval(()=>{},1e9)'], { cwd: ws, reject: false });
+    const standIn = start('node', ['-e', 'setInterval(()=>{},1e9)'], { cwd: ws });
     const pid = standIn.pid!;
     fake(standIn);
     fs.mkdirSync(modeDir('development'), { recursive: true });
@@ -472,13 +490,13 @@ describe('stackctl reset', () => {
     const { child: session } = await startSession('development', 'web');
     const { child: other } = await startSession('test', 'worker');
 
-    const result = await execa('node', [cli, '--mode', 'development', 'reset'], { cwd: ws, reject: false }); // oxfmt-ignore
+    const result = await start('node', [cli, '--mode', 'development', 'reset'], { cwd: ws }).done; // oxfmt-ignore
     expect(result.stdout.split('\n')).toEqual([
       `stopped development session (pid ${String(session.pid)})`,
       'Removed node_modules/.stackctl/modes/development/; its event log starts again with this reset.',
     ]);
     expect(result.exitCode).toBe(0);
-    await session;
+    await session.done;
     // All its state went, the event log too; the reset's own lines open the new one.
     expect(fs.readdirSync(modeDir('development'))).toEqual(['sessions']);
     expect(fs.readdirSync(latestSession('development'))).toEqual(['events.jsonl']);
@@ -499,8 +517,11 @@ describe('stackctl reset', () => {
     seedState();
     const message =
       "reset deletes a mode's state: name the mode with --mode (e.g. stackctl --mode development reset)";
-    for (const env of [{}, { STACKCTL_MODE: 'development' }, { CI: 'true' }]) {
-      const result = await execa('node', [cli, 'reset'], { cwd: ws, env, reject: false });
+    for (const env of [{}, { STACKCTL_MODE: 'development' }, { CI: 'true' }] as Record<
+      string,
+      string
+    >[]) {
+      const result = await start('node', [cli, 'reset'], { cwd: ws, env }).done;
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toBe(message);
       expect(result.stdout).toBe('');
@@ -580,7 +601,7 @@ describe('stackctl reset', () => {
   }, 30_000);
 
   test('reset with nothing to remove', async () => {
-    const result = await execa('node', [cli, '--mode', 'development', 'reset'], { cwd: ws, reject: false }); // oxfmt-ignore
+    const result = await start('node', [cli, '--mode', 'development', 'reset'], { cwd: ws }).done; // oxfmt-ignore
     expect(result.stdout).toBe(
       "No development stackctl session is running.\nNothing to remove: node_modules/.stackctl/modes/development/ doesn't exist.",
     );
@@ -592,7 +613,7 @@ describe('a takeover with --kill-others', () => {
   test('never kills a hung record whose pid started after the record was written, and refuses to start', async () => {
     // A process of this test's own, in the workspace, answering nothing: a pid the system gave
     // to something else after the session that wrote the record ended.
-    const standIn = execa('node', ['-e', 'setInterval(()=>{},1e9)'], { cwd: ws, reject: false });
+    const standIn = start('node', ['-e', 'setInterval(()=>{},1e9)'], { cwd: ws });
     const pid = standIn.pid!;
     fake(standIn);
     fs.mkdirSync(modeDir('development'), { recursive: true });
@@ -600,16 +621,15 @@ describe('a takeover with --kill-others', () => {
     const startedAt = Date.now() - 60_000;
     fs.writeFileSync(record, JSON.stringify({ port: await freePort(), pid, sessionId: 'gone', startedAt })); // oxfmt-ignore
 
-    const result = await execa(
+    const result = await start(
       'node',
       [cli, '--mode', 'development', '--headless', '-s', 'web', '--kill-others'],
       {
         cwd: ws,
         env: { CI: '1' },
-        reject: false,
         timeout: 30_000,
       },
-    );
+    ).done;
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain(
       `a development session is recorded as running (pid ${String(pid)}), but stackctl can't confirm that process is that session, so it won't kill it. ` +
@@ -621,16 +641,15 @@ describe('a takeover with --kill-others', () => {
 
   test('never kills a hung record with no startedAt', async () => {
     const { pid } = await startFake('deaf', { startedAt: null });
-    const result = await execa(
+    const result = await start(
       'node',
       [cli, '--mode', 'development', '--headless', '-s', 'web', '--kill-others'],
       {
         cwd: ws,
         env: { CI: '1' },
-        reject: false,
         timeout: 30_000,
       },
-    );
+    ).done;
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain(`(pid ${String(pid)}), but stackctl can't confirm`);
     expect(alive(pid)).toBe(true);
@@ -646,7 +665,7 @@ describe('a takeover with --kill-others', () => {
   }, 60_000);
 
   test('startStack({ killOthers }) rejects with the same message, and kills nothing', async () => {
-    const standIn = execa('node', ['-e', 'setInterval(()=>{},1e9)'], { cwd: ws, reject: false });
+    const standIn = start('node', ['-e', 'setInterval(()=>{},1e9)'], { cwd: ws });
     const pid = standIn.pid!;
     fake(standIn);
     fs.mkdirSync(modeDir('development'), { recursive: true });

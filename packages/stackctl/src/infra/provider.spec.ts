@@ -4,12 +4,13 @@ import { describe, expect, test } from 'vitest';
 import { type BuildAddressOptions, type Config, defineConfig } from '../config.js';
 import { createControlClient } from '../control-client.js';
 import type { Envs } from '../env.js';
-import type { Exec, ExecOptions, ExecResult } from './exec.js';
+import type { Exec } from '../spawn.js';
 import { InfraProvider, type ProviderRuntime } from './provider.js';
 import {
   InfraError,
   type InfraCallbackContext,
   type InfraEvent,
+  type InfraRunOptions,
   type InfraServiceCallbacks,
   type Readiness,
   type ResolvedInfraService,
@@ -54,8 +55,18 @@ class FakeProvider extends InfraProvider {
       // Only what the test reads: the variables stackctl sets come from the manager.
       envs: { FROM_ENV: 'yes' } as Record<string, string> as Envs,
       tokens: { domain: 'example.test' },
-      exec: o.exec ?? (async () => ({ exitCode: 0, stdout: '', stderr: '' })),
+      // The provider's tool records its call; anything else succeeds silently.
+      exec:
+        o.exec ??
+        (async (command, args, opts) => {
+          if (command !== 'tool') {
+            return { exitCode: 0, stdout: '', stderr: '' };
+          }
+          this.calls.push(`tool:${args.join(' ')}@${opts.cwd}`);
+          return { exitCode: args[0] === 'boom' ? 2 : 0, stdout: 'tool-out', stderr: '' };
+        }),
       spawnInherit: async () => 0,
+      stream: () => ({ stop: () => {}, done: new Promise<number>(() => {}) }),
       pollIntervalMs: 1,
       connectControl: o.connectControl,
     };
@@ -117,16 +128,15 @@ class FakeProvider extends InfraProvider {
   protected async failureDetail(service: string) {
     return `log tail of ${service}`;
   }
-  protected async runTool(args: string[], opts: ExecOptions): Promise<ExecResult> {
-    this.calls.push(`tool:${args.join(' ')}@${opts.cwd}`);
-    return { exitCode: args[0] === 'boom' ? 2 : 0, stdout: 'tool-out', stderr: '' };
+  protected toolCommand(args: string[]): [string, string[]] {
+    return ['tool', args];
   }
   protected toolContext(run: ToolHelper) {
     return { tool: run };
   }
 }
 
-type ToolHelper = (args: string[]) => Promise<{ stdout: string }>;
+type ToolHelper = (args: string[], opts?: InfraRunOptions) => Promise<{ stdout: string }>;
 
 /** Callbacks for `service` that record their name and the `trigger` they saw into `calls`. */
 function recording(calls: string[], service: string): InfraServiceCallbacks {
@@ -554,6 +564,30 @@ describe('InfraProvider callback context', () => {
       error: 'afterReady failed: `migrate deploy` exited with code 4',
     });
     expect(summary.services[1]!.ok).toBe(true);
+  });
+
+  test("the tool keeps the provider's variables whatever env a callback passes; exec doesn't", async () => {
+    const seen: { command: string; env: Record<string, string> }[] = [];
+    await new FakeProvider({
+      exec: async (command, _args, opts) => {
+        seen.push({ command, env: opts.env });
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+      callbacks: {
+        db: {
+          afterReady: async (ctx) => {
+            const { tool } = ctx as typeof ctx & { tool: ToolHelper };
+            const env = { TOOL_PROJECT: 'other', A: '1' };
+            await tool(['up'], { env });
+            await ctx.exec('script', [], { env });
+          },
+        },
+      },
+    }).up({});
+    expect(seen).toEqual([
+      { command: 'tool', env: { FROM_ENV: 'yes', TOOL_PROJECT: 'ws-test', A: '1' } },
+      { command: 'script', env: { FROM_ENV: 'yes', TOOL_PROJECT: 'other', A: '1' } },
+    ]);
   });
 
   test("a callback gets the provider's tool helper, which rejects on a non-zero exit too", async () => {

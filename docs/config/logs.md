@@ -113,5 +113,3 @@ worker: {
   filter matching any of them shows the whole block.
 - **Don't print a time.** stackctl stamps each line itself.
 - **A formatter that throws** falls back to the raw line.
-
-`z` (zod) is re-exported from `stackctl`, for a formatter that validates the shape of a line.

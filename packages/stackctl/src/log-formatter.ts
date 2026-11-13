@@ -7,7 +7,7 @@
 // result into separate log lines and groups the indented ones with the header as continuations.
 
 import chalk from 'chalk';
-import { LOG_LEVEL_COLORS, LOG_PROPERTY_KEY_COLOR } from './colors.js';
+import { LOG_LEVEL_COLORS, LOG_PROPERTY_KEY_COLOR } from './log-colors.js';
 
 /** Long-form config for a custom (renamed and/or hidden) property in {@link FormatterFields.custom}. */
 export interface CustomField {

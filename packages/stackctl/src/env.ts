@@ -71,6 +71,11 @@ interface ResolveEnvOptions {
    */
   vars?: Record<string, string>;
   /**
+   * Decrypt the values dotenvx encrypted (`env.decrypt`), with the private keys in
+   * {@link envKeysFile} and in the ambient environment. Off, they stay as written.
+   */
+  decrypt?: boolean;
+  /**
    * The ambient environment to resolve against. Defaults to the one stackctl was started with
    * (see {@link captureShellEnv}), or the live `process.env` when none was recorded.
    */
@@ -423,12 +428,12 @@ export function resolveEnv(
   return { env, files, candidates, packageNames: new Set(packageNames) };
 }
 
-/**
- * dotenvx's file of decryption keys, which it looks for in the working directory. A reader that
- * {@link resolveEnvFrom} is given reads it too, so it must have it: see {@link EnvFileSnapshot}.
- */
-export function envKeysFile(): string {
-  return path.resolve('.env.keys');
+/** The basename of dotenvx's file of decryption keys, {@link envKeysFile}. */
+export const ENV_KEYS_FILENAME = '.env.keys';
+
+/** dotenvx's file of decryption keys, at the workspace root; read only with `env.decrypt`. */
+export function envKeysFile(workspaceDir: string): string {
+  return path.join(path.resolve(workspaceDir), ENV_KEYS_FILENAME);
 }
 
 /**
@@ -441,7 +446,7 @@ function privateKeys(text: string | null): Record<string, string> {
     return keys;
   }
   let i = 0;
-  for (const [name, values] of Object.entries(primitives.scan(text).parsed)) {
+  for (const [name, values] of Object.entries(primitives.scan(text).scanned)) {
     if (!name.startsWith('DOTENV_PRIVATE_KEY')) {
       continue;
     }
@@ -467,8 +472,8 @@ function privateKeys(text: string | null): Record<string, string> {
  * variable whatever the lines read so far have made of it — which starts as the ambient value,
  * so `NODE_OPTIONS=$NODE_OPTIONS --flag` extends it.
  *
- * Each candidate file is read by `read`, and {@link envKeysFile} too. With no `read`, the files
- * are read from disk, synchronously, and dotenvx reads its keys itself.
+ * Each candidate file is read by `read`, and {@link envKeysFile} with `decrypt`; with no `read`,
+ * from disk, synchronously. A value dotenvx encrypted stays as written unless `decrypt` is on.
  */
 export function resolveEnvFrom(opts: ResolveEnvOptions, given?: EnvFileReader): EnvResolution {
   const read = given ?? readEnvFileSync;
@@ -515,19 +520,21 @@ export function resolveEnvFrom(opts: ResolveEnvOptions, given?: EnvFileReader): 
   // dotenvx's parser, taken from the service it lives in: `@dotenvx/dotenvx` wraps the same
   // call in a CLI's worth of tooling, which costs every command its load time. It reads from
   // `processEnv` for `$VAR` lookups but writes to neither it nor the real process.env, so
-  // nothing is mutated.
-  // The keys are only ever looked up by dotenvx, never by a `${VAR}`: each under a name of its own,
-  // they can't shadow a variable.
-  const { parsed, errors } = primitives.parseSync(
-    [fromAmbient.source, fromVars.source, ...texts].join('\n'),
-    given
-      ? {
-          processEnv: { ...hideDollars(final, standIn), ...privateKeys(given(envKeysFile())) },
-          overload: false,
-          fk: [],
-        }
-      : { processEnv: hideDollars(final, standIn), overload: false },
-  );
+  // nothing is mutated. It reads no `.env.keys` itself (`fk`): with `decrypt`, the keys come
+  // through `read` like the files, each under a name of its own, so they can't shadow a
+  // variable; without it, nothing is decrypted (`ek`). The patch in `patches/` loads its crypto
+  // code only once a value is decrypted, and keeps a key and a decrypted value for the process,
+  // since a config's env is parsed once per scope. It is why the version is pinned: a new one
+  // needs the patch made again (`pnpm patch`).
+  const source = [fromAmbient.source, fromVars.source, ...texts].join('\n');
+  const processEnv = hideDollars(final, standIn);
+  const { parsed, errors } = opts.decrypt
+    ? primitives.parseSync(source, {
+        processEnv: { ...processEnv, ...privateKeys(read(envKeysFile(opts.cwd))) },
+        overload: false,
+        fk: [],
+      })
+    : primitives.parseSync(source, { processEnv, overload: false, fk: [], ek: '*' });
   // An encrypted value with no key to decrypt it stays as it is; say which, as dotenvx does.
   for (const error of errors) {
     console.error(error.message);
@@ -553,14 +560,16 @@ interface EnvLayerOptions {
   override?: EnvOverride;
   /** The config's own variables (`env.vars`, resolved); see {@link ResolveEnvOptions.vars}. */
   vars?: Record<string, string>;
+  /** Decrypt dotenvx's encrypted values (`env.decrypt`); see {@link ResolveEnvOptions.decrypt}. */
+  decrypt?: boolean;
   /**
    * The trust file of the dev reverse proxy's self-signed certificates, injected as
    * `NODE_EXTRA_CA_CERTS`, so a Node process trusts the proxy's `https://` origins.
    */
   extraCaCerts?: string;
   /**
-   * Reads a candidate file, and dotenvx's {@link envKeysFile}; from disk, synchronously, unless
-   * given.
+   * Reads a candidate file, and {@link envKeysFile} with `decrypt`; from disk, synchronously,
+   * unless given.
    */
   read?: EnvFileReader;
 }

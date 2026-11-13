@@ -1,11 +1,5 @@
+import { SPAWN_FAILED, type ExecOptions, type ExecResult, type LineStream } from '../../spawn.js';
 import { composeMemory, socketPath } from '../docker-engine.js';
-import {
-  SPAWN_FAILED,
-  streamLines,
-  type ExecOptions,
-  type ExecResult,
-  type LineStream,
-} from '../exec.js';
 import { InfraProvider, type Emit, type ProviderRuntime } from '../provider.js';
 import {
   type DockerComposeCallbackContext,
@@ -480,8 +474,7 @@ export class DockerComposeProvider extends InfraProvider {
    * seconds.
    */
   protected streamChanges(targets: string[], onChange: () => void): LineStream {
-    const stream = this.runtime.stream ?? streamLines;
-    return stream('docker', this.composeArgs(['events', '--json', ...targets]), {
+    return this.runtime.stream('docker', this.composeArgs(['events', '--json', ...targets]), {
       cwd: this.runtime.workspaceDir,
       env: this.env(),
       onLine: (_line, isError) => {
@@ -500,11 +493,7 @@ export class DockerComposeProvider extends InfraProvider {
     });
   }
 
-  protected async runTool(args: string[], opts: ExecOptions): Promise<ExecResult> {
-    return this.runtime.exec('docker', this.composeArgs(args), {
-      ...opts,
-      // The project name last: whatever `env` a callback passes, `compose` stays on this project.
-      env: { ...opts.env, ...this.extraEnv() },
-    });
+  protected toolCommand(args: string[]): [string, string[]] {
+    return ['docker', this.composeArgs(args)];
   }
 }

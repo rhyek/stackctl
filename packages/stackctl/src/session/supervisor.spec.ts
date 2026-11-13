@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import primitives from '@dotenvx/primitives';
 import chalk from 'chalk';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { STACKCTL_LABEL_COLOR, PACKAGE_PALETTE } from '../colors.js';
@@ -232,6 +233,8 @@ function setup(opts: {
   noDev?: string[];
   logTimestamps?: boolean;
   failSpawn?: string[];
+  /** The config's `env.decrypt`. */
+  decrypt?: boolean;
   /** Files to write before anything reads them, by path relative to the workspace. */
   files?: Record<string, string>;
   /**
@@ -268,6 +271,7 @@ function setup(opts: {
     ...buildSessionPlan(selected.map((s) => s.name)),
     cwd: root,
     envFiles: { workspace: ['.env'], service: ['.env'] },
+    envDecrypt: opts.decrypt,
   };
   const logs = new LogStore({ logFile: path.join(root, 'session.log') });
   const clock = new FakeClock();
@@ -1306,6 +1310,33 @@ describe('the .env watch', () => {
     expect(t.of('worker')[0]!.stops).toBe(1);
     expect(t.said('worker')).toContain('.env changed, restarting...');
     expect(t.of('api')[0]!.stops).toBe(0);
+  }, 30_000);
+
+  test('with env.decrypt, decrypts with .env.keys, and editing it restarts every service', async () => {
+    const { publicKey, privateKey } = primitives.keypair();
+    const t = setup({
+      services: { api: {}, worker: {} },
+      decrypt: true,
+      files: {
+        '.env': `SECRET="${primitives.encrypt(publicKey, 's3cret')}"\n`,
+        '.env.keys': `DOTENV_PRIVATE_KEY="${privateKey}"\n`,
+      },
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.procs).toHaveLength(2));
+    expect(t.procs.map((proc) => proc.opts.env.SECRET)).toEqual(['s3cret', 's3cret']);
+    const stopped = () => t.procs.every((proc) => proc.stops > 0);
+    for (let attempt = 1; attempt <= 8 && !stopped(); attempt++) {
+      fs.writeFileSync(
+        path.join(t.root, '.env.keys'),
+        `DOTENV_PRIVATE_KEY="${privateKey}"\n# ${attempt}\n`,
+      );
+      for (let waited = 0; waited < 2000 && !stopped(); waited += 20) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    expect(t.of('api')[0]!.stops).toBe(1);
+    expect(t.of('worker')[0]!.stops).toBe(1);
   }, 30_000);
 });
 

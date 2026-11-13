@@ -1,3 +1,4 @@
+import type * as v from 'valibot';
 /**
  * Type-level tests for `defineConfig`'s inference. Run with `pnpm test:types`.
  *
@@ -11,7 +12,6 @@
  * value form would *read* `port` and throw at load time by design.
  */
 import { describe, test, expectTypeOf } from 'vitest';
-import type { z } from 'zod';
 import type {
   BuildAddressOptionsSchema,
   DefineConfigSchema,
@@ -1222,6 +1222,7 @@ describe('env', () => {
           return { DATA_DIR: '/srv/data' };
         },
         override: ['NODE_OPTIONS'],
+        decrypt: true,
       },
       services: { api: {} },
     });
@@ -1290,8 +1291,8 @@ type Shape<T> = T extends (...args: never[]) => unknown
 // `relativeDir` is optional, as the schema has it.
 type WidestService = ServiceConfigInput<TokenRecord, TokenRecord, string, string>;
 type WidestConfig = DefineConfigOptions<TokenRecord, Record<string, TokenRecord>, string, string>;
-type SchemaService = z.input<typeof ServiceConfigSchema>;
-type SchemaConfig = z.input<typeof DefineConfigSchema>;
+type SchemaService = v.InferInput<typeof ServiceConfigSchema>;
+type SchemaConfig = v.InferInput<typeof DefineConfigSchema>;
 
 describe('the input types and the schemas', () => {
   test('accept the same service fields', () => {
@@ -1310,12 +1311,14 @@ describe('the input types and the schemas', () => {
   // The structures a callback can return, or `buildAddress` takes, are checked against these
   // schemas at resolution as well as in the config.
   test('accept the same structures a callback returns', () => {
-    expectTypeOf<z.input<typeof PublicAddressSchema>>().toEqualTypeOf<PublicAddress>();
-    expectTypeOf<z.input<typeof PublicOriginInputSchema>>().toEqualTypeOf<PublicOriginInput>();
-    expectTypeOf<z.input<typeof BuildAddressOptionsSchema>>().toEqualTypeOf<BuildAddressOptions>();
-    expectTypeOf<z.input<typeof ReverseProxyTlsSchema>>().toEqualTypeOf<ReverseProxyTls>();
-    expectTypeOf<z.input<typeof EnvAdditionalFileSchema>>().toEqualTypeOf<EnvAdditionalFile>();
-    expectTypeOf<z.input<typeof ReverseProxyRouteSchema>>().toEqualTypeOf<ReverseProxyRoute>();
+    expectTypeOf<v.InferInput<typeof PublicAddressSchema>>().toEqualTypeOf<PublicAddress>();
+    expectTypeOf<v.InferInput<typeof PublicOriginInputSchema>>().toEqualTypeOf<PublicOriginInput>();
+    expectTypeOf<
+      v.InferInput<typeof BuildAddressOptionsSchema>
+    >().toEqualTypeOf<BuildAddressOptions>();
+    expectTypeOf<v.InferInput<typeof ReverseProxyTlsSchema>>().toEqualTypeOf<ReverseProxyTls>();
+    expectTypeOf<v.InferInput<typeof EnvAdditionalFileSchema>>().toEqualTypeOf<EnvAdditionalFile>();
+    expectTypeOf<v.InferInput<typeof ReverseProxyRouteSchema>>().toEqualTypeOf<ReverseProxyRoute>();
   });
 
   // Every command the input type accepts must pass the schema's shape.
@@ -1329,10 +1332,10 @@ describe('the input types and the schemas', () => {
   test('give back the fields the schema resolves as it resolves them', () => {
     type FromSchema = 'selectable' | 'color' | 'autostart' | 'command' | 'logs';
     expectTypeOf<Pick<ResolvedServiceConfig<string>, FromSchema>>().toEqualTypeOf<
-      Pick<z.output<typeof ServiceConfigSchema>, FromSchema>
+      Pick<v.InferOutput<typeof ServiceConfigSchema>, FromSchema>
     >();
     expectTypeOf<
-      Exclude<keyof z.output<typeof ServiceConfigSchema>, keyof ResolvedServiceConfig<string>>
+      Exclude<keyof v.InferOutput<typeof ServiceConfigSchema>, keyof ResolvedServiceConfig<string>>
     >().toEqualTypeOf<never>();
   });
 });

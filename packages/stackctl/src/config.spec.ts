@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import primitives from '@dotenvx/primitives';
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
 import {
   type AnyServiceConfig,
@@ -131,7 +132,7 @@ describe('meta defaults', () => {
         env: { files: ['.env', '.env.test'] },
         services: { svc: {} },
       }),
-    ).toThrow(/Unrecognized key: "files"/);
+    ).toThrow(/Invalid key: Expected never but received "files"/);
   });
 
   test('carries env.override through to the resolved config', () => {
@@ -141,6 +142,21 @@ describe('meta defaults', () => {
       services: { svc: {} },
     });
     expect(cfg.envOverride).toEqual(['NODE_OPTIONS']);
+  });
+
+  test('carries env.decrypt through to the resolved config, off unless set', () => {
+    const decrypting = (env?: { decrypt: boolean }) =>
+      defineConfig({ serviceRootDir: 'packages', env, services: { svc: {} } }).envDecrypt;
+    expect(decrypting()).toBe(false);
+    expect(decrypting({ decrypt: true })).toBe(true);
+    expect(() =>
+      defineConfig({
+        serviceRootDir: 'packages',
+        // @ts-expect-error - `decrypt` is a boolean.
+        env: { decrypt: 'yes' },
+        services: { svc: {} },
+      }),
+    ).toThrow('env.decrypt: Invalid type: Expected boolean but received "yes"');
   });
 
   test('defaults logTimestamps to true', () => {
@@ -559,13 +575,17 @@ describe('healthcheck', () => {
   });
 
   test('rejects a misspelled key rather than silently keeping the default', () => {
-    expect(() =>
-      defineConfig({
-        serviceRootDir: 'packages',
-        // @ts-expect-error `timout` is not a healthcheck option
-        services: { api: { healthcheck: { url: 'http://localhost/health', timout: 9000 } } },
-      }),
-    ).toThrow(/invalid stackctl config/);
+    expect(
+      () =>
+        defineConfig({
+          serviceRootDir: 'packages',
+          // @ts-expect-error `timout` is not a healthcheck option
+          services: { api: { healthcheck: { url: 'http://localhost/health', timout: 9000 } } },
+        }),
+      // The object form's own error, not "expected a URL or an object".
+    ).toThrow(
+      'invalid stackctl config:\n  - services.api.healthcheck.timout: Invalid key: Expected never but received "timout"',
+    );
   });
 
   test('rejects a non-positive or fractional timeout', () => {
@@ -690,9 +710,17 @@ describe('command', () => {
   test('rejects command builds and cleans', () => {
     for (const key of ['builds', 'cleans']) {
       expect(() => cmd({ command: ['dev', { watches: true, [key]: true }] })).toThrow(
-        new RegExp(`services\\.a\\.command\\.1: .*Unrecognized key: "${key}"`),
+        new RegExp(
+          `services\\.a\\.command\\.1\\.${key}: Invalid key: Expected never but received "${key}"`,
+        ),
       );
     }
+  });
+
+  test('rejects a command with more than a name and its options', () => {
+    expect(() => cmd({ command: ['dev', {}, 'extra'] })).toThrow(
+      'services.a.command.2: Invalid type: Expected never but received "extra"',
+    );
   });
 
   test('getDevScript returns the configured command name, else dev', () => {
@@ -711,10 +739,21 @@ describe('command', () => {
 describe('validation', () => {
   const define = (opts: unknown) => () => defineConfig(opts as Parameters<typeof defineConfig>[0]);
 
+  test('rejects a number that is Infinity or NaN', () => {
+    for (const port of [Infinity, NaN]) {
+      expect(define({ serviceRootDir: 'packages', apiPort: port, services: {} })).toThrow(
+        'invalid stackctl config:\n  - apiPort: Invalid',
+      );
+      expect(define({ serviceRootDir: 'packages', services: { api: { port } } })).toThrow(
+        'invalid stackctl config:\n  - services.api.port: Invalid',
+      );
+    }
+  });
+
   test('rejects the object form of `deps`', () => {
     for (const deps of [{ runtime: ['lib'] }, { build: ['lib'] }]) {
       expect(define({ serviceRootDir: 'packages', services: { lib: {}, api: { deps } } })).toThrow(
-        'services.api.deps: Invalid input',
+        'services.api.deps: Invalid type: Expected (Array | Function) but received Object',
       );
     }
   });
@@ -728,12 +767,16 @@ describe('validation', () => {
     ] as const) {
       expect(
         define({ serviceRootDir: 'packages', services: { api: {}, web: { [key]: value } } }),
-      ).toThrow(new RegExp(`services\\.web: .*Unrecognized key: "${key}"`));
+      ).toThrow(
+        new RegExp(`services\\.web\\.${key}: Invalid key: Expected never but received "${key}"`),
+      );
     }
   });
 
   test('rejects an unknown top-level key', () => {
-    expect(define({ services: {}, packages: {} })).toThrow(/Unrecognized key: "packages"/);
+    expect(define({ services: {}, packages: {} })).toThrow(
+      /Invalid key: Expected never but received "packages"/,
+    );
   });
 
   test('rejects a key once listed as renamed', () => {
@@ -752,7 +795,9 @@ describe('validation', () => {
       }
       return '';
     })();
-    expect(error).toMatch(/reverseProxy: .*Unrecognized key: "defaultPackage"/);
+    expect(error).toMatch(
+      /reverseProxy\.defaultPackage: Invalid key: Expected never but received "defaultPackage"/,
+    );
     expect(error).not.toMatch(/spelled|renamed|was removed/);
   });
 
@@ -901,7 +946,7 @@ describe('deps as a callback', () => {
           // `as never`: a config that reaches stackctl unchecked (plain JS).
           services: { api: { deps: deps as never }, gateway: {} },
         }),
-      ).toThrow(/services\.api\.deps\.0: .*wiat/);
+      ).toThrow('services.api.deps.0.wiat: Invalid key: Expected never but received "wiat"');
     }
   });
 
@@ -994,6 +1039,26 @@ describe('port callback', () => {
       }).services,
     );
     expect(packages[0]!.port).toBe(6666);
+  });
+
+  test('decrypts an encrypted value for the callbacks with env.decrypt, and only then', () => {
+    const { publicKey, privateKey } = primitives.keypair();
+    fs.writeFileSync(
+      path.join(ws, '.env.development'),
+      `BACKEND_PORT="${primitives.encrypt(publicKey, '4321')}"\n`,
+    );
+    fs.writeFileSync(path.join(ws, '.env.keys'), `DOTENV_PRIVATE_KEY="${privateKey}"\n`);
+    const port = (decrypt: boolean) =>
+      Object.values(
+        defineConfig({
+          serviceRootDir: 'packages',
+          workspaceDir: ws,
+          env: { decrypt },
+          services: { api: { port: ({ envs }) => Number(envs.BACKEND_PORT) || 1 } },
+        }).services,
+      )[0]!.port;
+    expect(port(true)).toBe(4321);
+    expect(port(false)).toBe(1);
   });
 
   test('lets a package-scope env file override the workspace-scope one', () => {
@@ -1190,19 +1255,21 @@ describe('reverseProxy.routes', () => {
   });
 
   describe('rejects', () => {
-    test('an entry with both `service` and `paths`, or neither, with Zod’s error', () => {
+    test('an entry with both `service` and `paths`, or neither', () => {
       expect(withRoutes([{ subdomain: 'api', service: 'api', paths: { '/**': 'web' } }])).toThrow(
-        'invalid stackctl config:\n  - reverseProxy.routes.0: Invalid input',
+        'invalid stackctl config:\n  - reverseProxy.routes.0.paths: Invalid type: Expected never but received Object', // oxfmt-ignore
       );
       expect(withRoutes([{ subdomain: 'api' }])).toThrow(
-        'invalid stackctl config:\n  - reverseProxy.routes.0: Invalid input',
+        'invalid stackctl config:\n  - reverseProxy.routes.0.service: Invalid key: Expected "service" but received undefined',
       );
     });
 
-    test('an entry that is no object, or has an unknown key, with Zod’s error', () => {
-      expect(withRoutes(['api'])).toThrow('reverseProxy.routes.0: Invalid input');
+    test('an entry that is no object, or has an unknown key', () => {
+      expect(withRoutes(['api'])).toThrow(
+        'reverseProxy.routes.0: Invalid type: Expected Object but received "api"',
+      );
       expect(withRoutes([{ subdomain: 'api', service: 'api', host: 'x' }])).toThrow(
-        'invalid stackctl config:\n  - reverseProxy.routes.0: Unrecognized key: "host"',
+        'invalid stackctl config:\n  - reverseProxy.routes.0.host: Invalid key: Expected never but received "host"',
       );
       expect(
         load({
@@ -1210,7 +1277,7 @@ describe('reverseProxy.routes', () => {
           reverseProxy: { ...at, routes: { api: 'api' } },
           services: {},
         }),
-      ).toThrow('reverseProxy.routes: Invalid input: expected array, received object');
+      ).toThrow('reverseProxy.routes: Invalid type: Expected Array but received Object');
     });
 
     test("'*' before the last entry", () => {
@@ -1252,10 +1319,10 @@ describe('reverseProxy.routes', () => {
 
     test('an empty subdomain list, and a subdomain that is no string', () => {
       expect(withRoutes([{ subdomain: [], service: 'api' }])).toThrow(
-        'reverseProxy.routes.0.subdomain: Too small: expected array to have >=1 items',
+        'reverseProxy.routes.0.subdomain: Invalid length: Expected >=1 but received 0',
       );
       expect(withRoutes([{ subdomain: true, service: 'api' }])).toThrow(
-        'reverseProxy.routes.0: Invalid input',
+        'reverseProxy.routes.0.subdomain: Invalid type: Expected (string | Array) but received true',
       );
     });
 
@@ -1307,32 +1374,36 @@ describe('reverseProxy.routes', () => {
       );
     });
 
-    test('an unknown key, with Zod’s error', () => {
+    test('an unknown key', () => {
       const base = { serviceRootDir: 'packages', reverseProxy: at };
       expect(
         load({ ...base, services: { api: { port: 3000, proxy: { subdomain: 'api' } } } }),
       ).toThrow(
         // oxfmt-ignore
-        /services\.api: Unrecognized key: "proxy"/,
+        /services\.api\.proxy: Invalid key: Expected never but received "proxy"/,
       );
       expect(
         load({ ...base, services: {}, infra: { 'docker-compose': { services: { mail: { port: 8025, proxy: { subdomain: 'mail' } } } } } }), // oxfmt-ignore
-      ).toThrow(/infra\.docker-compose\.services\.mail: Unrecognized key: "proxy"/);
+      ).toThrow(
+        /infra\.docker-compose\.services\.mail\.proxy: Invalid key: Expected never but received "proxy"/,
+      );
       expect(
         load({ ...base, reverseProxy: { ...at, paths: { '/docs': 'docs' } }, services: {} }),
       ).toThrow(
         // oxfmt-ignore
-        /reverseProxy: Unrecognized key: "paths"/,
+        /reverseProxy\.paths: Invalid key: Expected never but received "paths"/,
       );
       expect(
         load({ ...base, reverseProxy: { ...at, defaultService: 'web' }, services: {} }),
-      ).toThrow(/reverseProxy: Unrecognized key: "defaultService"/);
+      ).toThrow(
+        /reverseProxy\.defaultService: Invalid key: Expected never but received "defaultService"/,
+      );
       expect(load({ ...base, reverseProxy: { ...at, https: true }, services: {} })).toThrow(
-        /reverseProxy: Unrecognized key: "https"/,
+        /reverseProxy\.https: Invalid key: Expected never but received "https"/,
       );
       expect(
         load({ ...base, reverseProxy: { port: 4000, publicAddress: { domain: 'example.test', scheme: 'https', https: true } }, services: {} }), // oxfmt-ignore
-      ).toThrow('invalid stackctl config:\n  - reverseProxy.publicAddress: Unrecognized key: "https"'); // oxfmt-ignore
+      ).toThrow('invalid stackctl config:\n  - reverseProxy.publicAddress.https: Invalid key: Expected never but received "https"'); // oxfmt-ignore
     });
   });
 
@@ -1638,19 +1709,19 @@ describe('reverseProxy', () => {
     const run = (value: unknown) => () =>
       withProxy({ port: 4000, publicAddress: (() => value) as () => never });
     expect(run(undefined)).toThrow(
-      /^invalid stackctl config:\n {2}- reverseProxy\.publicAddress: Invalid input: expected object, received undefined\n {2}\(returned by its callback\)\n {2}.*env files/,
+      /^invalid stackctl config:\n {2}- reverseProxy\.publicAddress: Invalid type: Expected Object but received undefined\n {2}\(returned by its callback\)\n {2}.*env files/,
     );
     expect(run({ domain: 'example.test' })).toThrow(
-      'reverseProxy.publicAddress.scheme: Invalid option: expected one of "https"|"http"',
+      'reverseProxy.publicAddress.scheme: Invalid key: Expected "scheme" but received undefined',
     );
     expect(run({ domain: 'example.test', scheme: 'ftp' })).toThrow(
-      'reverseProxy.publicAddress.scheme: Invalid option: expected one of "https"|"http"',
+      'reverseProxy.publicAddress.scheme: Invalid type: Expected ("https" | "http") but received "ftp"',
     );
     expect(run({ domain: 'example.test', scheme: 'https', port: Number('') + 0.5 })).toThrow(
-      'reverseProxy.publicAddress.port: Invalid input: expected int, received number',
+      'reverseProxy.publicAddress.port: Invalid integer: Received 0.5',
     );
     expect(run({ domain: 'example.test', scheme: 'https', https: true })).toThrow(
-      'reverseProxy.publicAddress: Unrecognized key: "https"',
+      'reverseProxy.publicAddress.https: Invalid key: Expected never but received "https"',
     );
   });
 
@@ -1670,7 +1741,9 @@ describe('reverseProxy', () => {
     expect(() =>
       // @ts-expect-error `https` is no field: the scheme is `scheme`
       withProxy({ port: 4000, publicAddress: { domain: 'example.test', https: true } }),
-    ).toThrow('invalid stackctl config:\n  - reverseProxy.publicAddress: Invalid input');
+    ).toThrow(
+      'invalid stackctl config:\n  - reverseProxy.publicAddress.https: Invalid key: Expected never but received "https"',
+    );
     expect(() =>
       // @ts-expect-error `scheme` is 'https' or 'http'
       withProxy({ port: 4000, publicAddress: { domain: 'example.test', scheme: 'ftp' } }),
@@ -1731,7 +1804,7 @@ describe('reverseProxy', () => {
     });
 
     test('rejects an empty array, literal or from the callback', () => {
-      const tooSmall = 'reverseProxy.publicAddress.domain: Too small: expected array to have >=1 items'; // oxfmt-ignore
+      const tooSmall = 'reverseProxy.publicAddress.domain: Invalid length: Expected >=1 but received 0'; // oxfmt-ignore
       expect(() => withProxy(at([]))).toThrow(tooSmall);
       expect(() =>
         withProxy({ port: 4000, publicAddress: () => ({ domain: [], scheme: 'http' }) }),
@@ -1776,7 +1849,7 @@ describe('reverseProxy', () => {
     expect(() =>
       // @ts-expect-error `enabled` is not a field — presence of the block is what enables it
       withProxy({ ...at('example.test'), enabled: true }),
-    ).toThrow(/Unrecognized key: "enabled"/);
+    ).toThrow(/Invalid key: Expected never but received "enabled"/);
   });
 
   test("rejects a proxy port equal to a package's port", () => {
@@ -1898,7 +1971,7 @@ describe('reverseProxy', () => {
         publicOrigin: () => 'https://web.example.test',
         services: { web: { port: 3000 } },
       }),
-    ).toThrow(/\(root\): Unrecognized key: "publicOrigin"/);
+    ).toThrow(/publicOrigin: Invalid key: Expected never but received "publicOrigin"/);
   });
 });
 
@@ -2209,15 +2282,15 @@ describe('buildAddress', () => {
       'services.web buildAddress.subdomain "*" is not lowercase hostname labels',
     ],
     [{ domain: 'Example.test' }, 'services.web buildAddress.domain "Example.test" is not a lowercase hostname'], // oxfmt-ignore
-    [{ port: 0 }, 'services.web buildAddress.port: Too small: expected number to be >=1'],
-    [{ port: 65536 }, 'services.web buildAddress.port: Too big: expected number to be <=65535'],
-    [{ port: 1.5 }, 'services.web buildAddress.port: Invalid input: expected int, received number'],
-    [{ scheme: 'ftp' }, 'services.web buildAddress.scheme: Invalid option: expected one of "https"|"http"'], // oxfmt-ignore
+    [{ port: 0 }, 'services.web buildAddress.port: Invalid value: Expected >=1 but received 0'],
     [
-      { path: 42 },
-      'services.web buildAddress.path: Invalid input: expected string, received number',
+      { port: 65536 },
+      'services.web buildAddress.port: Invalid value: Expected <=65535 but received 65536',
     ],
-    [{ https: true }, 'invalid stackctl config:\n  - services.web buildAddress: Unrecognized key: "https"'], // oxfmt-ignore
+    [{ port: 1.5 }, 'services.web buildAddress.port: Invalid integer: Received 1.5'],
+    [{ scheme: 'ftp' }, 'services.web buildAddress.scheme: Invalid type: Expected ("https" | "http") but received "ftp"'], // oxfmt-ignore
+    [{ path: 42 }, 'services.web buildAddress.path: Invalid type: Expected string but received 42'],
+    [{ https: true }, 'invalid stackctl config:\n  - services.web buildAddress.https: Invalid key: Expected never but received "https"'], // oxfmt-ignore
   ])('rejects %j, naming the service and the field', (opts, message) => {
     expect(() => seen()(opts as BuildAddressOptions)).toThrow(message);
   });
@@ -2226,7 +2299,7 @@ describe('buildAddress', () => {
     const load = (opts: Partial<RootedOpts>) => () =>
       defineConfig({ serviceRootDir: 'packages', services: {}, ...opts } as RootedOpts);
     expect(load({ urls: [({ buildAddress }) => buildAddress({ subdomain: 'A' })] })).toThrow('urls buildAddress.subdomain "A" is not lowercase hostname labels'); // oxfmt-ignore
-    expect(load({ infra: { 'docker-compose': { services: { mail: { port: 8025, urls: [({ buildAddress }) => buildAddress({ port: -1 })] } } } } })).toThrow('infra.docker-compose.services.mail buildAddress.port: Too small: expected number to be >=1'); // oxfmt-ignore
+    expect(load({ infra: { 'docker-compose': { services: { mail: { port: 8025, urls: [({ buildAddress }) => buildAddress({ port: -1 })] } } } } })).toThrow('infra.docker-compose.services.mail buildAddress.port: Invalid value: Expected >=1 but received -1'); // oxfmt-ignore
   });
 
   test('stays off the resolved config, which show-config prints and the control API serves', () => {
@@ -2383,7 +2456,9 @@ describe('publicOrigin', () => {
         // @ts-expect-error `https` is no field: the scheme is `scheme`
         services: { web: { port: 3000, publicOrigin: { https: true } } },
       }),
-    ).toThrow(/services\.web\.publicOrigin: Unrecognized key: "https"/);
+    ).toThrow(
+      /services\.web\.publicOrigin\.https: Invalid key: Expected never but received "https"/,
+    );
   });
 
   test.each([
@@ -2393,8 +2468,8 @@ describe('publicOrigin', () => {
       'services.web.publicOrigin.subdomain "*" is not lowercase hostname labels',
     ],
     [{ domain: 'example_test' }, 'services.web.publicOrigin.domain "example_test" is not a lowercase hostname'], // oxfmt-ignore
-    [{ port: 0 }, 'services.web.publicOrigin.port: Too small: expected number to be >=1'],
-    [{ port: 3000.5 }, 'services.web.publicOrigin: Invalid input'],
+    [{ port: 0 }, 'services.web.publicOrigin.port: Invalid value: Expected >=1 but received 0'],
+    [{ port: 3000.5 }, 'services.web.publicOrigin.port: Invalid integer: Received 3000.5'],
   ])('rejects %j, naming the service and the field', (publicOrigin, message) => {
     expect(() =>
       defineConfig({
@@ -2410,9 +2485,11 @@ describe('publicOrigin', () => {
         serviceRootDir: 'packages',
         services: { web: { port: 3000, publicOrigin: () => result as PublicOriginInput } },
       });
-    expect(web({ scheme: 'ftp' })).toThrow('invalid stackctl config:\n  - services.web.publicOrigin.scheme: Invalid option: expected one of "https"|"http"\n  (returned by its callback)'); // oxfmt-ignore
-    expect(web('app')).toThrow('services.web.publicOrigin: Invalid input: expected object, received string'); // oxfmt-ignore
-    expect(web({ https: true })).toThrow('services.web.publicOrigin: Unrecognized key: "https"');
+    expect(web({ scheme: 'ftp' })).toThrow('invalid stackctl config:\n  - services.web.publicOrigin.scheme: Invalid type: Expected ("https" | "http") but received "ftp"\n  (returned by its callback)'); // oxfmt-ignore
+    expect(web('app')).toThrow('services.web.publicOrigin: Invalid type: Expected Object but received "app"'); // oxfmt-ignore
+    expect(web({ https: true })).toThrow(
+      'services.web.publicOrigin.https: Invalid key: Expected never but received "https"',
+    );
     expect(web({ subdomain: 'App' })).toThrow('services.web.publicOrigin.subdomain "App" is not lowercase hostname labels\n  (returned by its callback)'); // oxfmt-ignore
     expect(() =>
       defineConfig({
@@ -2483,9 +2560,13 @@ describe('reverseProxy.tls', () => {
   });
 
   test.each([
-    ['a string', () => 'yes', 'reverseProxy.tls: Invalid input'],
-    ['an empty key', () => ({ key: '', cert: 'c' }), 'reverseProxy.tls.key: Too small: expected string to have >=1 characters'], // oxfmt-ignore
-    ['an extra key', () => ({ key: 'k', cert: 'c', ca: 'x' }), 'reverseProxy.tls: Unrecognized key: "ca"'], // oxfmt-ignore
+    [
+      'a string',
+      () => 'yes',
+      'reverseProxy.tls: Invalid type: Expected (boolean | Object) but received "yes"',
+    ],
+    ['an empty key', () => ({ key: '', cert: 'c' }), 'reverseProxy.tls.key: Invalid length: Expected >=1 but received 0'], // oxfmt-ignore
+    ['an extra key', () => ({ key: 'k', cert: 'c', ca: 'x' }), 'reverseProxy.tls.ca: Invalid key: Expected never but received "ca"'], // oxfmt-ignore
   ])('rejects a callback returning %s, naming the field', (_, tls, message) => {
     expect(() => withTls(tls as never)).toThrow(`invalid stackctl config:\n  - ${message}\n  (returned by its callback)\n`); // oxfmt-ignore
   });
@@ -2833,7 +2914,9 @@ describe('infra', () => {
   test('rejects a callback that is not a function', () => {
     expect(() =>
       withInfra({ 'docker-compose': { services: { db: { afterReady: 'migrate' } } } }),
-    ).toThrow('infra.docker-compose.services.db.afterReady: Invalid input');
+    ).toThrow(
+      'infra.docker-compose.services.db.afterReady: Invalid type: Expected Function but received "migrate"',
+    );
   });
 
   test('rejects a non-positive readyTimeout', () => {
@@ -3300,7 +3383,9 @@ describe('env vars', () => {
         env: { vars: 'DATA_DIR=/srv/data' },
         services: { api: {} },
       }),
-    ).toThrow('env.vars: Invalid input');
+    ).toThrow(
+      'env.vars: Invalid type: Expected (Object | Function) but received "DATA_DIR=/srv/data"',
+    );
   });
 
   test('rejects a callback that returns a promise rather than a record', () => {
@@ -3496,7 +3581,7 @@ describe('env vars', () => {
         env: { vars: { DATA_DIR: '/srv/data' }, files: ['.env'] },
         services: { api: {} },
       }),
-    ).toThrow(/Unrecognized key: "files"/);
+    ).toThrow(/Invalid key: Expected never but received "files"/);
   });
 });
 
@@ -3631,22 +3716,26 @@ describe('env.additionalFiles', () => {
         services: { api: {} },
       });
 
-    // A literal list is checked by the config's schema, whose union of the list and a callback
-    // reports a shape error inside an entry at the list itself.
-    const invalid = 'invalid stackctl config:\n  - env.additionalFiles: Invalid input';
+    const invalid = (issue: string) => `invalid stackctl config:\n  - env.additionalFiles.${issue}`;
 
-    test('an entry with both before and after, or neither, with Zod’s error', () => {
-      expect(load([{ file: '.env.x', before: 'mode', after: 'local' }])).toThrow(invalid);
-      expect(load([{ file: '.env.ok', before: 'mode' }, { file: '.env.x' }])).toThrow(invalid);
+    test('an entry with both before and after, or neither', () => {
+      expect(load([{ file: '.env.x', before: 'mode', after: 'local' }])).toThrow(
+        invalid('0.after: Invalid type: Expected never but received "local"'),
+      );
+      expect(load([{ file: '.env.ok', before: 'mode' }, { file: '.env.x' }])).toThrow(
+        invalid('1.before: Invalid key: Expected "before" but received undefined'),
+      );
     });
 
     test('an unknown anchor', () => {
-      expect(load([{ file: '.env.x', after: '.env.local' }])).toThrow(invalid);
+      expect(load([{ file: '.env.x', after: '.env.local' }])).toThrow(
+        invalid('0.after: Invalid type: Expected ("base" | "local" | "mode" | "modeLocal") but received ".env.local"'), // oxfmt-ignore
+      );
     });
 
     test('an empty file', () => {
       expect(load([{ file: '', before: 'mode' }])).toThrow(
-        'env.additionalFiles.0.file: Too small: expected string to have >=1 characters',
+        'env.additionalFiles.0.file: Invalid length: Expected >=1 but received 0',
       );
     });
 
@@ -3672,13 +3761,17 @@ describe('env.additionalFiles', () => {
     });
 
     test('an unknown key or scope', () => {
-      expect(load([{ file: '.env.x', befor: 'mode' }])).toThrow(invalid);
-      expect(load([{ file: '.env.x', before: 'mode', scope: 'root' }])).toThrow(invalid);
+      expect(load([{ file: '.env.x', befor: 'mode' }])).toThrow(
+        invalid('0.befor: Invalid key: Expected never but received "befor"'),
+      );
+      expect(load([{ file: '.env.x', before: 'mode', scope: 'root' }])).toThrow(
+        invalid('0.scope: Invalid type: Expected ("workspace" | "service") but received "root"'),
+      );
     });
 
     test('an entry from a callback, by its index, with the mode it was called for', () => {
       expect(load(() => [{ file: '.env.x', before: 'mode', befor: 'x' }])).toThrow(
-        'invalid stackctl config:\n  - env.additionalFiles.0: Unrecognized key: "befor"\n  (returned by the env.additionalFiles callback for mode "development")', // oxfmt-ignore
+        'invalid stackctl config:\n  - env.additionalFiles.0.befor: Invalid key: Expected never but received "befor"\n  (returned by the env.additionalFiles callback for mode "development")', // oxfmt-ignore
       );
       expect(
         load(() => [
@@ -3686,7 +3779,7 @@ describe('env.additionalFiles', () => {
           { file: '.env.x', before: 'nope' },
         ]),
       ).toThrow(
-        'env.additionalFiles.1: Invalid input\n  (returned by the env.additionalFiles callback for mode "development")', // oxfmt-ignore
+        'env.additionalFiles.1.before: Invalid type: Expected ("base" | "local" | "mode" | "modeLocal") but received "nope"\n  (returned by the env.additionalFiles callback for mode "development")', // oxfmt-ignore
       );
       expect(load(() => [{ file: 'a/.env.x', before: 'mode' }])).toThrow(
         'env.additionalFiles[0] ("a/.env.x"): `file` must be a filename in the scope\'s directory, not a path\n  (returned by the env.additionalFiles callback for mode "development")', // oxfmt-ignore
@@ -3695,7 +3788,7 @@ describe('env.additionalFiles', () => {
 
     test('a callback that returns no array', () => {
       expect(load(async () => [])).toThrow(
-        'env.additionalFiles: Invalid input: expected array, received Promise',
+        'env.additionalFiles: Invalid type: Expected Array but received Promise',
       );
     });
   });

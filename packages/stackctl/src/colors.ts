@@ -135,21 +135,5 @@ export const PACKAGE_PALETTE: readonly Color[] = [
 // Structured-log formatting
 // ---------------------------------------------------------------------------
 
-/**
- * The bracketed `[LEVEL]` token of a recognized level. Unknown levels stay uncolored.
- * `FATAL` shares `ERROR`'s red and is distinguished by bold at the point of use.
- */
-export const LOG_LEVEL_COLORS = {
-  TRACE: 'gray',
-  DEBUG: 'cyan',
-  INFO: 'green',
-  WARN: 'yellow',
-  ERROR: 'red',
-  FATAL: 'red',
-} as const;
-
-/**
- * The `key` of a rendered `key: value` property line — muted so it reads as a label
- * and the value (the data) stands out in the normal foreground.
- */
-export const LOG_PROPERTY_KEY_COLOR = 'gray' as const;
+// In a module of their own, which loads no colord: a config file loads them through `logging`.
+export { LOG_LEVEL_COLORS, LOG_PROPERTY_KEY_COLOR } from './log-colors.js';

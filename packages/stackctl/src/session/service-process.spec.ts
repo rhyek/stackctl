@@ -142,6 +142,12 @@ describe('ServiceProcess', () => {
     expect(linesAtExit).toBe(p.lines.length);
   });
 
+  test('marks the command, so an exec or run it starts is part of it', async () => {
+    const p = run(node('console.log(String(process.env.STACKCTL_NESTED))'));
+    await p.exited;
+    expect(p.lines.map((l) => l.text)).toEqual(['1']);
+  });
+
   test('removes title sequences and keeps a carriage return', async () => {
     const p = run(
       node(`process.stdout.write('\\x1b]0;title\\x07a\\r\\n\\x1b]2;only\\x07\\nb\\n')`),

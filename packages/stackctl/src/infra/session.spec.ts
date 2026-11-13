@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { defineConfig } from '../config.js';
-import type { Exec } from './exec.js';
+import type { Exec } from '../spawn.js';
 import { InfraFailedError, runSessionInfra } from './session.js';
 
 let ws: string;

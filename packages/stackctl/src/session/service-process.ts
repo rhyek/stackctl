@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import type { Readable } from 'node:stream';
+import { NESTED_ENV_VAR } from '../env-base.js';
 import { type ChildRecord, updateRunning } from '../running.js';
 import { exitCodeOf } from '../scripts.js';
 import { SHUTDOWN_GRACE_MS } from '../shutdown-timing.js';
@@ -128,7 +129,8 @@ export class ServiceProcess extends EventEmitter<ServiceProcessEvents> {
     try {
       child = spawn('/bin/sh', ['-c', command], {
         cwd,
-        env,
+        // An `exec` or `run` the command starts is part of it: the session logs and records it.
+        env: { ...env, [NESTED_ENV_VAR]: '1' },
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });

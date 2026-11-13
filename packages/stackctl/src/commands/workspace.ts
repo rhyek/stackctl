@@ -45,6 +45,7 @@ export function applyWorkspaceEnv(config: Config<string> | null): void {
       cwd: process.cwd(),
       files: config?.envFiles ?? envFileNames(),
       override: config?.envOverride,
+      decrypt: config?.envDecrypt,
       vars: config?.envVars,
     }),
   );

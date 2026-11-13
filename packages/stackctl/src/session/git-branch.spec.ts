@@ -1,7 +1,8 @@
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execaSync } from 'execa';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { type GitBranchWatch, readGitBranch, followGitBranch } from './git-branch.js';
 
@@ -22,7 +23,15 @@ function tempDir(): string {
 function git(cwd: string, ...args: string[]): string {
   const env = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
   const identity = ['-c', 'user.name=test', '-c', 'user.email=test@example.test'];
-  return execaSync('git', [...identity, ...args], { cwd, env }).stdout.trim();
+  const result = spawnSync('git', [...identity, ...args], {
+    cwd,
+    env: { ...process.env, ...env },
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
+  }
+  return result.stdout.trim();
 }
 
 /** A repository on `main` with one commit. */
@@ -52,6 +61,19 @@ describe('readGitBranch', () => {
     git(dir, 'switch', '-q', '--detach');
     expect(readGitBranch(dir)).toBe(git(dir, 'rev-parse', '--short', 'HEAD'));
     expect(readGitBranch(tempDir())).toBeNull();
+  });
+
+  test("outside a repository git's complaint stays off this process's stderr", () => {
+    const module = pathToFileURL(path.join(import.meta.dirname, 'git-branch.ts')).href;
+    const js = `const { readGitBranch } = await import(${JSON.stringify(module)}); console.log(String(readGitBranch(${JSON.stringify(tempDir())})));`; // oxfmt-ignore
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', js], {
+      encoding: 'utf8',
+      env: { ...process.env, STACKCTL_DEMO_RECORDING: '' },
+    });
+    expect({ stdout: result.stdout, stderr: result.stderr }).toEqual({
+      stdout: 'null\n',
+      stderr: '',
+    });
   });
 
   test('a branch with no commit yet', () => {

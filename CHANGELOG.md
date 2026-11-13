@@ -1,10 +1,28 @@
 # Changelog
 
-## 0.5.1
+## 0.6.0
+
+### Features
+
+- **`env.decrypt` decrypts `.env` values encrypted with dotenvx**, so a file of secrets can be
+  committed. See [docs/config/env.md](docs/config/env.md#envdecrypt).
 
 ### Fixes
 
+- **`sctl exec` or `sctl run` in a dev script no longer logs twice, records an event or keeps a process running.**
+  See [docs/guide/commands.md](docs/guide/commands.md#output-and-exit-code).
 - **`stackctl events -f` no longer skips a line written as it starts.**
+- **Every command that reads the config starts about 65 ms sooner**, and `sctl exec` and
+  `sctl run` about 110 ms sooner.
+- **An infra callback's `exec` says why a command couldn't start**, a missing `cwd` included.
+- **stackctl installs 19 fewer packages.**
+
+### Breaking changes
+
+- **`stackctl` no longer exports `z`**: for a `logs.formatter` that validates with zod, add `zod`
+  to your own dependencies and import `z` from it.
+- **An `.env` value encrypted with dotenvx stays encrypted unless `env.decrypt` is set**: add
+  `env: { decrypt: true }` to `stackctl.config.ts`.
 
 ## 0.5.0
 

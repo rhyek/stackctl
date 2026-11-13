@@ -204,7 +204,7 @@ instead — `expectTypeOf(ctx.port).toEqualTypeOf<number>()`, or
 things that are genuinely "this must not compile" (an unknown field, a bad `waitFor` name), and
 when you write one, confirm it fails for the intended reason.
 
-A config field lives in two places: its Zod schema in `config-schema.ts`, which validates, and its
+A config field lives in two places: its valibot schema in `config-schema.ts`, which validates, and its
 type in `config.ts` (`ServiceConfigInput` / `DefineConfigOptions`), which carries its JSDoc. The
 schema holds no docs. `config.test-d.ts` compares the two, so `pnpm test:types` fails until a new
 or changed field agrees in both. Declare each field directly on those object types, not through

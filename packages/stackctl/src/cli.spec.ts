@@ -1,10 +1,11 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { execa, execaSync } from 'execa';
 import { describe, test, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { processStartTime } from './process-info.js';
+import { type Running, runCommand } from './spawn.js';
 
 /**
  * End-to-end: the real CLI, as a child process, against a workspace on disk — the paths that have
@@ -21,13 +22,28 @@ const buildDir = path.join(packageDir, 'node_modules', '.cache', 'cli-spec');
 const cli = path.join(buildDir, 'cli.js');
 
 /**
+ * Starts `command` as these specs run one: this process's environment under `env`, and its output
+ * without the newline it printed last, to compare whole.
+ */
+function start(
+  command: string,
+  args: string[],
+  opts: { cwd?: string; env?: Record<string, string>; timeout?: number } = {},
+): Running {
+  const child = runCommand(command, args, { ...opts, env: { ...process.env, ...opts.env } });
+  const trim = (text: string) => text.replace(/\r?\n$/, '');
+  const done = child.done.then((end) => ({ ...end, stdout: trim(end.stdout), stderr: trim(end.stderr) })); // oxfmt-ignore
+  return Object.assign(child, { done });
+}
+
+/**
  * `pid`'s parent pid, or `null` once it's gone. A cleanup that knows a process only by its pid
  * checks it first, so that it only ever signals a process the test's own process started.
  */
 function parentPid(pid: number): number | null {
-  const { stdout, exitCode } = execaSync('ps', ['-o', 'ppid=', '-p', String(pid)], { reject: false }); // oxfmt-ignore
-  const ppid = Number.parseInt(String(stdout).trim(), 10);
-  return exitCode === 0 && ppid > 0 ? ppid : null;
+  const { stdout, status } = spawnSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }); // oxfmt-ignore
+  const ppid = Number.parseInt(stdout.trim(), 10);
+  return status === 0 && ppid > 0 ? ppid : null;
 }
 
 /** A process a test started, known by its pid and the start time read while it surely was it. */
@@ -93,11 +109,10 @@ const nextTraceFile = () => path.join(ws, `trace-${String(traces++)}.json`);
 /** Runs the CLI to its exit like {@link stackctl}, also resolving with what it loaded. */
 async function traced(args: string[], opts: { cwd?: string } = {}) {
   const out = nextTraceFile();
-  const result = await execa('node', ['--import', traceHook, cli, ...args], {
+  const result = await start('node', ['--import', traceHook, cli, ...args], {
     cwd: opts.cwd ?? ws,
     env: { TRACE_OUT: out },
-    reject: false,
-  });
+  }).done;
   return { result, ...readTrace(out) };
 }
 
@@ -107,10 +122,10 @@ async function traced(args: string[], opts: { cwd?: string } = {}) {
  */
 async function tracedPlainSession(names: string[], until = '] started') {
   const out = nextTraceFile();
-  const child = execa(
+  const child = start(
     'node',
     ['--import', traceHook, cli, '--headless', ...names.flatMap((name) => ['-s', name])],
-    { cwd: ws, env: { TRACE_OUT: out }, reject: false },
+    { cwd: ws, env: { TRACE_OUT: out } },
   );
   let output = '';
   await new Promise<void>((resolve, reject) => {
@@ -127,7 +142,7 @@ async function tracedPlainSession(names: string[], until = '] started') {
     });
   });
   child.kill('SIGINT');
-  const result = await child;
+  const result = await child.done;
   if (!fs.existsSync(out)) {
     throw new Error(
       `the session wrote no trace (exit ${String(result.exitCode)}, signal ${String(result.signal)}):\n${output}\n${String(result.stderr)}`,
@@ -157,11 +172,7 @@ function writePackage(name: string, scripts: Record<string, string>): string {
 
 /** Runs the CLI in `cwd` (the workspace root unless given) and resolves with how it ended. */
 function stackctl(args: string[], opts: { cwd?: string; env?: Record<string, string> } = {}) {
-  return execa('node', [cli, ...args], {
-    cwd: opts.cwd ?? ws,
-    env: opts.env,
-    reject: false,
-  });
+  return start('node', [cli, ...args], { cwd: opts.cwd ?? ws, env: opts.env }).done;
 }
 
 const lastLine = (text: string) => text.trim().split('\n').at(-1)!;
@@ -171,7 +182,7 @@ beforeAll(async () => {
   const tsPackage = fileURLToPath(import.meta.resolve('typescript/package.json'));
   const tsc = path.join(path.dirname(tsPackage), 'bin', 'tsc');
   fs.rmSync(buildDir, { recursive: true, force: true });
-  await execa(
+  const build = await start(
     'node',
     [
       tsc,
@@ -187,7 +198,10 @@ beforeAll(async () => {
       'false',
     ],
     { cwd: packageDir },
-  );
+  ).done;
+  if (build.exitCode !== 0) {
+    throw new Error(`the build failed:\n${build.stdout}${build.stderr}`);
+  }
 
   ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-cli-')));
   fs.writeFileSync(path.join(ws, 'package.json'), JSON.stringify({ name: 'wsroot', type: 'module' })); // oxfmt-ignore
@@ -485,7 +499,7 @@ describe('-f follows one session', () => {
       const file = path.join(sessions(), followed, name);
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, `${first}\n`);
-      const child = execa('node', [cli, command, '-f'], { cwd: ws, reject: false, timeout: 4_000 }); // oxfmt-ignore
+      const child = start('node', [cli, command, '-f'], { cwd: ws, timeout: 4_000 }); // oxfmt-ignore
       let out = '';
       await new Promise<void>((resolve) => {
         child.stdout!.on('data', (chunk: Buffer) => {
@@ -498,8 +512,8 @@ describe('-f follows one session', () => {
       // A line the followed session gets just before the next one starts is still printed.
       fs.appendFileSync(file, `${second}\n`);
       fs.mkdirSync(path.join(sessions(), next), { recursive: true });
-      const result = await child;
-      expect(result.timedOut).toBe(false);
+      const result = await child.done;
+      expect(result.signal).toBeNull();
       expect(result.stdout.split('\n')).toEqual([first, second]);
       expect(result.stderr).toBe(`stackctl ${command}: the development session exited; run stackctl ${command} -f again to follow the next one.`); // oxfmt-ignore
       expect(result.exitCode).toBe(0);
@@ -994,8 +1008,8 @@ describe('sessions', () => {
   });
 
   /** Sessions a test started, ended after it whatever happened; and the ones that have exited. */
-  const started: ReturnType<typeof execa>[] = [];
-  const ended = new WeakSet<ReturnType<typeof execa>>();
+  const started: Running[] = [];
+  const ended = new WeakSet<Running>();
   afterEach(async () => {
     for (const child of started.splice(0)) {
       await endSession(child);
@@ -1008,12 +1022,12 @@ describe('sessions', () => {
    * and the groups it recorded whose leader is still its child: never 0 or below, which would
    * signal whole groups.
    */
-  async function endSession(child: ReturnType<typeof execa>): Promise<void> {
+  async function endSession(child: Running): Promise<void> {
     if (ended.has(child) || !(child.pid! > 0)) {
-      await child;
+      await child.done;
       return;
     }
-    const exited = child.then(() => true);
+    const exited = child.done.then(() => true);
     child.kill('SIGTERM');
     if (
       await Promise.race([exited, new Promise<false>((r) => setTimeout(() => r(false), 15_000))])
@@ -1045,7 +1059,7 @@ describe('sessions', () => {
       }
     }
     child.kill('SIGKILL');
-    await child;
+    await child.done;
   }
 
   /**
@@ -1053,9 +1067,9 @@ describe('sessions', () => {
    * has been printed.
    */
   async function startSession(args: string[], until: string) {
-    const child = execa('node', [cli, ...args], { cwd: sws, reject: false });
+    const child = start('node', [cli, ...args], { cwd: sws });
     started.push(child);
-    void child.then(() => ended.add(child));
+    void child.done.then(() => ended.add(child));
     let output = '';
     child.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()));
     await new Promise<void>((resolve, reject) => {
@@ -1070,12 +1084,11 @@ describe('sessions', () => {
           resolve();
         }
       });
-      void child.then(() => {
+      void child.done.then(() => {
         clearTimeout(giveUp);
         reject(new Error(`exited before printing ${until}:\n${output}`));
       });
     });
-    // Wrapped: the subprocess is a thenable, which an async function would wait out.
     return { child };
   }
 
@@ -1130,7 +1143,7 @@ describe('sessions', () => {
     ])(
       'stackctl %j fails, saying where the service goes, and starts no session',
       async (args, message) => {
-        const result = await execa('node', [cli, ...args], { cwd: sws, reject: false });
+        const result = await start('node', [cli, ...args], { cwd: sws }).done;
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toBe(message);
         expect(result.stdout).not.toContain('started');
@@ -1139,7 +1152,7 @@ describe('sessions', () => {
     );
 
     test('start takes no other arguments', async () => {
-      const result = await execa('node', [cli, 'start', 'web'], { cwd: sws, reject: false });
+      const result = await start('node', [cli, 'start', 'web'], { cwd: sws }).done;
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("error: too many arguments for 'start'");
       expect(records()).toEqual([]);
@@ -1199,11 +1212,11 @@ describe('startStack()', () => {
    * their handles; and sessions known only by pid, while each is still the process it was.
    */
   const stacks: { stop: () => Promise<void> }[] = [];
-  const helpers: ReturnType<typeof execa>[] = [];
-  const exited = new WeakSet<ReturnType<typeof execa>>();
-  const track = (child: ReturnType<typeof execa>) => {
+  const helpers: Running[] = [];
+  const exited = new WeakSet<Running>();
+  const track = (child: Running) => {
     helpers.push(child);
-    void child.then(() => exited.add(child));
+    void child.done.then(() => exited.add(child));
   };
   const owned: Owned[] = [];
   afterEach(async () => {
@@ -1215,7 +1228,7 @@ describe('startStack()', () => {
       if (!exited.has(child)) {
         child.kill('SIGKILL');
       }
-      await child;
+      await child.done;
     }
     for (const session of owned.splice(0)) {
       await killOwned(session);
@@ -1343,10 +1356,10 @@ setInterval(() => {}, 1e9);
     ): Promise<{ session: number; children: number[] }> {
       const helper = path.join(ws, 'stack-helper.mjs');
       fs.writeFileSync(helper, HELPER);
-      const parent = execa(
+      const parent = start(
         'node',
         [helper, pathToFileURL(path.join(buildDir, 'stack.js')).href, ws],
-        { cwd: ws, reject: false },
+        { cwd: ws },
       );
       track(parent);
       let output = '';
@@ -1382,7 +1395,7 @@ setInterval(() => {}, 1e9);
           ? ((JSON.parse(fs.readFileSync(record(), 'utf8')) as { children?: { pid: number }[] }).children ?? []).map((c) => c.pid) // oxfmt-ignore
           : [];
       parent.kill('SIGKILL');
-      await parent;
+      await parent.done;
       return { session, children };
     }
 
@@ -1402,16 +1415,15 @@ setInterval(() => {}, 1e9);
 
   test('a session started from a shell has no parent to end with', async () => {
     // No channel, so nothing to end with: it runs until it is told to stop.
-    const child = execa('node', [cli, '--headless', '-s', 'idle'], {
+    const child = start('node', [cli, '--headless', '-s', 'idle'], {
       cwd: ws,
-      reject: false,
     });
     track(child);
     expect(await until(() => fs.existsSync(record()))).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 2000));
     expect(alive(child.pid!)).toBe(true);
     child.kill('SIGTERM');
-    await child;
+    await child.done;
     expect(fs.existsSync(record())).toBe(false);
   }, 60_000);
 
@@ -1435,10 +1447,9 @@ setInterval(() => {}, 1e9);
       fs.writeFileSync(path.join(tell, 'package.json'), JSON.stringify({ name: 'tell', scripts: { dev } })); // oxfmt-ignore
 
       const id = String(Date.now() - 5000);
-      const child = execa('node', [cli, '--headless', '-s', 'tell'], {
+      const child = start('node', [cli, '--headless', '-s', 'tell'], {
         cwd: dir,
         env: { STACKCTL_SESSION_ID: id },
-        reject: false,
       });
       track(child);
       let output = '';
@@ -1451,7 +1462,7 @@ setInterval(() => {}, 1e9);
       expect(fs.readFileSync(path.join(folder, 'logs.txt'), 'utf8')).toContain('handed=none');
       expect(output).toContain('handed=none');
       child.kill('SIGTERM');
-      await child;
+      await child.done;
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -1484,22 +1495,22 @@ setInterval(() => {}, 1e9);
     test('waits for a session started after it, and leaves alone a service that never autostarts', async () => {
       const dir = waitWorkspace({ idle: { dev: idle }, later: { dev: idle, autostart: false } });
       try {
-        const wait = execa('node', [cli, 'wait', '--timeout', '30'], { cwd: dir, reject: false });
+        const wait = start('node', [cli, 'wait', '--timeout', '30'], { cwd: dir });
         track(wait);
         // Long enough for `wait` to have found no session.
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        const session = execa('node', [cli, '--headless', '-s', 'idle', '-s', 'later'], { cwd: dir, reject: false }); // oxfmt-ignore
+        const session = start('node', [cli, '--headless', '-s', 'idle', '-s', 'later'], { cwd: dir }); // oxfmt-ignore
         track(session);
         let ended = false;
-        void session.then(() => (ended = true));
-        const result = await wait;
+        void session.done.then(() => (ended = true));
+        const result = await wait.done;
         expect(result.stderr.split('\n')).toEqual(['stackctl: waiting for idle to be healthy', 'stackctl: everything is healthy']); // oxfmt-ignore
         expect(result.stdout).toMatch(/^development session ready: pid \d+, control API on \d+, log .*\/sessions\/\d+\/logs\.txt$/); // oxfmt-ignore
         expect(result.exitCode).toBe(0);
         // Read-only: the session is still up.
         expect(ended).toBe(false);
         session.kill('SIGTERM');
-        await session;
+        await session.done;
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
@@ -1508,15 +1519,15 @@ setInterval(() => {}, 1e9);
     test('fails at once when a service stops while the session starts', async () => {
       const dir = waitWorkspace({ crash: { dev: script('setTimeout(()=>process.exit(3),300)') } });
       try {
-        const session = execa('node', [cli, '--headless', '-s', 'crash'], { cwd: dir, reject: false }); // oxfmt-ignore
+        const session = start('node', [cli, '--headless', '-s', 'crash'], { cwd: dir }); // oxfmt-ignore
         track(session);
         const started = Date.now();
-        const result = await execa('node', [cli, 'wait', '--timeout', '30'], { cwd: dir, reject: false }); // oxfmt-ignore
+        const result = await start('node', [cli, 'wait', '--timeout', '30'], { cwd: dir }).done; // oxfmt-ignore
         expect(lastLine(result.stderr)).toMatch(/^stackctl: crash stopped while starting; see .*\/sessions\/\d+\/logs\.txt$/); // oxfmt-ignore
         expect(result.exitCode).toBe(1);
         expect(Date.now() - started).toBeLessThan(20_000);
         session.kill('SIGTERM');
-        await session;
+        await session.done;
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
@@ -1525,7 +1536,7 @@ setInterval(() => {}, 1e9);
     test('says no session started when none did by the timeout', async () => {
       const dir = waitWorkspace({ idle: { dev: idle } });
       try {
-        const result = await execa('node', [cli, 'wait', '--timeout', '1'], { cwd: dir, reject: false }); // oxfmt-ignore
+        const result = await start('node', [cli, 'wait', '--timeout', '1'], { cwd: dir }).done; // oxfmt-ignore
         expect(result.stderr).toBe('stackctl: no development session started within 1s');
         expect(result.exitCode).toBe(1);
       } finally {
@@ -1545,7 +1556,7 @@ describe.skipIf(process.platform === 'win32')(
     const made: {
       dir: string;
       fifo: string;
-      session?: ReturnType<typeof execa>;
+      session?: Running;
       ended: boolean;
     }[] = [];
 
@@ -1569,7 +1580,7 @@ describe.skipIf(process.platform === 'win32')(
         JSON.stringify({ name: 'idle', scripts: { dev: script('setInterval(()=>{},1e9)') } }),
       );
       const fifo = path.join(dir, opts.fifoAt);
-      execaSync('mkfifo', [fifo]);
+      expect(spawnSync('mkfifo', [fifo]).status).toBe(0);
       const entry: (typeof made)[number] = { dir, fifo, ended: false };
       made.push(entry);
       return entry;
@@ -1577,12 +1588,11 @@ describe.skipIf(process.platform === 'win32')(
 
     /** Starts a `--headless` session of `idle` in `ws`, collecting its output. */
     function startSession(ws: (typeof made)[number]) {
-      const session = execa('node', [cli, '--headless', '-s', 'idle'], {
+      const session = start('node', [cli, '--headless', '-s', 'idle'], {
         cwd: ws.dir,
-        reject: false,
       });
       ws.session = session;
-      void session.then(() => (ws.ended = true));
+      void session.done.then(() => (ws.ended = true));
       const output = { text: '' };
       session.stdout!.on('data', (chunk: Buffer) => (output.text += chunk.toString()));
       session.stderr!.on('data', (chunk: Buffer) => (output.text += chunk.toString()));
@@ -1590,10 +1600,10 @@ describe.skipIf(process.platform === 'win32')(
     }
 
     /** Whether `session` ends within 10s of a SIGTERM. */
-    async function endsOnSigterm(session: ReturnType<typeof execa>): Promise<boolean> {
+    async function endsOnSigterm(session: Running): Promise<boolean> {
       session.kill('SIGTERM');
       const ended = await Promise.race([
-        session.then(() => true),
+        session.done.then(() => true),
         new Promise<false>((resolve) => setTimeout(() => resolve(false), 10_000)),
       ]);
       return ended;
@@ -1620,7 +1630,7 @@ describe.skipIf(process.platform === 'win32')(
         if (ws.session !== undefined && !ws.ended) {
           ws.session.kill('SIGKILL');
         }
-        await ws.session;
+        await ws.session?.done;
         const deadline = Date.now() + 5000;
         while (releaseReader(ws.fifo) && Date.now() < deadline) {
           await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1774,11 +1784,11 @@ describe('start --detach', () => {
   }, 90_000);
 
   test('a $(…) capture returns, with the one line it prints', async () => {
-    const result = await execa(
+    const result = await start(
       'sh',
       ['-c', 'out=$(node "$0" --mode test start -d -s idle); echo "$out"', cli],
-      { cwd: ws, env: human, reject: false, timeout: 60_000 },
-    );
+      { cwd: ws, env: human, timeout: 60_000 },
+    ).done;
     expect(result.exitCode, result.stderr).toBe(0);
     const match = /^test session ready: pid (\d+), control API on (\d+), log (.+\/sessions\/\d+\/logs\.txt)$/.exec(result.stdout); // oxfmt-ignore
     expect(match, result.stdout).not.toBeNull();
@@ -1816,10 +1826,9 @@ describe('start --detach', () => {
   }, 90_000);
 
   test('SIGINT while waiting: exit 130, and nothing left', async () => {
-    const child = execa('node', [cli, 'start', '--detach', '-s', 'slow'], {
+    const child = start('node', [cli, 'start', '--detach', '-s', 'slow'], {
       cwd: ws,
       env: human,
-      reject: false,
     });
     // Once the session is up, and waiting on slow.
     expect(await until(() => fs.existsSync(recordOf('development')), 30_000)).toBe(true);
@@ -1827,7 +1836,7 @@ describe('start --detach', () => {
     await keep('development', pid);
     await new Promise((resolve) => setTimeout(resolve, 1000));
     child.kill('SIGINT');
-    const result = await child;
+    const result = await child.done;
     expect(result.exitCode).toBe(130);
     expect(result.stderr).toMatch(/start --detach failed: interrupted/);
     expect(alive(pid)).toBe(false);
@@ -1835,10 +1844,9 @@ describe('start --detach', () => {
   }, 90_000);
 
   test('the command killed outright while it waits: the session quits with it', async () => {
-    const child = execa('node', [cli, 'start', '--detach', '-s', 'slow'], {
+    const child = start('node', [cli, 'start', '--detach', '-s', 'slow'], {
       cwd: ws,
       env: human,
-      reject: false,
     });
     expect(await until(() => fs.existsSync(recordOf('development')), 30_000)).toBe(true);
     const { pid } = JSON.parse(fs.readFileSync(recordOf('development'), 'utf8')) as { pid: number };
@@ -1846,7 +1854,7 @@ describe('start --detach', () => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     // No handler of the command's runs: only the closed channel tells the session.
     child.kill('SIGKILL');
-    await child;
+    await child.done;
     expect(await until(() => !alive(pid), 30_000)).toBe(true);
     expect(fs.existsSync(recordOf('development'))).toBe(false);
   }, 90_000);
@@ -1888,8 +1896,17 @@ describe('start --detach', () => {
 });
 
 describe('what a command loads', () => {
-  const HEAVY = ['zod', 'execa', '@dotenvx/primitives', 'pino', '@clack/prompts', 'typescript'];
-  const SESSION_ONLY = ['pino', '@clack/prompts', 'jsonc-parser', 'typescript', 'ink', 'react'];
+  const HEAVY = ['valibot', '@dotenvx/primitives', 'pino', '@clack/prompts', 'typescript'];
+  // colord paints only the TUI; a config's `import 'stackctl'` doesn't load it.
+  const SESSION_ONLY = [
+    'pino',
+    '@clack/prompts',
+    'jsonc-parser',
+    'typescript',
+    'ink',
+    'react',
+    'colord',
+  ];
 
   const expectNotLoaded = (packages: Set<string>, names: string[]) => {
     expect(names.filter((name) => packages.has(name))).toEqual([]);
@@ -1963,7 +1980,9 @@ describe('what a command loads', () => {
     const { result, packages } = await traced(['show-config']);
     const config = JSON.parse(result.stdout) as { services: Record<string, { name: string }> };
     expect(config.services.app?.name).toBe('app');
-    expectNotLoaded(packages, ['execa', ...SESSION_ONLY]);
+    expectNotLoaded(packages, SESSION_ONLY);
+    // The validator is what reading the config loads, so the trace can tell `HEAVY` stays out.
+    expect(packages.has('valibot')).toBe(true);
   });
 
   test('a --headless session loads no TUI, no prompt library and no TypeScript', async () => {
@@ -2001,12 +2020,11 @@ describe('the stackctl process', () => {
       hook,
       "import fs from 'node:fs';\nfs.appendFileSync(process.env.PROCESS_OUT, JSON.stringify({ pid: process.pid, cwd: process.cwd(), execArgv: process.execArgv }) + '\\n');\n",
     );
-    const child = execa('node', ['--import', hook, cli, ...args], {
+    const child = start('node', ['--import', hook, cli, ...args], {
       cwd: app,
       env: { PROCESS_OUT: out },
-      reject: false,
     });
-    const result = await child;
+    const result = await child.done;
     const programs = fs
       .readFileSync(out, 'utf8')
       .trim()
@@ -2089,9 +2107,8 @@ describe('deps as a callback', () => {
   });
 
   test('a test session does not start a dep only the development deps name', async () => {
-    const session = execa('node', [cli, '--headless', '--mode', 'test', '-s', 'api'], {
+    const session = start('node', [cli, '--headless', '--mode', 'test', '-s', 'api'], {
       cwd: dws,
-      reject: false,
     });
     try {
       const deadline = Date.now() + 20_000;
@@ -2101,14 +2118,14 @@ describe('deps as a callback', () => {
       }
     } finally {
       session.kill('SIGTERM');
-      const exited = session.then(() => true);
+      const exited = session.done.then(() => true);
       const timedOut = new Promise<false>((r) => setTimeout(() => r(false), 15_000));
       if (!(await Promise.race([exited, timedOut]))) {
         session.kill('SIGKILL');
       }
     }
     // The session has ended: every service it started logged a line when it did.
-    const { stdout } = await session;
+    const { stdout } = await session.done;
     expect(stdout).toContain('gateway: runtime dep of api');
     expect(stdout).toMatch(/\[api *\] started/);
     expect(stdout).not.toContain('codegen');

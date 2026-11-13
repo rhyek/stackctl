@@ -13,7 +13,11 @@ const FAKE_CLI = [
   '--',
 ];
 
-function control(services = ['db', 'broken']) {
+function control(
+  services = ['db', 'broken'],
+  cli = FAKE_CLI,
+  track?: (pid: number, cwd: string) => void,
+) {
   const lines: string[] = [];
   let report: ((states: Map<string, InfraServiceState>) => void) | null = null;
   const refresh = vi.fn();
@@ -24,7 +28,8 @@ function control(services = ['db', 'broken']) {
       report = onStates;
       return { stop, refresh };
     },
-    cli: FAKE_CLI,
+    cli,
+    track,
     mode: 'test',
     cwd: process.cwd(),
     // oxlint-disable-next-line no-control-regex -- strips the color the log lines carry
@@ -37,6 +42,24 @@ function control(services = ['db', 'broken']) {
     stop,
     report: (s: Map<string, InfraServiceState>) => report?.(s),
   };
+}
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** A command that starts a child of its own, prints both pids, and runs until killed. */
+const SPAWNER = [process.execPath, '-e', "const c = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e9)'], { stdio: 'ignore' }); console.log(process.pid + ' ' + c.pid); setInterval(() => {}, 1e9);", '--']; // oxfmt-ignore
+
+/** The two pids {@link SPAWNER} prints, once it has. */
+async function pidsPrinted(lines: string[]): Promise<number[]> {
+  await vi.waitFor(() => expect(lines).toHaveLength(2), { timeout: 5000 });
+  return lines[1]!.replace('db: ', '').split(' ').map(Number);
 }
 
 /** Resolves once the service has no action under way. */
@@ -91,6 +114,62 @@ describe('InfraControl', () => {
     infra.run('broken', 'reset', BY);
     await settled(infra, 'broken');
     expect(lines.at(-1)).toBe('broken: ✘ stackctl infra reset -s broken exited with code 3');
+  });
+
+  test("logs a command that couldn't start, and why", async () => {
+    const { infra, lines } = control(['db'], ['stackctl-no-such-node']);
+    infra.run('db', 'start', BY);
+    await settled(infra, 'db');
+    expect(lines.at(-1)).toBe("db: ✘ couldn't start stackctl infra start -s db: not found");
+  });
+
+  test('each line it prints goes to the log, without blank lines or terminal-title sequences', async () => {
+    const ESC = String.fromCharCode(27);
+    const BEL = String.fromCharCode(7);
+    const printing = [process.execPath, '-e', `process.stdout.write('one\\n\\n${ESC}]0;title${BEL}two\\r\\nthree')`, '--']; // oxfmt-ignore
+    const { infra, lines } = control(['db'], printing);
+    infra.run('db', 'start', BY);
+    await settled(infra, 'db');
+    expect(lines.slice(1, -1)).toEqual(['db: one', 'db: two', 'db: three']);
+  });
+
+  test('hands each command it starts to `track`, with its pid and directory', async () => {
+    const tracked: [number, string][] = [];
+    const { infra, lines } = control(['db'], FAKE_CLI, (pid, cwd) => tracked.push([pid, cwd]));
+    infra.run('db', 'start', BY);
+    await settled(infra, 'db');
+    expect(tracked).toEqual([[expect.any(Number), process.cwd()]]);
+    expect(lines.at(-1)).toBe('db: ✔ stackctl infra start -s db finished');
+  });
+
+  test('kill signals each command running with what it started, by process group', async () => {
+    const { infra, lines } = control(['db'], SPAWNER);
+    infra.run('db', 'start', BY);
+    const pids = await pidsPrinted(lines);
+    try {
+      infra.kill('SIGTERM');
+      await settled(infra, 'db');
+      expect(lines.at(-1)).toBe('db: ✘ stackctl infra start -s db exited with code 1');
+      await vi.waitFor(() => expect(pids.filter(alive)).toEqual([]), { timeout: 3000 });
+    } finally {
+      pids.filter(alive).forEach((pid) => process.kill(pid, 'SIGKILL'));
+    }
+  });
+
+  test('hands over the commands still running once, each with how it ends', async () => {
+    const { infra, lines } = control(['db'], SPAWNER);
+    infra.run('db', 'start', BY);
+    const pids = await pidsPrinted(lines);
+    try {
+      infra.stop();
+      const living = infra.takeLiving();
+      expect(living.map((p) => p.pid)).toEqual([pids[0]]);
+      expect(infra.takeLiving()).toEqual([]);
+      process.kill(-pids[0]!, 'SIGTERM');
+      expect(await living[0]!.done).toMatchObject({ exitCode: null, signal: 'SIGTERM' });
+    } finally {
+      pids.filter(alive).forEach((pid) => process.kill(pid, 'SIGKILL'));
+    }
   });
 
   test('refuses a service it does not have', () => {

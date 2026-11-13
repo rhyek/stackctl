@@ -216,6 +216,8 @@ anything is removed, and a failing `beforeStart` before anything is started.
 
 - **`cwd`** is relative to the workspace root, the default.
 - **A non-zero exit rejects**, failing the service, unless you pass `reject: false`.
+- **A command that can't start** (not installed, or a `cwd` that doesn't exist) exits 127, and
+  the service's output says why.
 - **Their environment is `envs`**: the workspace-scope variables and `STACKCTL_MODE`. A
   variable from one service's own `.env` file isn't there. Pass it with `env`.
 - **Use them for anything a callback runs or prints.** A child process you spawn yourself with

@@ -10,7 +10,14 @@ import {
 } from '../env.js';
 import { connectSessionControl } from '../find-session.js';
 import { findConfigPath } from '../load-config.js';
-import { execLines, spawnInherit, type Exec, type SpawnInherit, type Stream } from './exec.js';
+import {
+  execLines,
+  spawnInherit,
+  streamLines,
+  type Exec,
+  type SpawnInherit,
+  type Stream,
+} from '../spawn.js';
 import type { InfraProvider, InfraRunRequest, InfraWatch, ProviderRuntime } from './provider.js';
 import { DockerComposeProvider } from './providers/docker-compose.js';
 import {
@@ -51,8 +58,8 @@ export class InfraManager {
     const workspaceDir = getWorkspaceDir();
     const envFiles = new EnvFileSnapshot();
     await envFiles.refresh([
-      envKeysFile(),
       ...envCandidatePaths({ cwd: workspaceDir, relativeDir: '.', files: config.envFiles }),
+      ...(config.envDecrypt ? [envKeysFile(workspaceDir)] : []),
     ]);
     const runtime: ProviderRuntime = {
       workspaceDir,
@@ -67,6 +74,7 @@ export class InfraManager {
           cwd: workspaceDir,
           files: config.envFiles,
           override: config.envOverride,
+          decrypt: config.envDecrypt,
           vars: config.envVars,
           read: envFiles.read,
         }),
@@ -74,7 +82,7 @@ export class InfraManager {
       tokens: getConfigTokens(),
       exec: deps.exec ?? execLines,
       spawnInherit: deps.spawnInherit ?? spawnInherit,
-      stream: deps.stream,
+      stream: deps.stream ?? streamLines,
       // The session a callback's `control` drives: this config's, in this mode — the same
       // config file a session started here records, wherever the command was run from.
       connectControl:

@@ -1195,6 +1195,7 @@ describe("resolveEnvFrom with the config's own vars", () => {
 });
 
 describe('encrypted values', () => {
+  /** Writes `.env` with `SECRET` encrypted to `s3cret`; returns the private key that decrypts it. */
   const secret = () => {
     const { publicKey, privateKey } = primitives.keypair();
     write(
@@ -1203,49 +1204,59 @@ describe('encrypted values', () => {
     );
     return privateKey;
   };
+  const encryptedSecret = () =>
+    /^SECRET="(.*)"$/m.exec(fs.readFileSync(path.join(cwd, '.env'), 'utf8'))?.[1];
+
+  test('stay as written without `decrypt`, with their key in the environment and in .env.keys', () => {
+    const privateKey = secret();
+    write('.env.keys', `DOTENV_PRIVATE_KEY="${privateKey}"\n`);
+    const error = vi.spyOn(console, 'error');
+    // In the workspace, where dotenvx would look for `.env.keys` itself.
+    const before = process.cwd();
+    process.chdir(cwd);
+    try {
+      const { env } = resolveEnvFrom({
+        cwd,
+        relativeDir: '.',
+        ambient: { DOTENV_PRIVATE_KEY: privateKey },
+      });
+      expect(env).toMatchObject({ SECRET: encryptedSecret(), PLAIN: '1' });
+    } finally {
+      process.chdir(before);
+    }
+    expect(error).not.toHaveBeenCalled();
+  });
 
   test('decrypts a value whose private key is in the ambient environment', () => {
     const privateKey = secret();
     const { env } = resolveEnvFrom({
       cwd,
       relativeDir: '.',
+      decrypt: true,
       ambient: { DOTENV_PRIVATE_KEY: privateKey },
     });
     expect(env).toMatchObject({ SECRET: 's3cret', PLAIN: '1' });
   });
 
-  // A session reads `.env.keys` with its other files, off its own thread, where dotenvx would read
-  // it itself, synchronously.
-  test('decrypts a value whose private key is in .env.keys, read like the files', async () => {
-    const privateKey = secret();
-    write('.env.keys', `DOTENV_PRIVATE_KEY="${privateKey}"\n`);
+  // A session reads `.env.keys` with its other files, off its own thread.
+  test("decrypts a value whose private key is in the workspace's .env.keys, read like the files", async () => {
+    write('.env.keys', `DOTENV_PRIVATE_KEY="${secret()}"\n`);
     const readFileSync = vi.spyOn(fs, 'readFileSync');
-    const before = process.cwd();
-    process.chdir(cwd);
-    try {
-      const files = new EnvFileSnapshot();
-      await files.refresh([envKeysFile(), ...envCandidatePaths({ cwd, relativeDir: '.' })]);
-      const layer = workspaceEnvLayer({ cwd, read: files.read });
-      expect(layer).toMatchObject({ SECRET: 's3cret', PLAIN: '1' });
-    } finally {
-      process.chdir(before);
-    }
+    const files = new EnvFileSnapshot();
+    await files.refresh([envKeysFile(cwd), ...envCandidatePaths({ cwd, relativeDir: '.' })]);
+    const layer = workspaceEnvLayer({ cwd, decrypt: true, read: files.read });
+    expect(layer).toMatchObject({ SECRET: 's3cret', PLAIN: '1' });
     expect(readFileSync.mock.calls.filter(([p]) => String(p).endsWith('.env.keys'))).toEqual([]);
   });
 
   test('leaves a value it has no key for as it is, and says which one on stderr', () => {
     secret();
     const errors: string[] = [];
-    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
       errors.push(args.join(' '));
     });
-    try {
-      const { env } = resolveEnvFrom({ cwd, relativeDir: '.', ambient: {} });
-      expect(env.SECRET).toMatch(/^encrypted:/);
-      expect(env.PLAIN).toBe('1');
-    } finally {
-      spy.mockRestore();
-    }
+    const { env } = resolveEnvFrom({ cwd, relativeDir: '.', decrypt: true, ambient: {} });
+    expect(env).toMatchObject({ SECRET: encryptedSecret(), PLAIN: '1' });
     expect(errors.join('\n')).toContain('could not decrypt SECRET');
   });
 });
