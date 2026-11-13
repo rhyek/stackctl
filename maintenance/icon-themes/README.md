@@ -6,8 +6,8 @@ request. Nothing here ships with the package or the site.
 
 | Theme | Its repository | Files |
 | --- | --- | --- |
-| Material Icon Theme | [material-extensions/vscode-material-icon-theme](https://github.com/material-extensions/vscode-material-icon-theme) | `material-icon-theme/stackctl.svg`, `stackctl_light.svg` |
-| vscode-icons | [vscode-icons/vscode-icons](https://github.com/vscode-icons/vscode-icons) | `vscode-icons/file_type_stackctl.svg` |
+| Material Icon Theme | [material-extensions/vscode-material-icon-theme](https://github.com/material-extensions/vscode-material-icon-theme) | `vscode/material-icon-theme/stackctl.svg`, `stackctl_light.svg` |
+| vscode-icons | [vscode-icons/vscode-icons](https://github.com/vscode-icons/vscode-icons) | `vscode/vscode-icons/file_type_stackctl.svg` |
 
 `node maintenance/scripts/icon-themes.ts` writes them from `docs/public/logo-small.svg`, so run it
 whenever that changes and commit both together. The script's header says how each theme's
