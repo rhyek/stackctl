@@ -6,6 +6,7 @@ paths:
   - "packages/stackctl/package.json"
   - "packages/stackctl/src/cli.ts"
   - "docs/public/logo.svg"
+  - "docs/public/logo-small.svg"
 ---
 
 # How stackctl describes itself — one wording and one icon, everywhere, in lockstep
@@ -52,20 +53,22 @@ Where each one lives:
 ## The icon
 
 `docs/public/logo.svg` is the icon: a prompt in front of three log lines, the middle one yellow,
-on a dark rounded tile. Everything else is made from it, so a change to it is a change to all of
-them, in the same change:
+on a dark rounded tile. `docs/public/logo-small.svg` is the same icon for small sizes, with the
+three lines as thick as the prompt's stroke. Everything else is made from one of the two, so a
+change to the icon is a change to both and to all of these, in the same change:
 
 | Place                                   | File                               | Wired in                                   |
 | --------------------------------------- | ---------------------------------- | ------------------------------------------ |
-| The browser tab                         | `logo.svg`, and `favicon-32.png`   | `head` in `docs/.vitepress/config.ts`      |
+| The browser tab                         | `logo-small.svg`, and `favicon-32.png` | `head` in `docs/.vitepress/config.ts`  |
 | An iPhone's home screen                 | `apple-touch-icon.png` (180 px, square: iOS rounds it) | `head`                 |
-| The site's nav bar                      | `logo.svg`                         | `themeConfig.logo`                         |
+| The site's nav bar                      | `logo-small.svg`                   | `themeConfig.logo`                         |
 | The home page, beside the headline      | `logo.svg`                         | `hero.image` in `docs/index.md`            |
 | A link's preview (Slack, X, …)          | `og-image.png` (512 px, square corners: Slack rounds it) | `og:image` in `head`   |
 
-- **The PNGs are renders of the SVG.** Re-render all three when it changes, at their sizes, from
-  a browser (headless Chrome with a transparent background; the touch icon and the preview from
-  the SVG with the tile's corners squared).
+- **The PNGs are renders of the SVGs.** Re-render all three when either changes, at their sizes,
+  from a browser (headless Chrome with a transparent background): `favicon-32.png` from
+  `logo-small.svg`; the touch icon and the preview from `logo.svg` with the tile's corners
+  squared.
 - **Every URL to them carries a hash of the file** (`versioned()` in the site config), so a
   changed icon is a new URL and no browser or CDN keeps the old one. Reference a public file
   through it, never by its bare path.
