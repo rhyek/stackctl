@@ -61,16 +61,11 @@ jobs:
             echo "on_github=false" >> "$GITHUB_OUTPUT"
           fi
 
-  ci:
+  # No CI run here: `main` takes changes only through pull requests, whose CI must pass
+  # (.github/rulesets/main.json). The build below still has to succeed before anything publishes.
+  publish:
     needs: detect
     if: needs.detect.outputs.on_npm == 'false' || needs.detect.outputs.on_github == 'false'
-    permissions:
-      contents: read
-    # `./`, not zizmor's `$/`: actionlint rejects `$/`, and `./` is the documented form.
-    uses: ./.github/workflows/ci.yaml # zizmor: ignore[self-repository]
-
-  publish:
-    needs: [detect, ci]
     runs-on: ubuntu-latest
     # npm's trusted publisher for stackctl is bound to this environment.
     environment: release

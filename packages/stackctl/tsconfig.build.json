@@ -6,5 +6,5 @@
     "rootDir": "src",
     "declaration": true
   },
-  "exclude": ["src/**/*.spec.ts", "src/**/*.test-d.ts", "e2e/**"]
+  "exclude": ["src/**/*.spec.ts", "src/**/*.test-d.ts", "src/cli-spec/**", "e2e/**"]
 }

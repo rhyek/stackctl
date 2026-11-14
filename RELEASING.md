@@ -29,14 +29,14 @@ Publishing uses npm **trusted publishing** (OIDC): no npm token is stored anywhe
    label, `beta`, and marked as a prerelease on GitHub, so `npm install stackctl` keeps
    resolving to the latest stable version. A stable version goes to `latest`.
 
-2. Open the pull request. CI's `check` job runs `node maintenance/scripts/changelog.ts check`,
+2. Open the pull request. CI runs `node maintenance/scripts/changelog.ts check`,
    which fails if the top section is empty, its version isn't newer than the latest release, or it adds
    an entry to a version already released (rewording one, or fixing its link, is fine). A
    new entry always goes under a new heading. It also fails if any link in `CHANGELOG.md`
    points at a file or heading that doesn't exist, as one does after a page moves.
 
 3. Merge it. `.github/workflows/release.yaml` reads the top heading and, if that version
-   isn't out yet, runs CI again on the merged result, then:
+   isn't out yet, builds the package, then:
    - publishes the package to npm, tokenless over OIDC;
    - creates the GitHub release and its `vX.Y.Z` tag, with the section as its notes and its
      relative links pinned to the tag.

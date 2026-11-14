@@ -141,8 +141,8 @@ pnpm build
 The root `build` script runs `pnpm --filter stackctl build`, which cleans
 `dist/`, compiles with `tsc -p tsconfig.build.json`, and marks the compiled CLI
 (`dist/cli.js`) executable, then `pnpm docs:package`, which builds the docs site and copies
-its `llms.txt` and pages into `packages/stackctl/docs/`. CI (`.github/workflows/ci.yaml`, which `release.yaml` also
-calls) uses this same command.
+its `llms.txt` and pages into `packages/stackctl/docs/`. CI (`.github/workflows/ci.yaml`) and `release.yaml` use this same
+command.
 
 ## Changelog and releases
 
@@ -187,12 +187,13 @@ is asserted in `packages/stackctl/src/config.test-d.ts` with vitest's `expectTyp
 (`expect-type`, already a vitest dependency — nothing to install):
 
 ```sh
-pnpm test:types      # vitest --typecheck.only --run
+pnpm test:types      # vitest run --project types
 ```
 
-**`expectTypeOf` is a no-op without `--typecheck`** — it compiles and "passes" under plain
-`pnpm test`, which is why the assertions live in `*.test-d.ts` and get their own script and CI
-step. `vitest.config.ts` points `typecheck.tsconfig` at `packages/stackctl/tsconfig.typecheck.json`,
+**`expectTypeOf` is a no-op without the type checker** — it compiles and "passes" in a runtime
+test, which is why the assertions live in `*.test-d.ts`, in a Vitest project of their own (`types`
+in `vitest.config.ts`, which `pnpm test` runs too). That project points `typecheck.tsconfig` at
+`packages/stackctl/tsconfig.typecheck.json`,
 which is the normal tsconfig minus three spec files that already fail typecheck on main — so a
 real type error anywhere else still fails the run rather than being blanket-ignored.
 
