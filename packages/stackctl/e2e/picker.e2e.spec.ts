@@ -58,7 +58,7 @@ test('the picker starts what was chosen, and the run screen shows the startup, t
 
   // The footer during startup: every service pending, in gray, and the keys api will have, dim.
   expect(
-    pty.everShown(/○ api {3}○ web {3}○ worker\n←→ select {3}r restart {3}s stop {3}m commands/),
+    pty.everShown(/○ api {2}○ web {2}○ worker\n← → select {2}r restart {2}s stop {2}m commands/),
   ).toBe(true);
   expect(pty.everDots('api:90 web:90 worker:90')).toBe(true);
   // api isn't ready for a second, its dot yellow, and web waits for it, its dot cyan.

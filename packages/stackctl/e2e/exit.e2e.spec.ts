@@ -16,7 +16,7 @@ const ws = fixtureWorkspace();
 test('SIGTERM at the first frame: the one shutdown, exit 0, the exit line, no session record left', async () => {
   const pty = await Pty.start({ cwd: ws(), args: ['-s', 'api', '-s', 'web', '-s', 'worker'] });
   // The run screen's first frame, during startup.
-  await pty.waitFor('f filter   c clear  │  ^c quit');
+  await pty.waitFor('/ filter  c clear  │  ^c quit');
   pty.signal('SIGTERM');
   expect(await pty.waitForExit()).toEqual({ code: 0, signal: null });
   expect(expectTerminalRestored(pty)).toContain('■ stackctl exited after');
@@ -38,7 +38,7 @@ test('a startup failure stays on screen; one Ctrl+C quits with exit 1', async ()
   // The reason is in the log, and the footer has the service still pending and only the log's
   // keys.
   await pty.waitFor(/\[stackctl\] \[ERROR\] .*EADDRINUSE.*21085/);
-  expect(pty.text()).toMatch(/○ api\s*\nlogs: f filter {3}c clear {2}│ {2}\^c quit/);
+  expect(pty.text()).toMatch(/○ api\s*\nlogs: \/ filter {2}c clear {2}│ {2}\^c quit/);
   expect(pty.text()).not.toContain('r restart');
   // Nothing more started.
   expect(pty.text()).not.toMatch(/\[api\s*\] started/);

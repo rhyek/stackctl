@@ -226,7 +226,7 @@ function willStartRows(
 // The keys row and the filter row (picker §3.6.4, §6.2.1)
 // ---------------------------------------------------------------------------
 
-const HINTS = { indent: 2, gap: 3, separators: false };
+const HINTS = { indent: 2, gap: 2, separators: false };
 
 /** The hints laid out by `layoutHints`, with each hint's target at its drawn cells. */
 function hintRows(

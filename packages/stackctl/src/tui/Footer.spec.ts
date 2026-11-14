@@ -166,14 +166,14 @@ function width(segments: readonly Segment[]): number {
   return chars(text(segments)).length;
 }
 
-/** The 1-based columns of the cells drawn as the focused name: white and bold. */
+/** The 1-based columns of the cells drawn as the focused name: white and bold, past the caret. */
 function focusSpan(segments: readonly Segment[]): [number, number] | null {
   let col = 1;
   let first = 0;
   let last = 0;
   for (const s of segments) {
     const w = chars(s.text).length;
-    if (s.color === SELECTED_COLOR && s.bold) {
+    if (s.color === SELECTED_COLOR && s.bold && s.text !== '❯') {
       first ||= col;
       last = col + w - 1;
     }
@@ -182,12 +182,13 @@ function focusSpan(segments: readonly Segment[]): [number, number] | null {
   return first ? [first, last] : null;
 }
 
-// The spec's mockups, with the `[…]` focus brackets taken out: they stand for the entry's own
-// padding cells and are never drawn, so focus moves no cell (S2-R14). Mockup 3's `infra` gap is
-// 10, like the others.
+// The spec's mockups, with the `[…]` focus brackets drawn as the picker's caret before the
+// focused entry. Mockup 3's `infra` gap is 10, like the others.
 const RULE = `── example ⎇ 1.0.0 ${'─'.repeat(85)}`;
-const APPS = '● api 64M   ● web 219M';
-const INFRA = 'infra: ● db 23M   ● mail 7M';
+const APPS = '● api 64M  ● web 219M';
+const INFRA = 'infra: ● db 23M  ● mail 7M';
+/** {@link APPS} with `api`, the first entry and so the default focus, behind the caret. */
+const APPS_FOCUSED = `❯ ${APPS}`;
 
 /** The links row of {@link running}: each service's links, then the workspace's. */
 const LINKS = 'api ↗   public ↗   web ↗';
@@ -197,13 +198,13 @@ describe('Design A at 104 columns (S2-R14)', () => {
     const layout = footerLayout(running(), ui(), 104);
     expect(renderFooter(layout, 104)).toEqual([
       RULE,
-      APPS,
+      APPS_FOCUSED,
       INFRA,
-      '←→ select   r restart   s stop   m commands  │  logs: f filter   c clear  │  ^c quit',
+      '← → select  r restart  s stop  m commands  │  logs: / filter  c clear  │  ^c quit',
       LINKS,
     ]);
-    // `● api 64M` from cell 1: the name, cells 3 through 5, in the focus color.
-    expect(focusSpan(layout.rows[1]!)).toEqual([3, 5]);
+    // `❯ ● api 64M` from cell 1: the name, cells 5 through 7, in the focus color.
+    expect(focusSpan(layout.rows[1]!)).toEqual([5, 7]);
   });
 
   test('mockup 2: running, db focused', () => {
@@ -211,12 +212,12 @@ describe('Design A at 104 columns (S2-R14)', () => {
     expect(renderFooter(layout, 104)).toEqual([
       RULE,
       APPS,
-      INFRA,
-      '←→ select   r restart   s stop   R reset data  │  logs: f filter   c clear  │  ^c quit',
+      `infra: ❯ ● db 23M  ● mail 7M`,
+      '← → select  r restart  s stop  R reset data  │  logs: / filter  c clear  │  ^c quit',
       LINKS,
     ]);
-    // `● db 23M` from cell 8, after `infra: `: the name, cells 10 and 11.
-    expect(focusSpan(layout.rows[2]!)).toEqual([10, 11]);
+    // `❯ ● db 23M` from cell 8, after `infra: `: the name, cells 12 and 13.
+    expect(focusSpan(layout.rows[2]!)).toEqual([12, 13]);
   });
 
   test('mockup 3: starting up', () => {
@@ -224,16 +225,16 @@ describe('Design A at 104 columns (S2-R14)', () => {
     const layout = footerLayout({ ...startingUp(), workspaceLinks: [] }, ui(), 104);
     expect(renderFooter(layout, 104)).toEqual([
       RULE,
-      '○ api   ○ web',
-      'infra: ● db   ● mail',
-      '←→ select   r restart   s stop   m commands  │  logs: f filter   c clear  │  ^c quit',
+      '○ api  ○ web',
+      'infra: ● db  ● mail',
+      '← → select  r restart  s stop  m commands  │  logs: / filter  c clear  │  ^c quit',
     ]);
     expect(focusSpan(layout.rows[1]!)).toBeNull();
     expect(focusSpan(layout.rows[2]!)).toBeNull();
     // The keys api will have once the session runs, dim until then, so the row doesn't change
     // length when it does.
     const keys = layout.rows[layout.keysRow]!;
-    for (const hint of ['←→ select', 'r restart', 's stop', 'm commands']) {
+    for (const hint of ['← → select', 'r restart', 's stop', 'm commands']) {
       expect(
         keys.find((s) => s.text === hint),
         hint,
@@ -255,18 +256,39 @@ describe('Design A at 104 columns (S2-R14)', () => {
     expect(ready.find((seg) => seg.text === '●')).toEqual({ text: '●', color: 'green' });
   });
 
-  test('focus moves no cell', () => {
+  test('the caret steps along with the focus, the entries after it moving over for it', () => {
     const snap = running();
     const texts = entriesOf(snap).map(({ kind, name }) =>
       footerLayout(snap, ui({ focus: { kind, name } }), 104)
         .rows.slice(1, 3)
-        .map((row) => text(row).trimEnd())
-        .join('\n'),
+        .map((row) => text(row).trimEnd()),
     );
-    expect(new Set(texts)).toEqual(new Set([`${APPS}\n${INFRA}`]));
+    expect(texts).toEqual([
+      ['❯ ● api 64M  ● web 219M', INFRA],
+      ['● api 64M  ❯ ● web 219M', INFRA],
+      [APPS, 'infra: ❯ ● db 23M  ● mail 7M'],
+      [APPS, 'infra: ● db 23M  ❯ ● mail 7M'],
+    ]);
+    const caret = footerLayout(snap, ui(), 104).rows[1]!.find((s) => s.text === '❯');
+    expect(caret).toEqual({ text: '❯', color: SELECTED_COLOR, bold: true });
   });
 
-  test('the raw frame draws the focused name white and bold, and nothing inverse', () => {
+  test('where the services rows wrap never depends on the focus', () => {
+    const snap = running();
+    for (const cols of [20, 21, 22, 23, 24, 25, 26]) {
+      const shapes = entriesOf(snap).map(({ kind, name }) => {
+        const layout = footerLayout(snap, ui({ focus: { kind, name } }), cols);
+        return layout.rects.map((r) => r.row);
+      });
+      expect(new Set(shapes.map(String)).size, String(cols)).toBe(1);
+      for (const { kind, name } of entriesOf(snap)) {
+        const rows = renderFooter(footerLayout(snap, ui({ focus: { kind, name } }), cols), cols);
+        expect(rows.every((row) => chars(row).length <= cols)).toBe(true);
+      }
+    }
+  });
+
+  test('the raw frame draws the caret and the focused name white and bold, and nothing inverse', () => {
     const level = chalk.level;
     chalk.level = 3;
     try {
@@ -278,10 +300,11 @@ describe('Design A at 104 columns (S2-R14)', () => {
       const focused = chars.flatMap((c, i) =>
         has('\x1b[1m')(c) && has('\x1b[37m')(c) && !has('\x1b[4m')(c) ? [i + 1] : [],
       );
-      expect(focused).toEqual([3, 4, 5]);
+      // The caret in cell 1, and the name.
+      expect(focused).toEqual([1, 5, 6, 7]);
       expect(
         chars
-          .slice(2, 5)
+          .slice(4, 7)
           .map((c) => c.value)
           .join(''),
       ).toBe('api');
@@ -330,7 +353,7 @@ describe('the footer', () => {
         renderFooter(normal, cols).slice(0, layout.keysRow),
       );
       expect(rows.slice(layout.keysRow)).toEqual([
-        'filter › error api▏      ⏎ apply   esc clear',
+        'filter › error api▏      ⏎ apply  esc clear',
         ...renderFooter(normal, cols).slice(linksStart(normal)),
       ]);
       const hints = layout.targets.filter((t) => t.id.startsWith('hint:'));
@@ -345,8 +368,8 @@ describe('the footer', () => {
   test('an applied filter shows on the keys row', () => {
     const layout = footerLayout(running(), ui({ filter: 'error api' }), 104);
     expect(renderFooter(layout, 104).slice(layout.keysRow)).toEqual([
-      '←→ select   r restart   s stop   m commands',
-      'logs: f filter: error api   esc clear filter   c clear  │  ^c quit',
+      '← → select  r restart  s stop  m commands',
+      'logs: / filter: error api  esc clear filter  c clear  │  ^c quit',
       LINKS,
     ]);
   });
@@ -354,10 +377,10 @@ describe('the footer', () => {
   test("services rows wrap at 20 columns and each entry's target matches its cells", () => {
     const layout = footerLayout(running(), ui(), 20);
     const rows = renderFooter(layout, 20);
-    expect(rows.slice(1, 5)).toEqual(['● api 64M', '● web 219M', 'infra: ● db 23M', '● mail 7M']);
+    expect(rows.slice(1, 5)).toEqual(['❯ ● api 64M', '● web 219M', 'infra: ● db 23M', '● mail 7M']);
     const entries = layout.targets.filter((t) => t.id.startsWith('entry:'));
     expect(entries.map((t) => cells(rows, t))).toEqual([
-      '● api 64M',
+      '❯ ● api 64M',
       '● web 219M',
       '● db 23M',
       '● mail 7M',
@@ -371,11 +394,11 @@ describe('the footer', () => {
 
   test('the infra take a row of their own under the application services', () => {
     const rows = renderFooter(footerLayout(running(), ui(), 104), 104);
-    expect(rows[1]).toBe(APPS);
+    expect(rows[1]).toBe(APPS_FOCUSED);
     expect(rows[2]).toBe(INFRA);
     // With no application service, infra is the first services row.
     const infraOnly = footerLayout(running({ services: [] }), ui(), 104);
-    expect(renderFooter(infraOnly, 104)[1]).toBe(INFRA);
+    expect(renderFooter(infraOnly, 104)[1]).toBe('infra: ❯ ● db 23M  ● mail 7M');
   });
 
   test('every hint has a target covering key plus label', () => {
@@ -396,9 +419,9 @@ describe('the footer', () => {
         for (const t of hints) {
           const label = t.id.slice('hint:keys:'.length);
           const drawn = cells(rows, t);
-          // `f filter:` carries the applied terms as its detail.
+          // `/ filter:` carries the applied terms as its detail.
           expect(drawn.startsWith(label)).toBe(true);
-          expect(drawn).toBe(label === 'f filter:' ? 'f filter: error' : label);
+          expect(drawn).toBe(label === '/ filter:' ? '/ filter: error' : label);
           expect(t.rect.row).toBeGreaterThanOrEqual(layout.keysRow);
         }
         // Every hint drawn on the keys row is a target: nothing between them but gaps and │.
@@ -417,18 +440,18 @@ describe('the footer', () => {
     const layout = footerLayout(running(), ui(), 61);
     const rows = renderFooter(layout, 61).slice(layout.keysRow, linksStart(layout));
     expect(rows).toEqual([
-      '←→ select   r restart   s stop   m commands',
-      'logs: f filter   c clear  │  ^c quit',
+      '← → select  r restart  s stop  m commands',
+      'logs: / filter  c clear  │  ^c quit',
     ]);
   });
 
   test("the session's keys never wrap onto a row of their own: the log's keys go with them", () => {
-    // 80 columns fit the select keys and the log's keys, but not `^c quit` after them.
-    const layout = footerLayout(running(), ui(), 80);
-    const rows = renderFooter(layout, 80).slice(layout.keysRow, linksStart(layout));
+    // 79 columns fit the select keys and the log's keys, but not `^c quit` after them.
+    const layout = footerLayout(running(), ui(), 79);
+    const rows = renderFooter(layout, 79).slice(layout.keysRow, linksStart(layout));
     expect(rows).toEqual([
-      '←→ select   r restart   s stop   m commands',
-      'logs: f filter   c clear  │  ^c quit',
+      '← → select  r restart  s stop  m commands',
+      'logs: / filter  c clear  │  ^c quit',
     ]);
   });
 
@@ -439,9 +462,9 @@ describe('the footer', () => {
     snap.infra = [infra('db', { state: 'failed' }), infra('mail', { state: 'running' })];
     const layout = footerLayout(snap, ui(), 104);
     expect(renderFooter(layout, 104).slice(1)).toEqual([
-      '○ api   ○ web',
-      'infra: ○ db   ● mail',
-      'logs: f filter   c clear  │  ^c quit',
+      '○ api  ○ web',
+      'infra: ○ db  ● mail',
+      'logs: / filter  c clear  │  ^c quit',
       'public ↗   web ↗',
     ]);
     expect(layout.rows[1]!.find((s) => s.text === '○')).toMatchObject({ color: 'gray' });
@@ -567,9 +590,11 @@ describe('wide characters', () => {
           const t = layout.targets.find((x) => x.id === id);
           return t ? cells(rows, t) : undefined;
         };
-        expect(drawn('entry:app:日本')).toBe('● 日本 64M');
-        expect(drawn('entry:app:🚀web')).toBe('● 🚀web 7M');
-        expect(drawn('entry:infra:メール')).toBe('● メール 23M');
+        // The focused entry's target takes in the caret before it.
+        const caret = (name: string) => (name === focus.name ? '❯ ' : '');
+        expect(drawn('entry:app:日本')).toBe(`${caret('日本')}● 日本 64M`);
+        expect(drawn('entry:app:🚀web')).toBe(`${caret('🚀web')}● 🚀web 7M`);
+        expect(drawn('entry:infra:メール')).toBe(`${caret('メール')}● メール 23M`);
         for (const t of layout.targets.filter((x) => x.id.startsWith('hint:keys:'))) {
           expect(cells(rows, t)).toBe(t.id.slice('hint:keys:'.length));
         }
@@ -587,10 +612,10 @@ describe('wide characters', () => {
   test('the focused wide entry has its name in the focus color, on whole cells', () => {
     const layout = footerLayout(wide(), ui({ focus: { kind: 'infra', name: 'メール' } }), 104);
     const entry = layout.targets.find((t) => t.id === 'entry:infra:メール')!;
-    // The dot and a space, then the three wide characters: six cells.
+    // The caret, the dot and their spaces, then the three wide characters: six cells.
     expect(focusSpan(layout.rows[entry.rect.row]!)).toEqual([
-      entry.rect.col + 2,
-      entry.rect.col + 7,
+      entry.rect.col + 4,
+      entry.rect.col + 9,
     ]);
   });
 
@@ -732,14 +757,14 @@ describe('the commands menu', () => {
     const { rows, menu } = screen(open(), 104, 16);
     const top = rows.length - 5 - menu!.rows.length;
     expect(rows.slice(top, top + menu!.rows.length)).toEqual([
-      '╭ api · run ──────────────────────────────╮',
-      '│ ❯ add-random-todo                       │',
-      '│   custom command…                       │',
-      '│ ↑↓ choose  ←→ service  ⏎ run  esc close │',
-      '╰─────────────────────────────────────────╯',
+      '╭ api · run ────────────────────────────────╮',
+      '│ ❯ add-random-todo                         │',
+      '│   custom command…                         │',
+      '│ ↑ ↓ choose  ← → service  ⏎ run  esc close │',
+      '╰───────────────────────────────────────────╯',
     ]);
     expect(rows[top - 1]).toBe(`log line ${String(top - 1)}`);
-    expect(menu).toMatchObject({ left: 1, width: 43 });
+    expect(menu).toMatchObject({ left: 1, width: 45 });
     // The keys row offers only quit while the menu is open.
     expect(rows[rows.length - 2]).toBe('^c quit');
   });
@@ -752,17 +777,17 @@ describe('the commands menu', () => {
     expect(
       menu!.targets.map((t) => [t.id, t.rect.height === 1 ? at(t) : t.rect, t.action]),
     ).toEqual([
-      ['menu:box', { col: 1, row: -5, width: 43, height: 5 }, { type: 'custom-input', text: '' }],
-      ['menu:row:0', '   add-random-todo'.padEnd(41), { type: 'run-command', row: 0 }],
-      ['menu:custom', ' ❯ $ ▏custom command…'.padEnd(41), { type: 'custom-command' }],
-      ['hint:menu:↑↓ choose', '↑↓ choose', { type: 'menu-move', delta: 1 }],
-      ['hint:menu:←→ service', '←→ service', { type: 'menu-service', delta: 1 }],
+      ['menu:box', { col: 1, row: -5, width: 45, height: 5 }, { type: 'custom-input', text: '' }],
+      ['menu:row:0', '   add-random-todo'.padEnd(43), { type: 'run-command', row: 0 }],
+      ['menu:custom', ' ❯ $ ▏custom command…'.padEnd(43), { type: 'custom-command' }],
+      ['hint:menu:↑ ↓ choose', '↑ ↓ choose', { type: 'menu-move', delta: 1 }],
+      ['hint:menu:← → service', '← → service', { type: 'menu-service', delta: 1 }],
       ['hint:menu:⏎ run', '⏎ run', { type: 'run-command' }],
       ['hint:menu:esc close', 'esc close', { type: 'close-menu' }],
     ]);
   });
 
-  test('it moves with the focus, clamped on screen, and drops ←→ with one app service', () => {
+  test('it moves with the focus, clamped on screen, and drops ← → with one app service', () => {
     const state = ui({
       mode: 'commands',
       menu: { selected: 0, custom: 'echo hi' },
@@ -777,7 +802,7 @@ describe('the commands menu', () => {
       commands,
       rects: footerLayout(one, open(), 104).rects,
     })!;
-    expect(single.rows.map(text)).toContain('│ ↑↓ choose  ⏎ run  esc close │');
+    expect(single.rows.map(text)).toContain('│ ↑ ↓ choose  ⏎ run  esc close │');
   });
 
   test('a long list scrolls inside the box and keeps the highlight in view', () => {
@@ -790,13 +815,13 @@ describe('the commands menu', () => {
       maxRows: 7,
     })!;
     expect(menu.rows.map(text)).toEqual([
-      '╭ api · run ──────────────────────────────╮',
-      '│   script-3                              │',
-      '│   script-4                              │',
-      '│   script-5                              │',
-      '│ ❯ script-6                              │',
-      '│ ↑↓ choose  ←→ service  ⏎ run  esc close │',
-      '╰─────────────────────────────────────────╯',
+      '╭ api · run ────────────────────────────────╮',
+      '│   script-3                                │',
+      '│   script-4                                │',
+      '│   script-5                                │',
+      '│ ❯ script-6                                │',
+      '│ ↑ ↓ choose  ← → service  ⏎ run  esc close │',
+      '╰───────────────────────────────────────────╯',
     ]);
   });
 
@@ -807,7 +832,7 @@ describe('the commands menu', () => {
       commands,
       rects: footerLayout(snap, state, 104).rects,
     })!;
-    expect(text(menu.rows[2]!)).toBe('│ ❯ $ echo hi▏                            │');
+    expect(text(menu.rows[2]!)).toBe('│ ❯ $ echo hi▏                              │');
   });
 
   test("a click inside the box that misses a row or a hint is the menu's own", () => {
@@ -815,7 +840,7 @@ describe('the commands menu', () => {
     const state = open({ selected: 1, custom: 'echo hi' });
     const layout = footerLayout(snap, state, 104, { commands });
     const menu = menuLayout(snap, state, 104, { commands, rects: layout.rects })!;
-    expect(menu.rect).toEqual({ col: 1, row: -5, width: 43, height: 5 });
+    expect(menu.rect).toEqual({ col: 1, row: -5, width: 45, height: 5 });
     // The jump row's `Click here`, right above the footer, under the menu's bottom border.
     const jump: Target = {
       id: 'jump',
@@ -823,18 +848,18 @@ describe('the commands menu', () => {
       action: { type: 'scroll-newest' },
     };
     const targets = [...layout.targets, jump, ...menu.targets];
-    // The bottom border, the title row, a wall, and the gap between `↑↓ choose` and `←→ service`.
+    // The bottom border, the title row, a wall, and the gap between `↑ ↓ choose` and `← → service`.
     for (const [col, row] of [
       [10, -1],
       [10, -5],
       [1, -3],
-      [43, -3],
-      [12, -2],
+      [45, -3],
+      [13, -2],
     ] as const) {
       expect(hitTest(targets, col, row)?.id, `${String(col)},${String(row)}`).toBe('menu:box');
     }
-    expect(hitTest(targets, 44, -1)?.id).toBe('jump');
-    expect(hitTest(targets, 3, -2)?.id).toBe('hint:menu:↑↓ choose');
+    expect(hitTest(targets, 46, -1)?.id).toBe('jump');
+    expect(hitTest(targets, 3, -2)?.id).toBe('hint:menu:↑ ↓ choose');
     // Clicked, it changes nothing: the menu stays open with its typing, and nothing runs.
     const ctx: UiContext = {
       phase: snap.phase,
@@ -860,15 +885,15 @@ describe('the commands menu', () => {
     const rects = footerLayout(snap, state, 104).rects;
     const at = (maxRows: number) => menuLayout(snap, state, 104, { commands, rects, maxRows })!;
     expect(at(4).rows.map(text)).toEqual([
-      '╭ api · run ──────────────────────────────╮',
-      '│ ❯ add-random-todo                       │',
-      '│ ↑↓ choose  ←→ service  ⏎ run  esc close │',
-      '╰─────────────────────────────────────────╯',
+      '╭ api · run ────────────────────────────────╮',
+      '│ ❯ add-random-todo                         │',
+      '│ ↑ ↓ choose  ← → service  ⏎ run  esc close │',
+      '╰───────────────────────────────────────────╯',
     ]);
     expect(at(3).rows.map(text)).toEqual([
-      '╭ api · run ──────────────────────────────╮',
-      '│ ❯ add-random-todo                       │',
-      '╰─────────────────────────────────────────╯',
+      '╭ api · run ────────────────────────────────╮',
+      '│ ❯ add-random-todo                         │',
+      '╰───────────────────────────────────────────╯',
     ]);
     expect(at(3).targets.map((t) => t.id)).toEqual(['menu:box', 'menu:row:0']);
   });

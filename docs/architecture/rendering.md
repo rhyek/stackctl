@@ -167,8 +167,11 @@ mode the filter row — and the links row (more when it wraps).
   those segments take, the entries (app services, then infra) and each entry's rect for ↑/↓.
   **Rendering and hit-testing read this one layout, so they can't disagree.** Truncation (branch,
   then workspace name, links whole, never through a URL) happens here.
-- **Focus moves no cell.** The focused entry's name is drawn bold in `SELECTED_COLOR` and its dot keeps its state's color; nothing else changes. Every row starts at the first cell, and the workspace links
-  end at the last.
+- **The focused entry has the picker's caret.** A `❯` and a space go before it, the `❯` and
+  the name drawn bold in `SELECTED_COLOR`, and its dot keeps its state's color. The entries
+  after it on its row move over by the caret's two cells. Every services row keeps those two cells
+  free, so where the rows wrap never depends on the focus. Every row starts at the first cell, and
+  the workspace links end at the last.
 - **The keys row is generated from the key table.** `hintsFor(keyContext)` walks `KEY_TABLE` in
   `keymap.ts`, so a hint can't advertise a key that does something else, and a hint whose action
   can't run is drawn dim. Groups are set apart by `│`, except the log's, headed by a dim `logs:`

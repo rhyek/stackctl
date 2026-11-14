@@ -17,7 +17,7 @@ Every label is padded to the longest one the session can show (its services, its
 services and stackctl's own), so every line's text starts in one column. A service added
 mid-session widens them all.
 
-stderr lines are red. In the terminal UI, `f` filters the stream by any text, ignoring case and
+stderr lines are red. In the terminal UI, `/` filters the stream by any text, ignoring case and
 accents: type a service's name to see only that service. The terms are highlighted in the lines
 shown.
 
