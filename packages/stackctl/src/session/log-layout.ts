@@ -162,16 +162,20 @@ export function wrapLineRows(
     (showsTimestamp(line, mode) ? `${chalk.dim(displayTimestamp(line.ts, mode))} ` : '') +
     `${labelGutter(line.label, labelWidth)} `;
   const width = wrapWidth(layout, cols, gutterColumns);
+  const label = {
+    start: showsTimestamp(line, mode) ? timestampGutterWidth(mode) : 0,
+    end: gutterColumns - 1,
+  };
   let rows: WrappedRow[];
   if (width === null) {
-    rows = [{ text: gutter + line.text, contentStart: gutterColumns }];
+    rows = [{ text: gutter + line.text, contentStart: gutterColumns, label }];
   } else {
     const indent = cappedIndent(layout, width);
     const pad = ' '.repeat(indent);
     rows = wrapRows(line.text, width, indent).map((text, i) =>
       i === 0
-        ? { text: gutter + text, contentStart: gutterColumns }
-        : { text: gutter + pad + text, contentStart: gutterColumns + indent },
+        ? { text: gutter + text, contentStart: gutterColumns, label }
+        : { text: gutter + pad + text, contentStart: gutterColumns + indent, label },
     );
   }
   layout.rows = { cols, labelWidth, mode, ts: line.ts, rows };

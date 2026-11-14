@@ -484,6 +484,15 @@ select-and-copy over the log content.
   `slice-ansi` into colored `pre`/`post` and an ANSI-stripped `mid` rendered `<Text inverse>`
   (stripping the middle sidesteps the embedded `ESC[0m` resets in log text cancelling the
   inversion).
+- **Filter matches** (`match-highlight.ts`, pure) are painted first, so a selection inverts over
+  them. `LogPane` takes the applied filter's terms (`filterTerms`, the split `LogStore` matches
+  with) and searches each row's `[label]` (its columns, `label`, come from `wrapLineRows`) between
+  the brackets, then each logical line's content from `contentStart` (rows sharing a
+  `lineIndex` as one text, so a match the wrap broke still shows on both rows), never the
+  timestamp, with each grapheme folded by `normalize` and mapped back to its display columns. A
+  match is stripped of its own colors and drawn `ON_MATCH_COLOR` on `MATCH_COLOR`, so gold or
+  pastel text stays readable. Painting happens at render time, never in `RowMeta.text`, which
+  selection and copy read and the row cache doesn't key on the filter.
 - **Double-click a word, triple-click a line** (`word-select.ts`, pure). Both select **and copy
   immediately**, reusing `flashCopy`.
   - **Detecting the multi-click is on us.** The SGR protocol carries **no click count**, so

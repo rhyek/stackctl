@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import stringWidth from 'string-width';
 import { stripAnsi } from '../format.js';
-import { normalize } from '../tui/text-cells.js';
+import { filterTerms, normalize } from '../tui/text-cells.js';
 import { callEach } from '../util.js';
 import { expandTabs } from '../wrap-rows.js';
 import { countRows, labelGutter, wrapLineRows } from './log-layout.js';
@@ -167,7 +167,7 @@ export class LogStore implements LogSource {
 
   /** Shows only the lines `filter` matches, whole entries at a time; `null` shows every line. */
   applyFilter(filter: LogFilter | null): void {
-    const terms = filter ? filter.text.split(/\s+/).filter(Boolean).map(normalize) : [];
+    const terms = filter ? filterTerms(filter.text) : [];
     const service = filter?.service;
     this.filter = terms.length > 0 || service !== undefined ? { terms, service } : null;
     if (this.filter) {

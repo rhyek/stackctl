@@ -14,6 +14,7 @@ import { resolveKey } from './keymap.js';
 import { hasBlinkingDot } from './layout.js';
 import { screenTargets } from './screen-targets.js';
 import { hardExit, useShutdown } from './shutdown.js';
+import { filterTerms } from './text-cells.js';
 import { type UiContext, type UiEvent, initialUiState, keyContext, step } from './ui-state.js';
 import { useExpiry } from './use-expiry.js';
 import { useMouse } from './use-mouse.js';
@@ -202,6 +203,7 @@ export function RunScreen({ session }: { session: Session }): React.ReactElement
   }, [session]);
 
   const menuElement = useMemo(() => <MemoMenu menu={menu} />, [menu]);
+  const terms = useMemo(() => filterTerms(ui.filter), [ui.filter]);
 
   if (snapshot.phase === 'stopping') {
     // Not fullscreen: a fullscreen last frame would have Ink clear the screen on unmount.
@@ -217,7 +219,7 @@ export function RunScreen({ session }: { session: Session }): React.ReactElement
           </Text>
         </Box>
       )}
-      <LogPane rows={viewport.rows} highlights={selection.highlights} />
+      <LogPane rows={viewport.rows} highlights={selection.highlights} terms={terms} />
       <BottomChrome toasts={toasts} hiddenBelow={viewport.hiddenBelow} jumpToLatestRef={jumpRef}>
         <FooterBoundary session={session} layout={footer}>
           <MemoFooter layout={footer}>{menuElement}</MemoFooter>

@@ -10,6 +10,7 @@ import React, {
 import { Box, Text } from 'ink';
 import { copyToClipboard } from '../clipboard.js';
 import { computeWindow, convertOffset, windowRows } from '../log-window.js';
+import { paintMatchRows } from '../match-highlight.js';
 import type { MouseReport } from '../mouse.js';
 import {
   FOLLOWING,
@@ -124,6 +125,7 @@ export function useLogViewport(source: LogSource, width: number, height: number)
             text: row.text,
             contentStart: row.contentStart,
             valueStart: r === 0 ? row.contentStart + valueStart : row.contentStart,
+            label: row.label,
             lineIndex,
             kind,
           }));
@@ -510,29 +512,36 @@ function HighlightedRow({ row, span }: { row: string; span: Span }) {
   );
 }
 
+const NO_TERMS: readonly string[] = [];
+
 /**
  * Presentational log viewport: renders the pre-windowed rows bottom-aligned (so
  * the newest output sits just above the footer). Rows are already wrapped to the
- * terminal width, so each is truncated rather than re-wrapped by Ink. Rows the
- * selection covers get a `highlights` span rendered as an inverted range.
+ * terminal width, so each is truncated rather than re-wrapped by Ink. The filter's
+ * `terms` are painted where they occur in a row's content, and rows the selection
+ * covers get a `highlights` span rendered as an inverted range over that.
  */
 export function LogPane({
   rows,
   highlights,
+  terms = NO_TERMS,
 }: {
   rows: readonly RowMeta[];
   highlights?: readonly (Span | null)[];
+  /** The applied filter's terms, as `filterTerms` splits them. */
+  terms?: readonly string[];
 }) {
+  const texts = useMemo(() => paintMatchRows(rows, terms), [rows, terms]);
   return (
     <Box flexDirection="column" flexGrow={1} justifyContent="flex-end" overflow="hidden">
-      {rows.map((row, i) => {
+      {texts.map((text, i) => {
         const span = highlights?.[i] ?? null;
         // The whole window re-renders together, so positional keys are fine here.
         return span ? (
-          <HighlightedRow key={i} row={row.text} span={span} />
+          <HighlightedRow key={i} row={text} span={span} />
         ) : (
           <Text key={i} wrap="truncate-end">
-            {row.text}
+            {text}
           </Text>
         );
       })}

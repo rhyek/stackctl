@@ -65,6 +65,17 @@ export const MUTED_COLOR: Color = 'gray';
 export const NOTICE_COLOR: Color = '#ffbc40';
 
 /**
+ * The background of a filter match in the run screen's log: the applied filter's terms, wherever
+ * they occur in a shown line's text. The notices' gold, which no log text is drawn on.
+ */
+export const MATCH_COLOR: Color = NOTICE_COLOR;
+/**
+ * The text of a match, in place of its own colors, so text a line paints gold or pastel stays
+ * readable on {@link MATCH_COLOR}: black, or white should that ever turn dark.
+ */
+export const ON_MATCH_COLOR: Color = colord(MATCH_COLOR).isLight() ? '#000000' : '#ffffff';
+
+/**
  * Whatever the cursor is on: the picker's `❯`, the name beside it and the filter's text cursor,
  * and the selected row in the commands menu and the border stackctl draws around that mode. A
  * soft periwinkle: cool against the warm {@link NOTICE_COLOR}, so where you are never reads as

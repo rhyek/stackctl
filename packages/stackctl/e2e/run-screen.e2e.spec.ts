@@ -55,6 +55,7 @@ test('the filter: f, terms, ⏎ applies them to the log; esc clears it', async (
   await pty.waitFor('filter ›');
   pty.type('web');
   await pty.waitFor('filter › web');
+  const applied = pty.mark();
   pty.press('enter');
   await pty.waitFor('f filter: web');
   await pty.waitUntil(
@@ -68,6 +69,15 @@ test('the filter: f, terms, ⏎ applies them to the log; esc clears it', async (
     filtered.join('\n'),
   ).toBe(true);
   expect(filtered.join('\n')).toMatch(/\[web\s*\] web listening on 21082/);
+  // The term is drawn on the match background, in the text and in the label.
+  expect(pty.raw(applied)).toMatch(
+    // oxlint-disable-next-line no-control-regex -- the SGR sequences around the term
+    /\x1b\[48;[0-9;]*m(?:\x1b\[[0-9;]*m)*web(?:\x1b\[[0-9;]*m)+ listening/,
+  );
+  expect(pty.raw(applied)).toMatch(
+    // oxlint-disable-next-line no-control-regex -- the SGR sequences around the term
+    /\[(?:\x1b\[[0-9;]*m)*\x1b\[48;[0-9;]*m(?:\x1b\[[0-9;]*m)*web(?:\x1b\[[0-9;]*m)+ *\]/,
+  );
 
   pty.press('esc');
   await pty.waitUntil(

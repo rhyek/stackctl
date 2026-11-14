@@ -13,12 +13,27 @@
   },
   "keywords": [
     "monorepo",
-    "dev",
     "cli",
-    "orchestration",
-    "dependencies",
     "tui",
-    "ink"
+    "ink",
+    "orchestration",
+    "local-development",
+    "dev-environment",
+    "process-manager",
+    "dev-server",
+    "workspaces",
+    "pnpm",
+    "docker-compose",
+    "dotenv",
+    "dotenvx",
+    "env",
+    "reverse-proxy",
+    "https",
+    "logs",
+    "e2e",
+    "ai-agents",
+    "coding-agent",
+    "claude-code"
   ],
   "engines": {
     "node": ">=26.12.1"
