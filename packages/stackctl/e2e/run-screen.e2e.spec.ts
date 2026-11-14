@@ -51,13 +51,13 @@ test('the filter: f, terms, ⏎ applies them to the log; esc clears it', async (
   const pty = await startEveryService(ws());
   expect(logRows(pty).join('\n')).toMatch(/\[worker\s*\] worker listening/);
 
-  pty.press('f');
+  pty.press('/');
   await pty.waitFor('filter ›');
   pty.type('web');
   await pty.waitFor('filter › web');
   const applied = pty.mark();
   pty.press('enter');
-  await pty.waitFor('f filter: web');
+  await pty.waitFor('/ filter: web');
   await pty.waitUntil(
     () => !logRows(pty).some((row) => row.includes('[worker')),
     'the log filtered to web',
@@ -84,7 +84,7 @@ test('the filter: f, terms, ⏎ applies them to the log; esc clears it', async (
     () => logRows(pty).some((row) => /\[worker\s*\] worker listening/.test(row)),
     'every line back',
   );
-  expect(pty.text()).not.toContain('f filter: web');
+  expect(pty.text()).not.toContain('/ filter: web');
 });
 
 test('the rule line follows a switch of the git branch, and every service keeps running', async () => {

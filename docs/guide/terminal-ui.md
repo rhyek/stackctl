@@ -44,15 +44,15 @@ selection.
 
 The log fills the screen, above a footer:
 
-<llm-exclude><TerminalPlayer src="/casts/run-screen-1794682036.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/run-screen-1794682654.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
 <llm-only>
 
 ```text
 ── example ⎇ main ────────────────────────────────────────────────────────
-❯ ● backend 64M  ● frontend 236M  ● worker 26M
-infra: ● db 26M  ● mail 18M
+❯ ● backend 62M  ● frontend 227M  ● worker 24M
+infra: ● db 27M  ● mail 14M
 ← → select  r restart  s stop  m commands
-logs: f filter  c clear  │  ^c quit
+logs: / filter  c clear  │  ^c quit
 backend ↗   public ↗   frontend ↗   root ↗   inbox ↗   mail ↗
 ```
 
@@ -87,7 +87,7 @@ code `1`.
 | `s`                       | Stop it, or start it when it isn't running. A waiting service starts on its own.        |
 | `m`                       | Open the commands menu: the service's scripts, and a custom shell command.              |
 | `R`                       | Reset the focused infra service, **deleting its data**. Asks for a second `R`.          |
-| `f`                       | Filter the log: type terms, `⏎` to apply, `esc` to clear. Matches are highlighted.      |
+| `/`                       | Filter the log: type terms, `⏎` to apply, `esc` to clear. Matches are highlighted.      |
 | `c`                       | Clear the log on screen. The log file keeps every line.                                 |
 | PageUp/PageDown, Home/End | Scroll the log. End follows the newest line again.                                      |
 | `esc`                     | Drop the text selection, then the newest notice, then the filter.                       |

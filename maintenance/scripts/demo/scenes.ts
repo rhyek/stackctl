@@ -166,7 +166,7 @@ export const scenes: Record<string, Scene> = {
       t.snapshot();
 
       // filter the combined log down to the added todos with the word just copied, pasted
-      await t.press('f', 1000);
+      await t.press('/', 1000);
       t.paste(copied);
       await t.sleep(800);
       await t.press('enter', 2500);

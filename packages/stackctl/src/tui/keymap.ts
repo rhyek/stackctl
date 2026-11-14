@@ -307,15 +307,15 @@ export const KEY_TABLE: readonly KeyBinding[] = [
   {
     mode: 'normal',
     when: (ctx) => !filtered(ctx),
-    key: { char: 'f' },
-    hint: { key: 'f', label: 'filter', group: 2 },
+    key: { char: '/' },
+    hint: { key: '/', label: 'filter', group: 2 },
     action: { type: 'open-filter' },
   },
   {
     mode: 'normal',
     when: filtered,
-    key: { char: 'f' },
-    hint: { key: 'f', label: 'filter:', detail: (ctx) => ctx.filter, group: 2 },
+    key: { char: '/' },
+    hint: { key: '/', label: 'filter:', detail: (ctx) => ctx.filter, group: 2 },
     action: { type: 'open-filter' },
   },
   {

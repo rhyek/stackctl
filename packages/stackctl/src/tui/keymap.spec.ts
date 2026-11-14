@@ -220,19 +220,19 @@ describe('the key table', () => {
 describe('the keys row', () => {
   test('an app service focused, running: spec mockup 1', () => {
     expect(keysRow(hintsFor(ctx({ focused: appFocused() })))).toBe(
-      '  ← → select  r restart  s stop  m commands  │  f filter  c clear  │  ^c quit',
+      '  ← → select  r restart  s stop  m commands  │  / filter  c clear  │  ^c quit',
     );
   });
 
   test('an infra entry focused: spec mockup 2', () => {
     expect(keysRow(hintsFor(ctx({ focused: infraFocused() })))).toBe(
-      '  ← → select  r restart  s stop  R reset data  │  f filter  c clear  │  ^c quit',
+      '  ← → select  r restart  s stop  R reset data  │  / filter  c clear  │  ^c quit',
     );
   });
 
   test('starting up and after a startup failure: spec mockup 3', () => {
     for (const phase of ['starting', 'failed'] as const) {
-      expect(keysRow(hintsFor(ctx({ phase })))).toBe('  f filter  c clear  │  ^c quit');
+      expect(keysRow(hintsFor(ctx({ phase })))).toBe('  / filter  c clear  │  ^c quit');
       expect(resolveKey(ctx({ phase }), 't', {})).toBeNull();
     }
   });
@@ -253,15 +253,15 @@ describe('the keys row', () => {
     }
     // A service pending at startup is about to start: its key reads what it will once it has.
     expect(keysRow(hintsFor(ctx({ phase: 'starting', focused: appFocused('pending') })))).toBe(
-      '  ← → select  r restart  s stop  m commands  │  f filter  c clear  │  ^c quit',
+      '  ← → select  r restart  s stop  m commands  │  / filter  c clear  │  ^c quit',
     );
     expect(keysRow(hintsFor(ctx({ phase: 'starting', focused: appFocused('stopped') })))).toBe(
-      '  ← → select  r restart  s start  m commands  │  f filter  c clear  │  ^c quit',
+      '  ← → select  r restart  s start  m commands  │  / filter  c clear  │  ^c quit',
     );
   });
 
   test('running with no entries shows the log keys and quit', () => {
-    expect(keysRow(hintsFor(ctx()))).toBe('  f filter  c clear  │  ^c quit');
+    expect(keysRow(hintsFor(ctx()))).toBe('  / filter  c clear  │  ^c quit');
   });
 
   test('t is no key, in any state', () => {
@@ -274,9 +274,9 @@ describe('the keys row', () => {
   test('an applied filter shows its terms on f and adds esc clear filter', () => {
     const hints = hintsFor(ctx({ focused: appFocused(), filter: 'error api' }));
     expect(keysRow(hints)).toBe(
-      '  ← → select  r restart  s stop  m commands  │  f filter: error api  esc clear filter  c clear  │  ^c quit',
+      '  ← → select  r restart  s stop  m commands  │  / filter: error api  esc clear filter  c clear  │  ^c quit',
     );
-    expect(hints.find((h) => h.key === 'f')).toMatchObject({
+    expect(hints.find((h) => h.key === '/')).toMatchObject({
       label: 'filter:',
       detail: 'error api',
     });
@@ -448,7 +448,7 @@ describe('commands mode', () => {
   test('the footer offers only ^c quit', () => {
     expect(keysRow(hintsFor(menu()))).toBe('  ^c quit');
     expect(resolveKey(menu(), 'r', {})).toBeNull();
-    expect(resolveKey(menu(), 'f', {})).toBeNull();
+    expect(resolveKey(menu(), '/', {})).toBeNull();
   });
 
   test('its own hint row, without ← → service for one app service', () => {

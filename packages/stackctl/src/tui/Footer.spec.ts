@@ -200,7 +200,7 @@ describe('Design A at 104 columns (S2-R14)', () => {
       RULE,
       APPS_FOCUSED,
       INFRA,
-      '← → select  r restart  s stop  m commands  │  logs: f filter  c clear  │  ^c quit',
+      '← → select  r restart  s stop  m commands  │  logs: / filter  c clear  │  ^c quit',
       LINKS,
     ]);
     // `❯ ● api 64M` from cell 1: the name, cells 5 through 7, in the focus color.
@@ -213,7 +213,7 @@ describe('Design A at 104 columns (S2-R14)', () => {
       RULE,
       APPS,
       `infra: ❯ ● db 23M  ● mail 7M`,
-      '← → select  r restart  s stop  R reset data  │  logs: f filter  c clear  │  ^c quit',
+      '← → select  r restart  s stop  R reset data  │  logs: / filter  c clear  │  ^c quit',
       LINKS,
     ]);
     // `❯ ● db 23M` from cell 8, after `infra: `: the name, cells 12 and 13.
@@ -227,7 +227,7 @@ describe('Design A at 104 columns (S2-R14)', () => {
       RULE,
       '○ api  ○ web',
       'infra: ● db  ● mail',
-      '← → select  r restart  s stop  m commands  │  logs: f filter  c clear  │  ^c quit',
+      '← → select  r restart  s stop  m commands  │  logs: / filter  c clear  │  ^c quit',
     ]);
     expect(focusSpan(layout.rows[1]!)).toBeNull();
     expect(focusSpan(layout.rows[2]!)).toBeNull();
@@ -369,7 +369,7 @@ describe('the footer', () => {
     const layout = footerLayout(running(), ui({ filter: 'error api' }), 104);
     expect(renderFooter(layout, 104).slice(layout.keysRow)).toEqual([
       '← → select  r restart  s stop  m commands',
-      'logs: f filter: error api  esc clear filter  c clear  │  ^c quit',
+      'logs: / filter: error api  esc clear filter  c clear  │  ^c quit',
       LINKS,
     ]);
   });
@@ -419,9 +419,9 @@ describe('the footer', () => {
         for (const t of hints) {
           const label = t.id.slice('hint:keys:'.length);
           const drawn = cells(rows, t);
-          // `f filter:` carries the applied terms as its detail.
+          // `/ filter:` carries the applied terms as its detail.
           expect(drawn.startsWith(label)).toBe(true);
-          expect(drawn).toBe(label === 'f filter:' ? 'f filter: error' : label);
+          expect(drawn).toBe(label === '/ filter:' ? '/ filter: error' : label);
           expect(t.rect.row).toBeGreaterThanOrEqual(layout.keysRow);
         }
         // Every hint drawn on the keys row is a target: nothing between them but gaps and │.
@@ -441,7 +441,7 @@ describe('the footer', () => {
     const rows = renderFooter(layout, 61).slice(layout.keysRow, linksStart(layout));
     expect(rows).toEqual([
       '← → select  r restart  s stop  m commands',
-      'logs: f filter  c clear  │  ^c quit',
+      'logs: / filter  c clear  │  ^c quit',
     ]);
   });
 
@@ -451,7 +451,7 @@ describe('the footer', () => {
     const rows = renderFooter(layout, 79).slice(layout.keysRow, linksStart(layout));
     expect(rows).toEqual([
       '← → select  r restart  s stop  m commands',
-      'logs: f filter  c clear  │  ^c quit',
+      'logs: / filter  c clear  │  ^c quit',
     ]);
   });
 
@@ -464,7 +464,7 @@ describe('the footer', () => {
     expect(renderFooter(layout, 104).slice(1)).toEqual([
       '○ api  ○ web',
       'infra: ○ db  ● mail',
-      'logs: f filter  c clear  │  ^c quit',
+      'logs: / filter  c clear  │  ^c quit',
       'public ↗   web ↗',
     ]);
     expect(layout.rows[1]!.find((s) => s.text === '○')).toMatchObject({ color: 'gray' });
