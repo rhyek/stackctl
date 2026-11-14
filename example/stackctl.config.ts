@@ -1,8 +1,6 @@
 import { defineConfig, logging } from 'stackctl';
 
 export default defineConfig({
-  // Handed to every callback as `tokens`; a service can add its own (see `backend`).
-  tokens: { domain: 'example.test' },
   // Let `.env.development` extend an inherited NODE_OPTIONS instead of losing to it.
   env: { override: ['NODE_OPTIONS'] },
   // stackctl's own dev reverse proxy: http://<subdomain>.localhost:21050 reaches each service
@@ -60,7 +58,6 @@ export default defineConfig({
         // it.
         mail: {
           port: ({ envs }) => Number(envs.MAIL_UI_PORT),
-          urls: [''], // `mail` in the footer links to its web UI
         },
       },
     },
@@ -72,13 +69,8 @@ export default defineConfig({
   // Keyed by service name — what `-s` takes and what `deps` reference.
   services: {
     backend: {
-      tokens: { region: 'us-east' },
       port: ({ envs }) => Number(envs.BACKEND_PORT),
       healthcheck: '/health', // a path: probed at http://localhost:<port>/health
-      urls: [
-        '/todos', // a path: based on the public origin (http://api.localhost:21050/todos)
-        { label: 'public', url: ({ tokens }) => `https://${tokens.region}.${tokens.domain}` },
-      ],
     },
     worker: {
       // Go, via the Makefile's `start` target: recompiles on start, doesn't watch — restart after edits.
@@ -103,14 +95,8 @@ export default defineConfig({
       port: 21060,
       // A longer probe deadline: a dev server compiling on first request can exceed the 1500ms default.
       healthcheck: { url: '/', timeout: 5000 },
-      urls: [
-        '', // '' is the public origin itself: http://app.localhost:21050
-        // Any other address, from that origin with one part replaced: the bare
-        // http://localhost:21050 (`subdomain: null` is the bare domain)…
-        { label: 'root', url: ({ buildAddress }) => buildAddress({ subdomain: null }) },
-        // …and http://mail.localhost:21050
-        { label: 'inbox', url: ({ buildAddress }) => buildAddress({ subdomain: 'mail' }) },
-      ],
+      // The footer's one link: a path, based on the public origin (http://app.localhost:21050/).
+      urls: [{ label: 'Home page', url: '/' }],
       // Runs `backend` too, and waits for its healthcheck.
       deps: [{ service: 'backend', wait: true }],
     },

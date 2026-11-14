@@ -32,3 +32,5 @@ docs/.vitepress/config.ts.timestamp-*
 
 # Claude Code's settings for one machine
 .claude/settings.local.json
+
+CLAUDE.local.md

@@ -20,7 +20,7 @@ export default defineConfig({
     frontend: {
       port: 3000,
       deps: [{ service: 'backend', wait: true }],
-      urls: [{ label: 'home', url: '/' }],
+      urls: [{ label: 'Home page', url: '/' }],
     },
   },
   infra: {
