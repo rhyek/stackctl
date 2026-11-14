@@ -53,6 +53,20 @@ export default defineConfig({
     ['meta', { property: 'og:image:height', content: '512' }],
     ['meta', { property: 'og:image:alt', content: 'stackctl' }],
     ['meta', { name: 'twitter:card', content: 'summary' }],
+    // Cookieless page-view counts (Umami), served from the site's own subdomain. `defer` keeps it
+    // off the render path, and a failed report is dropped silently, so the site never waits on
+    // it. `data-host-url` is required: without it the tracker posts relative to the script's
+    // directory. `data-domains` keeps local dev servers from being counted.
+    [
+      'script',
+      {
+        defer: '',
+        src: 'https://u.stackctl.dev/w/s.js',
+        'data-host-url': 'https://u.stackctl.dev',
+        'data-website-id': 'd862878d-13ed-4f2c-bbf2-dd4dc84bc656',
+        'data-domains': 'stackctl.dev',
+      },
+    ],
   ],
   // Each page's preview names the page: its title, its description and its URL.
   transformHead({ pageData, title, description }) {
