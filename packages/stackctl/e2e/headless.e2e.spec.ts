@@ -26,12 +26,12 @@ test('headless with every service: the lines in order; SIGINT quits with exit 0'
   // while api is started once the session's first `.env` read is done, which can come either side.
   const chains = [
     [
-      /\[stackctl\] \[INFO\] mode development \(default\)/,
+      /\[stackctl\] \[INFO\] profile development \(default\)/,
       /\[api\s*\] started/,
       /\[api\s*\] api listening on 21081/,
     ],
     [
-      /\[stackctl\] \[INFO\] mode development \(default\)/,
+      /\[stackctl\] \[INFO\] profile development \(default\)/,
       /\[web\s*\] waiting for api\.\.\./,
       /\[api\s*\] api listening on 21081/,
       /\[web\s*\] api ready, starting\.\.\./,

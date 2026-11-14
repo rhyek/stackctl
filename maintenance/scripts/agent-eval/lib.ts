@@ -232,9 +232,9 @@ export function readRun(file: string): Run {
 
 // ── reading a command ─────────────────────────────────────────────────────────────────────────
 
-/** Each stackctl invocation in a command: its mode and its arguments without the mode. */
-export function stackctlCalls(command: string): { mode: string | null; args: string[] }[] {
-  const calls: { mode: string | null; args: string[] }[] = [];
+/** Each stackctl invocation in a command: its profile and its arguments without the profile. */
+export function stackctlCalls(command: string): { profile: string | null; args: string[] }[] {
+  const calls: { profile: string | null; args: string[] }[] = [];
   for (const segment of segments(command) ?? command.split(/[;&|\n()]+/)) {
     const words = (segment.match(/'[^']*'|"(?:\\.|[^"\\])*"|\S+/g) ?? []).filter(
       (_word, i, all) => !/^\d?>>?$|^&>$|^<$/.test(all[i - 1] ?? ''),
@@ -243,7 +243,7 @@ export function stackctlCalls(command: string): { mode: string | null; args: str
     if (at === -1) {
       continue;
     }
-    let mode: string | null = null;
+    let profile: string | null = null;
     const args: string[] = [];
     const rest = words.slice(at + 1);
     for (let i = 0; i < rest.length; i++) {
@@ -252,15 +252,15 @@ export function stackctlCalls(command: string): { mode: string | null; args: str
         args.push(...rest.slice(i));
         break;
       }
-      if (w === '--mode' || w === '-m') {
-        mode = rest[++i] ?? null;
-      } else if (w.startsWith('--mode=')) {
-        mode = w.slice('--mode='.length);
+      if (w === '--profile' || w === '-p') {
+        profile = rest[++i] ?? null;
+      } else if (w.startsWith('--profile=')) {
+        profile = w.slice('--profile='.length);
       } else if (!/^[<>&|]|^\d?>/.test(w)) {
         args.push(w);
       }
     }
-    calls.push({ mode, args });
+    calls.push({ profile, args });
   }
   return calls;
 }
@@ -394,7 +394,7 @@ export const tasks: Record<string, Task> = {
         return 'fail';
       }
       if (calls.some((call) => sub(call)[0] === 'reset')) {
-        return 'fail'; // deletes the mode's own state, not the database
+        return 'fail'; // deletes the profile's own state, not the database
       }
       return null;
     },
@@ -430,11 +430,11 @@ export const tasks: Record<string, Task> = {
     state: 'healthy',
     kind: 'action',
     prompt: "Run the backend's tests.",
-    pass: 'anything started or run with `--mode test`',
+    pass: 'anything started or run with `--profile test`',
     fail: 'the test script run directly or in the development session',
     decide: (c) => {
       const calls = stackctlCalls(c);
-      if (calls.some((call) => call.mode === 'test')) {
+      if (calls.some((call) => call.profile === 'test')) {
         return 'pass';
       }
       if (
@@ -548,7 +548,7 @@ export const tasks: Record<string, Task> = {
       run.steps.some(
         (step) =>
           // a session's folder, or the one folder an older stackctl kept
-          /\.stackctl\/modes\/[^/\s]+\/(sessions\/\d+\/logs\.txt|logs\/)/.test(step.text) ||
+          /\.stackctl\/profiles\/[^/\s]+\/(sessions\/\d+\/logs\.txt|logs\/)/.test(step.text) ||
           (step.tool === 'Bash' && stackctlCalls(step.text).some((call) => sub(call)[0] === 'logs')), // oxfmt-ignore
       ),
   },
@@ -630,14 +630,14 @@ export const tasks: Record<string, Task> = {
     kind: 'action',
     prompt:
       'Bring up a second copy of the backend with its own empty database, so I can try something without touching my dev data.',
-    pass: 'a session in another mode (`--mode test`), or the `.env.<mode>` file of a new one',
+    pass: 'a session in another profile (`--profile test`), or the `.env.<profile>` file of a new one',
     fail: 'a container or process started by hand, or anything that touches the development session',
     decide: (c) => {
       const calls = stackctlCalls(c);
-      if (calls.some((call) => call.mode !== null && call.mode !== 'development')) {
+      if (calls.some((call) => call.profile !== null && call.profile !== 'development')) {
         return 'pass';
       }
-      // a `.env.<mode>` file is the first step of a mode of its own
+      // a `.env.<profile>` file is the first step of a profile of its own
       if (/>\s*\S*\.env\.(?!development\b|local\b)\w+/.test(c)) {
         return 'pass';
       }
@@ -689,13 +689,13 @@ export const tasks: Record<string, Task> = {
 
 // ── the end-to-end check ──────────────────────────────────────────────────────────────────────
 
-/** Whether a run ran the backend's tests in the test mode's session and saw them all pass. */
-export function testsPassedInTestMode(run: Run): boolean {
+/** Whether a run ran the backend's tests in the test profile's session and saw them all pass. */
+export function testsPassedInTestProfile(run: Run): boolean {
   return run.steps.some(
     (step) =>
       step.tool === 'Bash' &&
       stackctlCalls(step.text).some(
-        (call) => call.mode === 'test' && /^(run|exec)$/.test(sub(call)[0] ?? ''),
+        (call) => call.profile === 'test' && /^(run|exec)$/.test(sub(call)[0] ?? ''),
       ) && // oxfmt-ignore
       testsPassed(step.result ?? ''),
   );

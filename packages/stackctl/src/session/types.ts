@@ -23,7 +23,7 @@ export interface SessionPlan {
   menuCommands: Record<string, string[]>;
   /** The workspace-wide `urls`, normalized; absent when the config declares none. */
   topLevelUrls?: UrlLine[];
-  /** The `.env` files looked for at each scope; absent means the mode's own. */
+  /** The `.env` files looked for at each scope; absent means the profile's own. */
   envFiles?: EnvFileOrder;
   /** Variables whose `.env` or `env.vars` value may beat the ambient environment. */
   envOverride?: EnvOverride;

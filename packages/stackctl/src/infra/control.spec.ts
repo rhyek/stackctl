@@ -30,7 +30,7 @@ function control(
     },
     cli,
     track,
-    mode: 'test',
+    profile: 'test',
     cwd: process.cwd(),
     // oxlint-disable-next-line no-control-regex -- strips the color the log lines carry
     log: (service, text) => lines.push(`${service}: ${text.replace(/\x1b\[[0-9;]*m/g, '')}`),
@@ -93,7 +93,7 @@ describe('InfraControl', () => {
     expect(changed).toHaveBeenCalledTimes(1);
   });
 
-  test('runs the infra command with the mode, logs it, and refreshes the watch after', async () => {
+  test('runs the infra command with the profile, logs it, and refreshes the watch after', async () => {
     const { infra, lines, refresh } = control();
     infra.start();
     expect(infra.run('db', 'restart', BY)).toBe('accepted');
@@ -102,7 +102,7 @@ describe('InfraControl', () => {
     await settled(infra, 'db');
     expect(lines).toEqual([
       'db: ▶ running: stackctl infra restart -s db',
-      'db: args: infra restart -s db --mode test',
+      'db: args: infra restart -s db --profile test',
       'db: ✔ stackctl infra restart -s db finished',
     ]);
     expect(infra.status('db')).toBe('running');

@@ -9,8 +9,8 @@ import {
   ambientEnv,
   assignedNames,
   configEnvReader,
-  currentMode,
-  currentModeSource,
+  currentProfile,
+  currentProfileSource,
   dropInjectedEnv,
   envCandidatePaths,
   EnvFileSnapshot,
@@ -19,9 +19,9 @@ import {
   envKeysFile,
   hideDollars,
   packageEnvLayer,
-  publishModeSource,
+  publishProfileSource,
   resolveEnvFrom,
-  resolveMode,
+  resolveProfile,
   targetEnvLayer,
   workspaceEnvLayer,
 } from './env.js';
@@ -64,7 +64,7 @@ function withAmbient(vars: Record<string, string>, fn: () => void): void {
 }
 
 describe('envFileNames', () => {
-  test('is base → local → mode → mode.local, ascending precedence within a scope', () => {
+  test('is base → local → profile → profile.local, ascending precedence within a scope', () => {
     expect(envFileNames('development')).toEqual([
       '.env',
       '.env.local',
@@ -73,120 +73,127 @@ describe('envFileNames', () => {
     ]);
   });
 
-  test('substitutes any mode name', () => {
+  test('substitutes any profile name', () => {
     expect(envFileNames('test')).toEqual(['.env', '.env.local', '.env.test', '.env.test.local']);
     expect(envFileNames('apple')).toEqual(['.env', '.env.local', '.env.apple', '.env.apple.local']);
   });
 
-  test('defaults to the development mode when STACKCTL_MODE is unset', () => {
+  test('defaults to the development profile when STACKCTL_PROFILE is unset', () => {
     withAmbient({}, () => {
-      delete process.env.STACKCTL_MODE;
+      delete process.env.STACKCTL_PROFILE;
       expect(envFileNames()).toEqual(envFileNames('development'));
     });
   });
 });
 
-describe('resolveMode', () => {
-  test('reads --mode, --mode=, and -m', () => {
-    expect(resolveMode(['node', 'cli', '--mode', 'test']).mode).toBe('test');
-    expect(resolveMode(['node', 'cli', '--mode=test']).mode).toBe('test');
-    expect(resolveMode(['node', 'cli', '-m', 'test']).mode).toBe('test');
+describe('resolveProfile', () => {
+  test('reads --profile, --profile=, and -p', () => {
+    expect(resolveProfile(['node', 'cli', '--profile', 'test']).profile).toBe('test');
+    expect(resolveProfile(['node', 'cli', '--profile=test']).profile).toBe('test');
+    expect(resolveProfile(['node', 'cli', '-p', 'test']).profile).toBe('test');
   });
 
   test('accepts the flag before or after a subcommand', () => {
-    expect(resolveMode(['node', 'cli', '--mode', 'test', 'exec']).mode).toBe('test');
-    expect(resolveMode(['node', 'cli', 'exec', '--mode', 'test']).mode).toBe('test');
+    expect(resolveProfile(['node', 'cli', '--profile', 'test', 'exec']).profile).toBe('test');
+    expect(resolveProfile(['node', 'cli', 'exec', '--profile', 'test']).profile).toBe('test');
   });
 
   test('stops at the first `--` so the wrapped command keeps its own flags', () => {
-    // `--mode watch` here belongs to vitest, not stackctl.
+    // `--profile tools` and `-p demo` here belong to docker compose, not stackctl.
+    const compose = ['docker', 'compose', '--profile', 'tools', '-p', 'demo', 'up'];
     withAmbient({}, () => {
-      delete process.env.STACKCTL_MODE;
-      expect(resolveMode(['node', 'cli', 'exec', '--', 'vitest', '--mode', 'watch']).mode).toBe(
-        'development',
+      delete process.env.STACKCTL_PROFILE;
+      expect(resolveProfile(['node', 'cli', 'exec', '--', ...compose]).profile).toBe('development');
+      // ...but a profile before the `--` still counts.
+      expect(resolveProfile(['node', 'cli', '-p', 'test', 'exec', '--', ...compose]).profile).toBe(
+        'test',
       );
-      // ...but a mode before the `--` still counts.
-      expect(
-        resolveMode(['node', 'cli', '--mode', 'test', 'exec', '--', 'vitest', '--mode', 'watch'])
-          .mode,
-      ).toBe('test');
     });
   });
 
   test('stops at an `infra <provider>` passthrough, whose flags belong to the provider', () => {
     withAmbient({}, () => {
-      delete process.env.STACKCTL_MODE;
-      // `-m 2g` is `docker compose build`'s memory limit, not a stackctl mode.
+      delete process.env.STACKCTL_PROFILE;
+      // `-p demo` is Compose's project name, and `--profile=x` Compose's own profile.
       expect(
-        resolveMode(['node', 'cli', 'infra', 'docker-compose', 'build', '-m', '2g']).mode,
+        resolveProfile(['node', 'cli', 'infra', 'docker-compose', '-p', 'demo', 'ps']).profile,
       ).toBe('development');
       expect(
-        resolveMode(['node', 'cli', 'infra', 'docker-compose', 'run', '--mode=x', 'db']).mode,
+        resolveProfile(['node', 'cli', 'infra', 'docker-compose', 'run', '--profile=x', 'db'])
+          .profile,
       ).toBe('development');
-      // ...but a mode before the provider word still counts, in either position.
+      // ...but a profile before the provider word still counts, in either position.
       expect(
-        resolveMode(['node', 'cli', '-m', 'test', 'infra', 'docker-compose', 'build', '-m', '2g'])
-          .mode,
+        resolveProfile(['node', 'cli', '-p', 'test', 'infra', 'docker-compose', '-p', 'demo', 'ps'])
+          .profile,
       ).toBe('test');
       expect(
-        resolveMode(['node', 'cli', 'infra', '-m', 'test', 'docker-compose', '--mode', 'x']).mode,
+        resolveProfile(['node', 'cli', 'infra', '-p', 'test', 'docker-compose', '--profile', 'x'])
+          .profile,
       ).toBe('test');
-      // The other infra subcommands take the mode anywhere, like `exec`.
-      expect(resolveMode(['node', 'cli', 'infra', 'start', '--mode', 'test']).mode).toBe('test');
+      // The other infra subcommands take the profile anywhere, like `exec`.
+      expect(resolveProfile(['node', 'cli', 'infra', 'start', '--profile', 'test']).profile).toBe(
+        'test',
+      );
     });
   });
 
-  test('names each source, in order: the flag, STACKCTL_MODE, the CI default, development', () => {
+  test('names each source, in order: the flag, STACKCTL_PROFILE, the CI default, development', () => {
     const argv = ['node', 'cli'];
-    const flag = [...argv, '--mode', 'staging'];
-    const everything = { STACKCTL_MODE: 'qa', CI: 'true' };
-    expect(resolveMode(flag, everything)).toEqual({ mode: 'staging', source: 'flag' });
-    expect(resolveMode(argv, everything)).toEqual({ mode: 'qa', source: 'env' });
-    expect(resolveMode(argv, { CI: 'true' })).toEqual({ mode: 'test', source: 'ci' });
-    expect(resolveMode(argv, {})).toEqual({ mode: 'development', source: 'default' });
+    const flag = [...argv, '--profile', 'staging'];
+    const everything = { STACKCTL_PROFILE: 'qa', CI: 'true' };
+    expect(resolveProfile(flag, everything)).toEqual({ profile: 'staging', source: 'flag' });
+    expect(resolveProfile(argv, everything)).toEqual({ profile: 'qa', source: 'env' });
+    expect(resolveProfile(argv, { CI: 'true' })).toEqual({ profile: 'test', source: 'ci' });
+    expect(resolveProfile(argv, {})).toEqual({ profile: 'development', source: 'default' });
   });
 
   test('any CI value but false or 0 (in any case) is CI; an empty one is not', () => {
     const argv = ['node', 'cli'];
     for (const ci of ['true', '1', 'yes', 'TRUE', 'github']) {
-      expect(resolveMode(argv, { CI: ci })).toEqual({ mode: 'test', source: 'ci' });
+      expect(resolveProfile(argv, { CI: ci })).toEqual({ profile: 'test', source: 'ci' });
     }
     for (const ci of ['false', 'FALSE', 'False', '0', '']) {
-      expect(resolveMode(argv, { CI: ci })).toEqual({ mode: 'development', source: 'default' });
+      expect(resolveProfile(argv, { CI: ci })).toEqual({
+        profile: 'development',
+        source: 'default',
+      });
     }
   });
 
-  test('a flag after `--` is no flag: the mode comes from the environment', () => {
-    expect(resolveMode(['node', 'cli', 'exec', '--', 'vitest', '--mode', 'watch'], { CI: '1' })).toEqual({ mode: 'test', source: 'ci' }); // oxfmt-ignore
+  test('a flag after `--` is no flag: the profile comes from the environment', () => {
+    expect(resolveProfile(['node', 'cli', 'exec', '--', 'vitest', '--profile', 'watch'], { CI: '1' })).toEqual({ profile: 'test', source: 'ci' }); // oxfmt-ignore
   });
 
-  test('currentMode() and currentModeSource() follow the same order without a flag', () => {
-    vi.stubEnv('STACKCTL_MODE', '');
+  test('currentProfile() and currentProfileSource() follow the same order without a flag', () => {
+    vi.stubEnv('STACKCTL_PROFILE', '');
     vi.stubEnv('CI', 'true');
-    expect([currentMode(), currentModeSource()]).toEqual(['test', 'ci']);
+    expect([currentProfile(), currentProfileSource()]).toEqual(['test', 'ci']);
     vi.stubEnv('CI', '0');
-    expect([currentMode(), currentModeSource()]).toEqual(['development', 'default']);
-    vi.stubEnv('STACKCTL_MODE', 'qa');
-    expect([currentMode(), currentModeSource()]).toEqual(['qa', 'env']);
+    expect([currentProfile(), currentProfileSource()]).toEqual(['development', 'default']);
+    vi.stubEnv('STACKCTL_PROFILE', 'qa');
+    expect([currentProfile(), currentProfileSource()]).toEqual(['qa', 'env']);
     // What the CLI published wins: it saw the flag. It is the process's own, not the environment's.
-    publishModeSource('flag');
+    publishProfileSource('flag');
     try {
-      expect(currentModeSource()).toBe('flag');
+      expect(currentProfileSource()).toBe('flag');
       expect(Object.values(process.env)).not.toContain('flag');
     } finally {
-      publishModeSource(undefined);
+      publishProfileSource(undefined);
     }
     vi.unstubAllEnvs();
   });
 
-  test('rejects a mode name that is not safe as a filename segment', () => {
-    expect(() => resolveMode(['node', 'cli', '--mode', '../../etc'])).toThrow(/path separator/);
-    expect(() => resolveMode(['node', 'cli', '--mode', '..'])).toThrow(/mode name/);
-    expect(() => resolveMode(['node', 'cli', '--mode', ''])).toThrow(/mode name/);
+  test('rejects a profile name that is not safe as a filename segment', () => {
+    expect(() => resolveProfile(['node', 'cli', '--profile', '../../etc'])).toThrow(
+      /path separator/,
+    );
+    expect(() => resolveProfile(['node', 'cli', '--profile', '..'])).toThrow(/profile name/);
+    expect(() => resolveProfile(['node', 'cli', '--profile', ''])).toThrow(/profile name/);
   });
 
-  test('allows dots inside a mode name', () => {
-    expect(resolveMode(['node', 'cli', '--mode', 'e2e.ci']).mode).toBe('e2e.ci');
+  test('allows dots inside a profile name', () => {
+    expect(resolveProfile(['node', 'cli', '--profile', 'e2e.ci']).profile).toBe('e2e.ci');
   });
 });
 
@@ -210,7 +217,7 @@ describe('envCandidatePaths', () => {
     expect(paths).toEqual([path.join(cwd, '.env'), path.join(cwd, '.env.local')]);
   });
 
-  test('produces the full eight-path order for a mode', () => {
+  test('produces the full eight-path order for a profile', () => {
     const paths = envCandidatePaths({
       cwd,
       relativeDir: 'packages/api',
@@ -244,30 +251,30 @@ describe('resolveEnvFrom', () => {
     expect(env.KEY).toBe('pkg');
   });
 
-  test('a mode file outranks .env.local within a scope (Vite order)', () => {
+  test('a profile file outranks .env.local within a scope (Vite order)', () => {
     write('.env.local', 'KEY=local\n');
-    write('.env.development', 'KEY=mode\n');
+    write('.env.development', 'KEY=profile\n');
     const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
-    expect(env.KEY).toBe('mode');
+    expect(env.KEY).toBe('profile');
   });
 
-  test('.env.<mode>.local is the highest-ranked file in a scope', () => {
+  test('.env.<profile>.local is the highest-ranked file in a scope', () => {
     write('.env', 'KEY=base\n');
     write('.env.local', 'KEY=local\n');
-    write('.env.development', 'KEY=mode\n');
+    write('.env.development', 'KEY=profile\n');
     write('.env.development.local', 'KEY=modelocal\n');
     const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
     expect(env.KEY).toBe('modelocal');
   });
 
-  test('package-scope .env.local outranks a workspace-scope mode file (scope beats mode)', () => {
+  test('package-scope .env.local outranks a workspace-scope profile file (scope beats profile)', () => {
     write('.env.development', 'KEY=wsmode\n');
     write('packages/api/.env.local', 'KEY=pkglocal\n');
     const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
     expect(env.KEY).toBe('pkglocal');
   });
 
-  test('modes are exclusive: another mode does not load .env.development', () => {
+  test('profiles are exclusive: another profile does not load .env.development', () => {
     write('.env', 'KEY=base\n');
     write('.env.development', 'KEY=dev\nDEV_ONLY=yes\n');
     write('.env.test', 'KEY=test\n');
@@ -280,7 +287,7 @@ describe('resolveEnvFrom', () => {
     expect(env.DEV_ONLY).toBeUndefined();
   });
 
-  test('loads a custom mode', () => {
+  test('loads a custom profile', () => {
     write('.env.apple', 'KEY=apple\n');
     const { env } = resolveEnvFrom({
       cwd,
@@ -322,7 +329,7 @@ describe('resolveEnvFrom', () => {
   });
 });
 
-describe('resolveEnvFrom with a mode', () => {
+describe('resolveEnvFrom with a profile', () => {
   beforeEach(() => {
     write('.env', 'BASE=yes\n');
     write('.env.development', 'KEY=development\n');
@@ -330,38 +337,42 @@ describe('resolveEnvFrom with a mode', () => {
     write('.env.apple', 'KEY=apple\n');
   });
 
-  test("loads the given mode's files", () => {
-    withAmbient({ STACKCTL_MODE: 'development' }, () => {
-      const { env, files } = resolveEnvFrom({ cwd, mode: 'test' });
+  test("loads the given profile's files", () => {
+    withAmbient({ STACKCTL_PROFILE: 'development' }, () => {
+      const { env, files } = resolveEnvFrom({ cwd, profile: 'test' });
       expect(env).toEqual({ BASE: 'yes', KEY: 'test' });
       expect(files).toEqual([path.join(cwd, '.env'), path.join(cwd, '.env.test')]);
     });
   });
 
-  test('files take precedence over mode', () => {
-    const { env, candidates } = resolveEnvFrom({ cwd, mode: 'test', files: envFileNames('apple') });
+  test('files take precedence over profile', () => {
+    const { env, candidates } = resolveEnvFrom({
+      cwd,
+      profile: 'test',
+      files: envFileNames('apple'),
+    });
     expect(env.KEY).toBe('apple');
     expect(candidates).toEqual(envFileNames('apple').map((f) => path.join(cwd, f)));
   });
 
-  test('without a mode, follows STACKCTL_MODE', () => {
-    withAmbient({ STACKCTL_MODE: 'test' }, () => {
+  test('without a profile, follows STACKCTL_PROFILE', () => {
+    withAmbient({ STACKCTL_PROFILE: 'test' }, () => {
       expect(resolveEnvFrom({ cwd }).env.KEY).toBe('test');
     });
-    withAmbient({ STACKCTL_MODE: 'apple' }, () => {
+    withAmbient({ STACKCTL_PROFILE: 'apple' }, () => {
       expect(resolveEnvFrom({ cwd }).env.KEY).toBe('apple');
     });
   });
 
   test("without a relativeDir, reads only the workspace's files", () => {
     write('packages/api/.env.test', 'KEY=pkg\n');
-    const { env, candidates } = resolveEnvFrom({ cwd, mode: 'test' });
+    const { env, candidates } = resolveEnvFrom({ cwd, profile: 'test' });
     expect(env.KEY).toBe('test');
     expect(candidates).toEqual(envFileNames('test').map((f) => path.join(cwd, f)));
   });
 
-  test('rejects a mode that is not a plain name', () => {
-    expect(() => resolveEnvFrom({ cwd, mode: '../x' })).toThrow(/invalid --mode/);
+  test('rejects a profile that is not a plain name', () => {
+    expect(() => resolveEnvFrom({ cwd, profile: '../x' })).toThrow(/invalid --profile/);
   });
 });
 
@@ -371,10 +382,10 @@ describe('envFileOrder', () => {
     expect(envFileOrder('development')).toEqual({ workspace: own, service: own });
   });
 
-  test("places a file before 'mode' and one after 'local' where they belong", () => {
+  test("places a file before 'profile' and one after 'local' where they belong", () => {
     const order = envFileOrder('development', [
       { file: '.env.shared', after: 'local' },
-      { file: '.env.development.pre', before: 'mode' },
+      { file: '.env.development.pre', before: 'profile' },
     ]);
     expect(order.workspace).toEqual([
       '.env',
@@ -389,10 +400,10 @@ describe('envFileOrder', () => {
 
   test('keeps the array order of files on one anchor', () => {
     const order = envFileOrder('test', [
-      { file: '.env.test.pre', before: 'mode' },
-      { file: '.env.test.pre.local', before: 'mode' },
+      { file: '.env.test.pre', before: 'profile' },
+      { file: '.env.test.pre.local', before: 'profile' },
       { file: '.env.first', before: 'base' },
-      { file: '.env.last', after: 'modeLocal' },
+      { file: '.env.last', after: 'profileLocal' },
     ]);
     expect(order.workspace).toEqual([
       '.env.first',
@@ -408,8 +419,8 @@ describe('envFileOrder', () => {
 
   test('puts a file at only the scope it names', () => {
     const order = envFileOrder('development', [
-      { file: '.env.ports', before: 'mode', scope: 'workspace' },
-      { file: '.env.secrets', after: 'modeLocal', scope: 'service' },
+      { file: '.env.ports', before: 'profile', scope: 'workspace' },
+      { file: '.env.secrets', after: 'profileLocal', scope: 'service' },
     ]);
     expect(order.workspace).toContain('.env.ports');
     expect(order.workspace).not.toContain('.env.secrets');
@@ -420,8 +431,8 @@ describe('envFileOrder', () => {
 
 describe('resolveEnvFrom with additional files', () => {
   const pre = envFileOrder('development', [
-    { file: '.env.development.pre', before: 'mode' },
-    { file: '.env.development.pre.local', before: 'mode' },
+    { file: '.env.development.pre', before: 'profile' },
+    { file: '.env.development.pre.local', before: 'profile' },
   ]);
 
   test('expands a value derived from an input read in an additional file before it', () => {
@@ -433,8 +444,8 @@ describe('resolveEnvFrom with additional files', () => {
 
   test("gives a variable a later file of stackctl's own sets that file's value", () => {
     write('.env.development.pre', 'KEY=pre\n');
-    write('.env.development.local', 'KEY=mode-local\n');
-    expect(resolveEnvFrom({ cwd, files: pre }).env.KEY).toBe('mode-local');
+    write('.env.development.local', 'KEY=profile-local\n');
+    expect(resolveEnvFrom({ cwd, files: pre }).env.KEY).toBe('profile-local');
   });
 
   test('loads them in their place, at both scopes', () => {
@@ -451,7 +462,7 @@ describe('resolveEnvFrom with additional files', () => {
 
   test("does not look for a workspace-scope file in a service's directory", () => {
     const files = envFileOrder('development', [
-      { file: '.env.ports', before: 'mode', scope: 'workspace' },
+      { file: '.env.ports', before: 'profile', scope: 'workspace' },
     ]);
     write('.env.ports', 'P=root\n');
     write('packages/api/.env.ports', 'P=pkg\n');
@@ -462,8 +473,8 @@ describe('resolveEnvFrom with additional files', () => {
 
   test("reads the workspace's files for a service at the workspace root", () => {
     const files = envFileOrder('development', [
-      { file: '.env.ports', before: 'mode', scope: 'workspace' },
-      { file: '.env.secrets', before: 'mode', scope: 'service' },
+      { file: '.env.ports', before: 'profile', scope: 'workspace' },
+      { file: '.env.secrets', before: 'profile', scope: 'service' },
     ]);
     const { candidates } = resolveEnvFrom({ cwd, relativeDir: '.', files });
     expect(candidates).toContain(path.join(cwd, '.env.ports'));
@@ -1056,16 +1067,16 @@ describe('assignedNames', () => {
 });
 
 describe('STACKCTL_INJECTED_ENV', () => {
-  test("lists what a child gets that the shell didn't set, never STACKCTL_MODE", () => {
+  test("lists what a child gets that the shell didn't set, never STACKCTL_PROFILE", () => {
     vi.stubEnv('FROM_SHELL', 'shell');
-    vi.stubEnv('STACKCTL_MODE', 'test');
+    vi.stubEnv('STACKCTL_PROFILE', 'test');
     write('.env', 'FROM_FILE=1\nFROM_SHELL=file\n');
     const layer = workspaceEnvLayer({ cwd, vars: { FROM_CONFIG: 'x' } });
     const listed = layer.STACKCTL_INJECTED_ENV!.split(',');
     expect(listed).toEqual(expect.arrayContaining(['FROM_FILE', 'FROM_CONFIG']));
     // The shell's own value wins over the file, so the child's is the shell's: not listed.
     expect(listed).not.toContain('FROM_SHELL');
-    expect(listed).not.toContain('STACKCTL_MODE');
+    expect(listed).not.toContain('STACKCTL_PROFILE');
   });
 
   test("a service's layer lists its PORT", () => {
@@ -1073,16 +1084,16 @@ describe('STACKCTL_INJECTED_ENV', () => {
     expect(packageEnvLayer(pkg, { cwd }).STACKCTL_INJECTED_ENV!.split(',')).toContain('PORT');
   });
 
-  test('dropInjectedEnv removes the listed variables and the list, keeping STACKCTL_MODE', () => {
+  test('dropInjectedEnv removes the listed variables and the list, keeping STACKCTL_PROFILE', () => {
     const env: NodeJS.ProcessEnv = {
-      STACKCTL_INJECTED_ENV: 'A,PORT,STACKCTL_MODE',
+      STACKCTL_INJECTED_ENV: 'A,PORT,STACKCTL_PROFILE',
       A: 'outer',
       PORT: '3001',
-      STACKCTL_MODE: 'test',
+      STACKCTL_PROFILE: 'test',
       HOME: '/home/x',
     };
     dropInjectedEnv(env);
-    expect(env).toEqual({ STACKCTL_MODE: 'test', HOME: '/home/x' });
+    expect(env).toEqual({ STACKCTL_PROFILE: 'test', HOME: '/home/x' });
   });
 
   test("a layer carries the shell's value of each variable it replaces", () => {
@@ -1172,7 +1183,7 @@ describe('targetEnvLayer', () => {
     write('scripts/.env.ports', 'P=dir\n');
     write('.env.ports', 'P=ws\n');
     const files = envFileOrder('development', [
-      { file: '.env.ports', before: 'mode', scope: 'service' },
+      { file: '.env.ports', before: 'profile', scope: 'service' },
     ]);
     expect(withoutList(targetEnvLayer(dirTarget, { cwd, files }))).toEqual({ P: 'dir' });
   });

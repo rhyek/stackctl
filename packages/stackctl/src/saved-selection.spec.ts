@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, test, expect } from 'vitest';
 import { defineConfig } from './config.js';
-import { getStateDir, modeStateDir } from './log-files.js';
+import { getStateDir, profileStateDir } from './log-files.js';
 import {
   saveSelection,
   resolveSelectedNames,
@@ -13,15 +13,15 @@ import {
 describe('state + persistence', () => {
   /** The saved selection's current names, or `null` when nothing was saved. */
   const savedNames = () => readSelection()?.names ?? null;
-  /** The active mode's saved selection, its folder made. */
+  /** The active profile's saved selection, its folder made. */
   const selectionPath = () => {
-    fs.mkdirSync(modeStateDir(process.cwd()), { recursive: true });
-    return path.join(modeStateDir(process.cwd()), 'selection.json');
+    fs.mkdirSync(profileStateDir(process.cwd()), { recursive: true });
+    return path.join(profileStateDir(process.cwd()), 'selection.json');
   };
 
-  test("saves the selection in the mode's own folder", () => {
+  test("saves the selection in the profile's own folder", () => {
     defineConfig({ serviceRootDir: 'packages', services: { web: {} } });
-    const file = path.join(getStateDir(), 'modes', 'development', 'selection.json');
+    const file = path.join(getStateDir(), 'profiles', 'development', 'selection.json');
     fs.rmSync(file, { force: true });
     saveSelection(['web']);
     expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual(['web']);

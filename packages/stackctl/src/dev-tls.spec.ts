@@ -31,7 +31,7 @@ function certsIn(text: string): X509Certificate[] {
 describe('selfSignedTls', () => {
   test("makes a year's self-signed certificate per host, readable by the user alone", async () => {
     const dir = workspace();
-    await selfSignedTls({ workspaceDir: dir, mode: 'development', hosts: ['web.example.test'], domains: ['example.test'] }); // oxfmt-ignore
+    await selfSignedTls({ workspaceDir: dir, profile: 'development', hosts: ['web.example.test'], domains: ['example.test'] }); // oxfmt-ignore
     const file = path.join(tlsDir(dir), 'web.example.test.pem');
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     const [cert] = certsIn(fs.readFileSync(file, 'utf8'));
@@ -47,7 +47,7 @@ describe('selfSignedTls', () => {
 
   test('keeps a certificate that is still good, so the browser is not asked again', async () => {
     const dir = workspace();
-    const opts = { workspaceDir: dir, mode: 'development', hosts: ['web.example.test'], domains: ['example.test'] }; // oxfmt-ignore
+    const opts = { workspaceDir: dir, profile: 'development', hosts: ['web.example.test'], domains: ['example.test'] }; // oxfmt-ignore
     await selfSignedTls(opts);
     const file = path.join(tlsDir(dir), 'web.example.test.pem');
     const before = fs.readFileSync(file, 'utf8');
@@ -57,7 +57,7 @@ describe('selfSignedTls', () => {
 
   test("makes a new one for a file that isn't that host's, or isn't a certificate", async () => {
     const dir = workspace();
-    const opts = { workspaceDir: dir, mode: 'development', hosts: ['web.example.test', 'api.example.test'], domains: ['example.test'] }; // oxfmt-ignore
+    const opts = { workspaceDir: dir, profile: 'development', hosts: ['web.example.test', 'api.example.test'], domains: ['example.test'] }; // oxfmt-ignore
     await selfSignedTls(opts);
     const web = path.join(tlsDir(dir), 'web.example.test.pem');
     const api = path.join(tlsDir(dir), 'api.example.test.pem');
@@ -68,22 +68,22 @@ describe('selfSignedTls', () => {
     expect(certsIn(fs.readFileSync(api, 'utf8'))[0]!.subject).toBe('CN=api.example.test');
   });
 
-  test('writes the mode its trust file: every host, then what NODE_EXTRA_CA_CERTS already named', async () => {
+  test('writes the profile its trust file: every host, then what NODE_EXTRA_CA_CERTS already named', async () => {
     // oxfmt-ignore
     const dir = workspace();
     const corporate = path.join(dir, 'corporate.pem');
-    await selfSignedTls({ workspaceDir: workspace(), mode: 'x', hosts: ['corp.test'], domains: ['corp.test'] }); // oxfmt-ignore
+    await selfSignedTls({ workspaceDir: workspace(), profile: 'x', hosts: ['corp.test'], domains: ['corp.test'] }); // oxfmt-ignore
     fs.copyFileSync(path.join(tlsDir(dirs.at(-1)!), 'corp.test.pem'), corporate);
     vi.stubEnv('NODE_EXTRA_CA_CERTS', corporate);
     const { trustFile } = await selfSignedTls({
       workspaceDir: dir,
-      mode: 'test',
+      profile: 'test',
       hosts: ['web.example.test'],
       domains: ['example.test'],
     });
     expect(trustFile).toBe(trustFilePath(dir, 'test'));
-    // The mode's own, under modes/<mode>/; the certificates stay shared, under tls/.
-    expect(trustFile).toBe(path.join(dir, 'node_modules', '.stackctl', 'modes', 'test', 'trusted.pem')); // oxfmt-ignore
+    // The profile's own, under profiles/<profile>/; the certificates stay shared, under tls/.
+    expect(trustFile).toBe(path.join(dir, 'node_modules', '.stackctl', 'profiles', 'test', 'trusted.pem')); // oxfmt-ignore
     expect(tlsDir(dir)).toBe(path.join(dir, 'node_modules', '.stackctl', 'tls'));
     const text = fs.readFileSync(trustFile, 'utf8');
     expect(text).not.toContain('PRIVATE KEY');
@@ -163,7 +163,7 @@ describe('proxyTlsFor', () => {
 describe('configuredTls', () => {
   test("takes a PEM's text as it is, and reads a path relative to the workspace", async () => {
     const dir = workspace();
-    await selfSignedTls({ workspaceDir: dir, mode: 'x', hosts: [], domains: ['mine.test'] });
+    await selfSignedTls({ workspaceDir: dir, profile: 'x', hosts: [], domains: ['mine.test'] });
     const pem = fs.readFileSync(path.join(tlsDir(dir), 'mine.test.pem'), 'utf8');
     const key = pem.slice(0, pem.indexOf('-----BEGIN CERTIFICATE-----'));
     const cert = pem.slice(key.length);

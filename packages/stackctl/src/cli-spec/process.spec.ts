@@ -47,7 +47,7 @@ describe('what a command loads', () => {
 
   /** A session that has ended, its log saying `text`: the latest, with no session running. */
   const endedSession = (text: string) => {
-    const folder = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions', String(Date.now() + 60_000)); // oxfmt-ignore
+    const folder = path.join(ws, 'node_modules', '.stackctl', 'profiles', 'development', 'sessions', String(Date.now() + 60_000)); // oxfmt-ignore
     fs.mkdirSync(folder, { recursive: true });
     fs.writeFileSync(path.join(folder, 'logs.txt'), `${text}\n`);
   };
@@ -57,7 +57,7 @@ describe('what a command loads', () => {
     await stackctl(['exec', 'app', '--', 'true']);
     const { result, packages, evaluatedConfig } = await traced(['logs', '--path'], { cwd: app });
     expect(result.stdout).toMatch(
-      /node_modules\/\.stackctl\/modes\/development\/sessions\/\d+\/logs\.txt$/,
+      /node_modules\/\.stackctl\/profiles\/development\/sessions\/\d+\/logs\.txt$/,
     );
     expect(result.exitCode).toBe(0);
     expect(evaluatedConfig).toBe(false);
@@ -73,15 +73,26 @@ describe('what a command loads', () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("reset removes the mode's state without evaluating the config", async () => {
+  test("reset removes the profile's state without evaluating the config", async () => {
     await stackctl(['exec', 'app', '--', 'true']);
-    const { result, packages, evaluatedConfig } = await traced(['--mode', 'development', 'reset']);
+    const { result, packages, evaluatedConfig } = await traced([
+      '--profile',
+      'development',
+      'reset',
+    ]);
     expect(result.stdout).toBe(
-      'No development stackctl session is running.\nRemoved node_modules/.stackctl/modes/development/; its event log starts again with this reset.',
+      'No development stackctl session is running.\nRemoved node_modules/.stackctl/profiles/development/; its event log starts again with this reset.',
     );
     expect(result.exitCode).toBe(0);
-    // Nothing of the mode's state is left but the event log the reset opened with its own line.
-    const sessions = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+    // Nothing of the profile's state is left but the event log the reset opened with its own line.
+    const sessions = path.join(
+      ws,
+      'node_modules',
+      '.stackctl',
+      'profiles',
+      'development',
+      'sessions',
+    );
     expect(fs.readdirSync(path.dirname(sessions))).toEqual(['sessions']);
     const [folder] = fs.readdirSync(sessions);
     expect(fs.readdirSync(path.join(sessions, folder!))).toEqual(['events.jsonl']);
@@ -178,7 +189,10 @@ describe('the stackctl process', () => {
 });
 
 describe('deps as a callback', () => {
-  /** A workspace whose `api` runs `codegen` outside the `test` mode, and `gateway` in every mode. */
+  /**
+   * A workspace whose `api` runs `codegen` outside the `test` profile, and `gateway` in every
+   * profile.
+   */
   let dws: string;
   const marker = (name: string) => path.join(dws, 'packages', name, 'started');
 
@@ -193,7 +207,7 @@ describe('deps as a callback', () => {
         'export default defineConfig({',
         "  serviceRootDir: 'packages',",
         '  services: {',
-        "    api: { deps: ({ mode }) => (mode === 'test' ? ['gateway'] : ['codegen', 'gateway']) },",
+        "    api: { deps: ({ profile }) => (profile === 'test' ? ['gateway'] : ['codegen', 'gateway']) },",
         '    codegen: {},',
         '    gateway: {},',
         '  },',
@@ -218,14 +232,14 @@ describe('deps as a callback', () => {
     fs.rmSync(dws, { recursive: true, force: true });
   });
 
-  const depsIn = async (mode: string) => {
-    const result = await stackctl(['show-config', '--mode', mode], { cwd: dws });
+  const depsIn = async (profile: string) => {
+    const result = await stackctl(['show-config', '--profile', profile], { cwd: dws });
     expect(result.exitCode).toBe(0);
     return (JSON.parse(result.stdout) as { services: Record<string, { deps?: unknown }> }).services
       .api?.deps;
   };
 
-  test('show-config prints the deps each mode resolves', async () => {
+  test('show-config prints the deps each profile resolves', async () => {
     expect(await depsIn('development')).toEqual([
       { service: 'codegen', wait: false },
       { service: 'gateway', wait: false },
@@ -234,7 +248,7 @@ describe('deps as a callback', () => {
   });
 
   test('a test session does not start a dep only the development deps name', async () => {
-    const session = start('node', [cli, '--headless', '--mode', 'test', '-s', 'api'], {
+    const session = start('node', [cli, '--headless', '--profile', 'test', '-s', 'api'], {
       cwd: dws,
     });
     try {

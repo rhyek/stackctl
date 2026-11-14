@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import { type ControlClient, createControlClient, type SessionStatus } from './control-client.js';
-import { currentMode } from './env-base.js';
+import { currentProfile } from './env-base.js';
 import { isInsideWorkspace, isProcessAlive, processCwd, resolveRealPath } from './process-info.js';
 import type { ServiceName } from './register.js';
 import { readRunning, type RunningState } from './running.js';
 
 /**
- * A workspace's session in a mode, as its `modes/<mode>/running.json` and its control API tell it:
+ * A workspace's session in a profile, as its `profiles/<profile>/running.json` and its control API
+ * tell it:
  *
  * - `none`: no record, or one whose pid is gone or now belongs to a process outside the
  *   workspace — a record left behind, which the next session overwrites.
@@ -43,12 +44,12 @@ function realPath(p: string): string {
 }
 
 /**
- * This workspace's session in `mode` (the active one unless given): the one place a session
+ * This workspace's session in `profile` (the active one unless given): the one place a session
  * record is read and checked before anything trusts it. See {@link FoundSession}.
  */
 export async function findSession<P extends string = ServiceName>(opts: {
   workspaceDir: string;
-  mode?: string;
+  profile?: string;
   /** The config the caller loaded: a session started from another one is not this one. */
   configPath?: string;
   /** The config's `apiPort`, when it pins one: where the session listens, record or not. */
@@ -56,8 +57,8 @@ export async function findSession<P extends string = ServiceName>(opts: {
   /** How long a silent control API is waited on before it counts as hung; default 2 s. */
   settleMs?: number;
 }): Promise<FoundSession<P>> {
-  const mode = opts.mode ?? currentMode();
-  const record = readRunning(opts.workspaceDir, mode);
+  const profile = opts.profile ?? currentProfile();
+  const record = readRunning(opts.workspaceDir, profile);
   const sameConfig = (status: SessionStatus<P>) =>
     opts.configPath === undefined || realPath(status.configPath) === realPath(opts.configPath);
 
@@ -68,7 +69,7 @@ export async function findSession<P extends string = ServiceName>(opts: {
     }
     const client = createControlClient<P>(opts.apiPort);
     const status = await client.query.status();
-    return status && status.mode === mode && sameConfig(status)
+    return status && status.profile === profile && sameConfig(status)
       ? { kind: 'running', client, status, record: null }
       : { kind: 'none' };
   }
@@ -98,7 +99,7 @@ export async function findSession<P extends string = ServiceName>(opts: {
     answered &&
     answered.pid === record.pid &&
     answered.sessionId === (record.sessionId ?? null) &&
-    answered.mode === mode &&
+    answered.profile === profile &&
     sameConfig(answered)
   ) {
     return { kind: 'running', client, status: answered, record };
@@ -118,22 +119,22 @@ export async function findSession<P extends string = ServiceName>(opts: {
 /** Why an {@link FoundSession} `unresponsive` session can't be used, for an error message. */
 export function unresponsiveMessage(
   found: Extract<FoundSession, { kind: 'unresponsive' }>,
-  mode: string,
+  profile: string,
 ): string {
   return found.reason === 'hung'
-    ? `a ${mode} session is recorded as running (pid ${String(found.pid)}) but doesn't answer on its control API (port ${String(found.port)}): it looks hung`
-    : `a ${mode} session is recorded as running (pid ${String(found.pid)}), but what answers on its control API (port ${String(found.port)}) is another session: the pid may have been reused`;
+    ? `a ${profile} session is recorded as running (pid ${String(found.pid)}) but doesn't answer on its control API (port ${String(found.port)}): it looks hung`
+    : `a ${profile} session is recorded as running (pid ${String(found.pid)}), but what answers on its control API (port ${String(found.port)}) is another session: the pid may have been reused`;
 }
 
 /**
- * A {@link ControlClient} for the running session of **this** config in **this** mode, or
+ * A {@link ControlClient} for the running session of **this** config in **this** profile, or
  * `undefined` when {@link findSession} finds none answering.
  */
 export async function connectSessionControl(opts: {
   workspaceDir: string;
   /** Absolute path to the config the caller loaded. */
   configPath: string;
-  mode: string;
+  profile: string;
   /** The config's `apiPort`, when it pins one. */
   apiPort?: number;
 }): Promise<ControlClient | undefined> {
@@ -142,13 +143,13 @@ export async function connectSessionControl(opts: {
 }
 
 /**
- * A {@link ControlClient} for this workspace's running session in `mode` (the active one unless
+ * A {@link ControlClient} for this workspace's running session in `profile` (the active one unless
  * given), or null when {@link findSession} finds none answering.
  */
 export async function connectControlClient(
   cwd: string = process.cwd(),
-  mode?: string,
+  profile?: string,
 ): Promise<ControlClient | null> {
-  const found = await findSession({ workspaceDir: cwd, mode });
+  const found = await findSession({ workspaceDir: cwd, profile });
   return found.kind === 'running' ? found.client : null;
 }

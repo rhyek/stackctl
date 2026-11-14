@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startedByAgent } from '../agent-detection.js';
 import { getRegisteredPackages } from '../config.js';
-import { currentMode, isNested } from '../env-base.js';
+import { currentProfile, isNested } from '../env-base.js';
 import { RESOLVE_ENV_FD } from '../env.js';
 import { type OneOffCommandEntry, cliEventLog, commandBy, maskSecrets } from '../event-log.js';
 import {
@@ -104,7 +104,7 @@ export async function runOneOffCommand(
   // is the one recorded, so this writes nothing.
   const entry = isNested()
     ? { end: () => {} }
-    : cliEventLog(root, currentMode()).begin<OneOffCommandEntry>(
+    : cliEventLog(root, currentProfile()).begin<OneOffCommandEntry>(
         {
           type: 'one-off-command',
           kind: command.kind,
@@ -118,7 +118,7 @@ export async function runOneOffCommand(
   try {
     const result = await runOneOff(spec, {
       stdio: 'inherit',
-      logDir: oneOffLogDir(root, currentMode()),
+      logDir: oneOffLogDir(root, currentProfile()),
     });
     entry.end({ ok: result.exitCode === 0, exitCode: result.exitCode ?? null, signal: result.signal ?? null }); // oxfmt-ignore
     process.exit(
@@ -168,9 +168,9 @@ export async function printOneOffResolution(opts: ResolveOneOffRequest): Promise
   const result: OneOffResolution = {
     spec,
     ...oneOffEnvResolution(target, root, layer),
-    logDir: oneOffLogDir(root, currentMode()),
+    logDir: oneOffLogDir(root, currentProfile()),
     root,
-    mode: currentMode(),
+    profile: currentProfile(),
     where: whereOf(root, spec?.cwd ?? target.dir),
   };
   fs.writeSync(RESOLVE_ENV_FD, JSON.stringify(result));

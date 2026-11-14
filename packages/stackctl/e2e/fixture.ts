@@ -144,12 +144,12 @@ export function declineGuidance(ws: string): void {
   writeJson(path.join(ws, 'node_modules', '.stackctl', 'agent-guidance.json'), { declined: true });
 }
 
-/** The session record of `mode` in `ws`, or `null` when there is none. */
+/** The session record of `profile` in `ws`, or `null` when there is none. */
 export function sessionRecord(
   ws: string,
-  mode = 'development',
+  profile = 'development',
 ): { pid: number; port: number } | null {
-  const file = path.join(ws, 'node_modules', '.stackctl', 'modes', mode, 'running.json');
+  const file = path.join(ws, 'node_modules', '.stackctl', 'profiles', profile, 'running.json');
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8')) as { pid: number; port: number };
   } catch {

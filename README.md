@@ -7,7 +7,7 @@ during development. You describe your services once, in a small typed config fil
 starts the ones you pick and the services they need, brings up their infrastructure, loads
 their environment, and shows it all in one place.
 
-![stackctl's terminal UI running the example monorepo](https://raw.githubusercontent.com/rhyek/stackctl/main/docs/public/demo-1794683870.gif)
+![stackctl's terminal UI running the example monorepo](https://raw.githubusercontent.com/rhyek/stackctl/main/docs/public/demo-1794688431.gif)
 
 **Documentation: [stackctl.dev](https://stackctl.dev)**
 
@@ -21,12 +21,12 @@ their environment, and shows it all in one place.
   and `llms.txt`.
 - **Infra included.** Point it at your `docker-compose.yaml`: databases and brokers come up,
   get healthy and get migrated before your services start.
-- **Environment handled.** Layered `.env` files per workspace, service and mode, injected into
-  each process and reloaded when a file changes.
+- **Environment handled.** Layered `.env` files per workspace, service and profile, injected
+  into each process and reloaded when a file changes.
 - **A hostname per service.** An optional dev reverse proxy, over TLS too, with a status page
   while a service starts.
 - **The same stack in tests and CI.** `startStack()` for an e2e suite, `stackctl start --detach`
-  for a CI job, in a mode that runs beside your dev session.
+  for a CI job, in a profile that runs beside your dev session.
 - **An SDK for scripts and tests.** `startStack()`, `exec()`, `run()` and `resolveEnv()` give your
   own code what the CLI gives a shell, typed and with the same environment.
 - **Any language.** A service is a `dev` script in `package.json` or a `Makefile` target.

@@ -40,8 +40,8 @@ export interface InfraControlOptions {
   watch?: (onStates: (states: Map<string, InfraServiceState>) => void) => InfraWatch;
   /** The command that runs the stackctl CLI: `[node, cli.js]`. */
   cli: string[];
-  /** The session's mode, handed to every `infra` command it runs. */
-  mode: string;
+  /** The session's profile, handed to every `infra` command it runs. */
+  profile: string;
   /** The workspace root, where the commands run. */
   cwd: string;
   /** Receives every line an action prints, and the lines marking where it starts and ends. */
@@ -199,7 +199,7 @@ export class InfraControl {
         this.opts.log(service, text, isError);
       }
     };
-    const proc = runCommand(node!, [...cliArgs, ...args, '--mode', this.opts.mode], {
+    const proc = runCommand(node!, [...cliArgs, ...args, '--profile', this.opts.profile], {
       cwd: this.opts.cwd,
       env: { ...colorEnv(), [EVENT_BY_ENV]: JSON.stringify(by) },
       // Its own process group, so a shutdown can take down whatever it spawned with it.

@@ -12,16 +12,16 @@ import type { OneOffResult } from './run.js';
 export type { OneOffResult } from './run.js';
 
 /** The options of {@link OneOffOptions}, checked at runtime since a JavaScript caller bypasses the types. */
-const ONE_OFF_OPTIONS = ['mode', 'target', 'workspaceDir', 'stdio'];
+const ONE_OFF_OPTIONS = ['profile', 'target', 'workspaceDir', 'stdio'];
 
 /** What `exec()` and `run()` both take. */
 export type OneOffOptions = {
   /**
-   * The mode, selecting the `.env.<mode>` files to load. Default: this process's
-   * `STACKCTL_MODE` when set (a process a stackctl started keeps its mode), else `'test'` in CI
-   * (`CI` set, and not `false` or `0`), else `'development'`.
+   * The profile, selecting the `.env.<profile>` files to load. Default: this process's
+   * `STACKCTL_PROFILE` when set (a process a stackctl started keeps its profile), else `'test'` in
+   * CI (`CI` set, and not `false` or `0`), else `'development'`.
    */
-  mode?: string;
+  profile?: string;
   /**
    * The target: a service's name or a path, relative to the current directory (or to
    * `workspaceDir` when given). A path inside a service is that service. Omitted, the current
@@ -108,7 +108,7 @@ async function runResolved(
   asked: Asked,
 ): Promise<OneOffResult> {
   const args = resolverArgs(options, request);
-  const { spec, logDir, root, mode, where } = await resolveInChild(args);
+  const { spec, logDir, root, profile, where } = await resolveInChild(args);
   if (!spec) {
     throw new Error('stackctl: the resolver returned no command');
   }
@@ -122,7 +122,7 @@ async function runResolved(
   // Inside a command stackctl runs, that command is the one recorded.
   const entry = isNested()
     ? { end: () => {} }
-    : cliEventLog(root, mode).begin<OneOffCommandEntry>(
+    : cliEventLog(root, profile).begin<OneOffCommandEntry>(
         {
           type: 'one-off-command',
           kind: asked.kind,

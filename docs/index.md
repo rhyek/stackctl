@@ -20,7 +20,7 @@ hero:
       link: https://github.com/rhyek/stackctl
 
 demo:
-  src: /casts/demo-1794683878.cast
+  src: /casts/demo-1794688440.cast
   alt: stackctl's terminal UI running the example monorepo
 
 config:
@@ -34,8 +34,8 @@ agents:
   details: It works from the config you wrote, so it knows what your stack is made of. It can start, stop and restart your services, check which are healthy, run your tests in a session of their own and read the logs when something breaks.
   linkText: stackctl for coding agents
   link: /ai/overview
-  src: /casts/agent-tests-1794524604.cast
-  alt: Claude Code starts a test-mode session, runs the backend's tests in it and stops it
+  src: /casts/agent-tests-1794688538.cast
+  alt: Claude Code starts a test-profile session, runs the backend's tests in it and stops it
 
 features:
   - icon: 🧩
@@ -56,7 +56,7 @@ features:
     link: /config/infra
   - icon: 🌱
     title: Environment handled
-    details: Layered .env files per workspace, service and mode, injected into each process and reloaded when a file changes.
+    details: Layered .env files per workspace, service and profile, injected into each process and reloaded when a file changes.
     link: /guide/env
   - icon: 🌐
     title: A hostname per service

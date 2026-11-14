@@ -14,7 +14,7 @@ export interface InfraReporter {
  * Used by the `infra` commands and by `--headless`.
  */
 export function createInfraReporter(opts: {
-  mode: string;
+  profile: string;
   write?: (line: string) => void;
   now?: () => number;
 }): InfraReporter {
@@ -31,7 +31,7 @@ export function createInfraReporter(opts: {
         width = Math.max(width, ...event.services.map((s) => s.length));
         const what = event.action === 'destroy' ? 'infra destroy' : 'infra';
         write(
-          `${chalk.blue('▶')} ${what} ${chalk.dim(`(${opts.mode})`)}: ${event.services.join(', ') || chalk.dim('no services')}`,
+          `${chalk.blue('▶')} ${what} ${chalk.dim(`(${opts.profile})`)}: ${event.services.join(', ') || chalk.dim('no services')}`,
         );
         return;
       }

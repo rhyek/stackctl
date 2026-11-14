@@ -1,8 +1,8 @@
 ---
-description: How stackctl loads .env files per workspace, service and mode, which value wins, the variables it sets itself, and how modes keep sessions apart.
+description: How stackctl loads .env files per workspace, service and profile, which value wins, the variables it sets itself, and how profiles keep sessions apart.
 ---
 
-# Environment and modes
+# Environment and profiles
 
 stackctl loads `.env` files for every service it runs and injects them into that service's
 process. You don't call `dotenv` anywhere. Parsing is done by
@@ -27,15 +27,15 @@ At each scope, in this order, each overriding the one before:
 
 1. `.env`
 2. `.env.local`
-3. `.env.<mode>`
-4. `.env.<mode>.local`
+3. `.env.<profile>`
+4. `.env.<profile>.local`
 
-So a mode's files win over the generic ones, `.env.local` included, and each `.local` file wins
-over the same file without it. This is
+So a profile's files win over the generic ones, `.env.local` included, and each `.local` file
+wins over the same file without it. This is
 [Vite's order](https://vite.dev/guide/env-and-mode#env-files).
 
-Only files that exist are read. Commit `.env` and `.env.<mode>`, and keep `.env*.local` out of
-git for personal overrides. To commit secrets too, encrypt them with dotenvx and turn on
+Only files that exist are read. Commit `.env` and `.env.<profile>`, and keep `.env*.local` out
+of git for personal overrides. To commit secrets too, encrypt them with dotenvx and turn on
 [`env.decrypt`](../config/env.md#envdecrypt).
 
 ## Which value wins
@@ -53,27 +53,28 @@ inherited one, say), name them in [`env.override`](../config/env.md#envoverride)
 files of your own between stackctl's, use
 [`env.additionalFiles`](../config/env.md#envadditionalfiles).
 
-## Modes
+## Profiles
 
-A mode picks the `.env.<mode>` files, and gives the session its own state.
+A profile picks the `.env.<profile>` files, and gives the session its own state.
 
 ```sh
-sctl              # .env, .env.local, .env.development, .env.development.local
-sctl --mode test  # .env, .env.local, .env.test, .env.test.local
+sctl                 # .env, .env.local, .env.development, .env.development.local
+sctl --profile test  # .env, .env.local, .env.test, .env.test.local
 ```
 
-- **Without `--mode`**, the mode is `STACKCTL_MODE` if set, else `test` in CI (`CI` set and not
-  `false` or `0`), else `development`.
+- **Without `--profile`**, the profile is `STACKCTL_PROFILE` if set, else `test` in CI (`CI` set
+  and not `false` or `0`), else `development`.
 - **Any name works**: `test`, `staging`, `e2e`.
-- **Modes are exclusive.** `--mode test` does not read `.env.development`. Put shared values
-  in `.env`.
-- **One session per mode.** A `test` session runs next to your `development` one, each with its
-  own processes, [infra containers](../config/infra.md#modes) and state under
-  `node_modules/.stackctl/modes/<mode>/`. Give each mode its own ports in its `.env.<mode>`.
-- **`NODE_ENV` is left alone.** Set it in the mode's file if you want it: `NODE_ENV=test` in
+- **Profiles are exclusive.** `--profile test` does not read `.env.development`. Put shared
+  values in `.env`.
+- **One session per profile.** A `test` session runs next to your `development` one, each with
+  its own processes, [infra containers](../config/infra.md#profiles) and state under
+  `node_modules/.stackctl/profiles/<profile>/`. Give each profile its own ports in its
+  `.env.<profile>`.
+- **`NODE_ENV` is left alone.** Set it in the profile's file if you want it: `NODE_ENV=test` in
   `.env.test`.
 
-Starting a second session in the *same* mode
+Starting a second session in the *same* profile
 [takes over](../reference/cli.md#taking-over-a-running-session) the first.
 
 ## Variables stackctl sets
@@ -84,7 +85,7 @@ Every process stackctl starts gets these:
 | ------------------------ | ----------------------------------------------------------------------------- |
 | `PORT`                   | The service's [`port`](../config/services.md#port).                           |
 | `PUBLIC_ORIGIN`          | Where a browser reaches the service. See [URLs and origins](../config/urls.md). |
-| `STACKCTL_MODE`          | The active mode.                                                              |
+| `STACKCTL_PROFILE`       | The active profile.                                                           |
 | `STACKCTL_WORKSPACE_DIR` | The workspace root: the directory holding `stackctl.config.ts`.               |
 | `STACKCTL_CWD`           | The directory stackctl was invoked in.                                        |
 | `NODE_EXTRA_CA_CERTS`    | With the proxy's [`tls: true`](../config/reverse-proxy.md#tls): its certificates. |
@@ -112,14 +113,14 @@ when stackctl starts. Restart stackctl to pick those up.
   environment.
 - [`resolveEnv()`](../reference/sdk.md#resolveenv) returns it to a script.
 - [`sctl show-config`](../reference/cli.md#stackctl-show-config) lists, under `envFiles`,
-  the files a mode looks for. Check there when a variable is missing.
+  the files a profile looks for. Check there when a variable is missing.
 
 ## Details
 
 - **`${VAR}` expands to the value that wins** for that variable, whichever file sets it: the
   shell's, or the highest-ranked file's, as in Vite. So `.env` can hold
-  `DATABASE_URL=postgres://localhost:${DB_PORT}/app` while each `.env.<mode>` sets `DB_PORT`,
-  and a git worktree's `.env.<mode>.local` sets its own.
+  `DATABASE_URL=postgres://localhost:${DB_PORT}/app` while each `.env.<profile>` sets `DB_PORT`,
+  and a git worktree's `.env.<profile>.local` sets its own.
 - **A reference to a variable's own name sees the value it overrides**: a lower-ranked file's,
   or the shell's. `NODE_OPTIONS="$NODE_OPTIONS --flag"` extends it, file by file, with
   [`env.override`](../config/env.md#envoverride) when the shell sets it.
@@ -132,6 +133,6 @@ when stackctl starts. Restart stackctl to pick those up.
   of the variables stackctl gave it, and `STACKCTL_REPLACED_ENV`, the shell's values of those
   it changed. A stackctl started from that process (an e2e suite that calls `startStack()`,
   say) drops the first and restores the second, so its own `.env` files load as from the shell
-  the outer one was started in. It stays in the outer mode unless `--mode` says otherwise.
+  the outer one was started in. It stays in the outer profile unless `--profile` says otherwise.
   It also gets `STACKCTL_NESTED`, which makes an `sctl exec` or `sctl run` there part of the
   outer command (see [One-off commands](./commands.md#output-and-exit-code)).

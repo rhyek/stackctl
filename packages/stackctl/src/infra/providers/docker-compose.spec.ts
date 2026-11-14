@@ -60,8 +60,8 @@ function setup(
     { projectName: 'example-test', readyTimeout: 200, services: {}, ...resolved },
     {
       workspaceDir: WS,
-      mode: 'test',
-      config: { envMode: 'test' } as Config<string>,
+      profile: 'test',
+      config: { profile: 'test' } as Config<string>,
       // Only what the test reads: the variables stackctl sets come from the manager.
       envs: { DB_PORT: '21052' } as Record<string, string> as Envs,
       tokens: {},

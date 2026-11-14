@@ -7,12 +7,13 @@ import { isProcessAlive } from './process-info.js';
 import { readRunning } from './running.js';
 import { currentSessionId, sessionEventsPath, writeTargetSessionId } from './session-files.js';
 
-// A session's event log, `node_modules/.stackctl/modes/<mode>/sessions/<id>/events.jsonl`: one JSON
-// object per line, its `type` first, for whatever changes the mode's stack. The session writes its
-// state changes, its lifecycle and what its keys, control API and start-up infra step do; a stackctl
-// command that acts without the session writes its own, to the running session's file or, with none
-// running, the latest one's. `GET /events` streams the same lines (control-server.ts tails the
-// session's file). Kept free of the config, so a CLI command loads only this.
+// A session's event log, `node_modules/.stackctl/profiles/<profile>/sessions/<id>/events.jsonl`:
+// one JSON object per line, its `type` first, for whatever changes the profile's stack. The session
+// writes its state changes, its lifecycle and what its keys, control API and start-up infra step
+// do; a stackctl command that acts without the session writes its own, to the running session's
+// file or, with none running, the latest one's. `GET /events` streams the same lines
+// (control-server.ts tails the session's file). Kept free of the config, so a CLI command loads
+// only this.
 
 /** Who asked for a command. */
 export type EventBy =
@@ -122,8 +123,8 @@ export type EventEntry = StateEntry | CommandEntry | LifecycleEntry;
 export interface EventEnvelope {
   /** ISO 8601 with the machine's offset, to the ms. */
   time: string;
-  mode: string;
-  /** The id of the mode's running session, or `null`. */
+  profile: string;
+  /** The id of the profile's running session, or `null`. */
   sessionId: string | null;
   /** The process that wrote the line. */
   pid: number;
@@ -195,9 +196,9 @@ const MAX_BYTES = 5 * 1024 * 1024;
  * The event log `stackctl events` and `status` read: the running session's, else the latest
  * one's. `null` before any session ran.
  */
-export function currentEventsPath(root: string, mode: string): string | null {
-  const id = currentSessionId(root, mode);
-  return id === null ? null : sessionEventsPath(root, mode, id);
+export function currentEventsPath(root: string, profile: string): string | null {
+  const id = currentSessionId(root, profile);
+  return id === null ? null : sessionEventsPath(root, profile, id);
 }
 
 /** `date` as ISO 8601 in the machine's time zone, with its offset, to the ms. */
@@ -246,8 +247,11 @@ export class EventLog {
     private readonly opts: {
       /** The file it appends to: a session's `events.jsonl`, chosen once, so a command's lines share one. */
       file: string;
-      mode: string;
-      /** The mode's running session, asked at each write: a session's id is known only once it has one. */
+      profile: string;
+      /**
+       * The profile's running session, asked at each write: a session's id is known only once it
+       * has one.
+       */
       sessionId: () => string | null;
       maxBytes?: number;
     },
@@ -259,7 +263,7 @@ export class EventLog {
     const line: EventLine = {
       ...entry,
       time: localTime(new Date()),
-      mode: this.opts.mode,
+      profile: this.opts.profile,
       sessionId: this.opts.sessionId(),
       pid: process.pid,
     };
@@ -324,15 +328,15 @@ export class EventLog {
 
 /**
  * The event log a stackctl command writes to, from the workspace at `root`: the running session's,
- * else the latest one's, chosen now. Each line carries the id of the mode's session if one is
+ * else the latest one's, chosen now. Each line carries the id of the profile's session if one is
  * alive, else `null`.
  */
-export function cliEventLog(root: string, mode: string): EventLog {
+export function cliEventLog(root: string, profile: string): EventLog {
   return new EventLog({
-    file: sessionEventsPath(root, mode, writeTargetSessionId(root, mode)),
-    mode,
+    file: sessionEventsPath(root, profile, writeTargetSessionId(root, profile)),
+    profile,
     sessionId: () => {
-      const running = readRunning(root, mode);
+      const running = readRunning(root, profile);
       return running && isProcessAlive(running.pid) ? (running.sessionId ?? null) : null;
     },
   });

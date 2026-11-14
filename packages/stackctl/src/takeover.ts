@@ -1,14 +1,14 @@
 import { startedByAgent } from './agent-detection.js';
 import { createControlClient, type SessionStatus } from './control-client.js';
-import { currentMode } from './env-base.js';
+import { currentProfile } from './env-base.js';
 import { findSession, type FoundSession, unresponsiveMessage } from './find-session.js';
 import { canSignal } from './process-info.js';
 import { clearRecordAdvice, isRecordedSession } from './session-identity.js';
 
 /**
  * Deciding whether a starting session may quit the one already running for this project in the
- * same mode. A project runs one session per mode: a session in another mode runs alongside this
- * one, so it is never quit, and never asked about.
+ * same profile. A project runs one session per profile: a session in another profile runs alongside
+ * this one, so it is never quit, and never asked about.
  *
  * This runs as a **preflight**, before acquisition (`session-takeover.ts`) — it has to.
  * Acquisition doesn't only hand off the control port: right after, it frees the configured dev
@@ -63,8 +63,8 @@ export type PreflightOutcome = { ok: true } | { ok: false; message: string };
 export interface PreflightOptions {
   /** Absolute path to this session's config — identifies "the same project". */
   configPath: string;
-  /** This session's mode (the active one unless given) — only a session in it is quit. */
-  mode?: string;
+  /** This session's profile (the active one unless given) — only a session in it is quit. */
+  profile?: string;
   /** `--kill-others`. */
   killOthers: boolean;
   /** An explicit `apiPort` from the config, which pins where a running instance would be. */
@@ -87,10 +87,10 @@ export interface PreflightDeps {
     apiPortOverride: number | undefined,
   ): Promise<SessionStatus | UnresponsiveSession | null>;
   /**
-   * Whether the silent `pid` is the session `mode`'s record in the workspace at `cwd` names; see
+   * Whether the silent `pid` is the session `profile`'s record in the workspace at `cwd` names; see
    * `isRecordedSession`. Only `yes` lets `--kill-others` kill it.
    */
-  isRecordedSession(cwd: string, mode: string, pid: number): Promise<'yes' | 'no' | 'unknown'>;
+  isRecordedSession(cwd: string, profile: string, pid: number): Promise<'yes' | 'no' | 'unknown'>;
   /** Kills an unresponsive session's process tree, `--kill-others` having said to. */
   stopUnresponsive(session: UnresponsiveSession): Promise<void>;
   /** Asks the person at the keyboard; `false` covers "no" and "cancelled". */
@@ -108,8 +108,8 @@ const defaultDeps: PreflightDeps = {
     return found.kind === 'running' ? found.status : found.kind === 'unresponsive' ? found : null;
   },
   // A pid this user can't signal is another user's process now: never the session.
-  isRecordedSession: async (cwd, mode, pid) =>
-    canSignal(pid) ? isRecordedSession(cwd, mode, pid) : 'unknown',
+  isRecordedSession: async (cwd, profile, pid) =>
+    canSignal(pid) ? isRecordedSession(cwd, profile, pid) : 'unknown',
   async stopUnresponsive(session) {
     // Loaded here: only a takeover of a hung session needs it.
     const { killProcessTrees } = await import('./session-takeover.js');
@@ -119,7 +119,7 @@ const defaultDeps: PreflightDeps = {
     // Loaded here, not up top: most sessions start with no other one to ask about.
     const { confirm, isCancel } = await import('@clack/prompts');
     const answer = await confirm({
-      message: `Another ${status.mode} stackctl session is running for this project (pid ${status.pid}). Quit it and start this one?`,
+      message: `Another ${status.profile} stackctl session is running for this project (pid ${status.pid}). Quit it and start this one?`,
       initialValue: true,
     });
     return !isCancel(answer) && answer;
@@ -136,7 +136,7 @@ const defaultDeps: PreflightDeps = {
 export async function preflightTakeover(opts: PreflightOptions): Promise<PreflightOutcome> {
   const deps = { ...defaultDeps, ...opts.deps };
   const cwd = opts.cwd ?? process.cwd();
-  const mode = opts.mode ?? currentMode();
+  const profile = opts.profile ?? currentProfile();
 
   const running = await deps.queryRunning(cwd, opts.apiPortOverride);
   // Recorded alive in this workspace, but not answering as itself: nothing can ask it to quit.
@@ -144,7 +144,7 @@ export async function preflightTakeover(opts: PreflightOptions): Promise<Preflig
     if (!opts.killOthers) {
       return {
         ok: false,
-        message: `${unresponsiveMessage(running, mode)}. Stop it, or re-run with --kill-others to kill it and take over.`,
+        message: `${unresponsiveMessage(running, profile)}. Stop it, or re-run with --kill-others to kill it and take over.`,
       };
     }
     // Killed only once it is known to be the session: a record outlives a crash or a reboot, and
@@ -152,17 +152,17 @@ export async function preflightTakeover(opts: PreflightOptions): Promise<Preflig
     // session answers on isn't the session either.
     if (
       running.reason === 'mismatch' ||
-      (await deps.isRecordedSession(cwd, mode, running.pid)) !== 'yes'
+      (await deps.isRecordedSession(cwd, profile, running.pid)) !== 'yes'
     ) {
-      return { ok: false, message: unverifiedMessage(cwd, mode, running.pid) };
+      return { ok: false, message: unverifiedMessage(cwd, profile, running.pid) };
     }
     await deps.stopUnresponsive(running);
     return { ok: true };
   }
   // Nothing running, something running for a *different* config, or this project's session in
-  // another mode — all of which the handoff protocol leaves alone anyway (it relocates rather
-  // than quitting them). A pinned `apiPort` held by another mode's session fails there instead.
-  if (!running || running.configPath !== opts.configPath || running.mode !== mode) {
+  // another profile — all of which the handoff protocol leaves alone anyway (it relocates rather
+  // than quitting them). A pinned `apiPort` held by another profile's session fails there instead.
+  if (!running || running.configPath !== opts.configPath || running.profile !== profile) {
     return { ok: true };
   }
 
@@ -185,8 +185,8 @@ export async function preflightTakeover(opts: PreflightOptions): Promise<Preflig
 }
 
 /** The refusal to kill a silent session that can't be confirmed as the recorded one. */
-function unverifiedMessage(cwd: string, mode: string, pid: number): string {
-  return `a ${mode} session is recorded as running (pid ${String(pid)}), but stackctl can't confirm that process is that session, so it won't kill it. ${clearRecordAdvice(cwd, mode)} and start again.`; // oxfmt-ignore
+function unverifiedMessage(cwd: string, profile: string, pid: number): string {
+  return `a ${profile} session is recorded as running (pid ${String(pid)}), but stackctl can't confirm that process is that session, so it won't kill it. ${clearRecordAdvice(cwd, profile)} and start again.`; // oxfmt-ignore
 }
 
 /**
@@ -199,7 +199,7 @@ function blockedMessage(running: SessionStatus): string {
     ? 'it was started by a coding agent'
     : 'it was not started by a coding agent, so someone is likely watching it in another terminal';
   return [
-    `Another ${running.mode} stackctl session is already running for this project (pid ${running.pid}), and ${whose}.`,
+    `Another ${running.profile} stackctl session is already running for this project (pid ${running.pid}), and ${whose}.`,
     '',
     'stackctl will not quit it automatically, and there is no terminal here to ask.',
     '',

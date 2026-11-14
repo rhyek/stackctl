@@ -21,7 +21,7 @@ import { loadConfigOrExit } from './workspace.js';
 // acquisition, so a running dev session is never disturbed.
 
 /** The infra manager for the loaded config, exiting with a hint when it declares no `infra`. */
-async function loadInfraOrExit(): Promise<{ manager: InfraManager; mode: string }> {
+async function loadInfraOrExit(): Promise<{ manager: InfraManager; profile: string }> {
   await loadConfigOrExit();
   const config = getLoadedConfig();
   const manager = config ? await InfraManager.fromConfig(config) : null;
@@ -31,7 +31,7 @@ async function loadInfraOrExit(): Promise<{ manager: InfraManager; mode: string 
     );
     process.exit(1);
   }
-  return { manager, mode: config.envMode };
+  return { manager, profile: config.profile };
 }
 
 /**
@@ -106,15 +106,15 @@ export async function runInfra(
   services: string[],
   invocationCwd: string,
 ): Promise<never> {
-  const { manager, mode } = await loadInfraOrExit();
+  const { manager, profile } = await loadInfraOrExit();
   // A `kill <pid>` of this command ends the Compose run or migration it is waiting on, too.
   endCommandsOnSignals();
   const root = process.cwd();
-  const entry = cliEventLog(root, mode).begin<InfraCommandEntry>(
+  const entry = cliEventLog(root, profile).begin<InfraCommandEntry>(
     { type: 'infra-command', action: command, requested: services },
     commandBy(root, { agent: startedByAgent(), invocationCwd }),
   );
-  const plain = createInfraReporter({ mode });
+  const plain = createInfraReporter({ profile });
   let summary: InfraRunSummary | null = null;
   let error: string | undefined;
   const reporter: InfraReporter = {
@@ -144,7 +144,7 @@ export async function runInfra(
 }
 
 /**
- * `infra <provider> …`: the provider's own tool, bound to this project and mode. Runs in the
+ * `infra <provider> …`: the provider's own tool, bound to this project and profile. Runs in the
  * directory stackctl was invoked from, so a relative path in the arguments means what the user
  * typed, and exits with the tool's exit code.
  */
@@ -153,12 +153,12 @@ export async function runInfraPassthrough(
   args: string[],
   invocationCwd: string,
 ): Promise<never> {
-  const { manager, mode } = await loadInfraOrExit();
+  const { manager, profile } = await loadInfraOrExit();
   // What only reads (`ps`, `logs`) leaves no line.
   const root = process.cwd();
   const entry = isReadOnlyCompose(args)
     ? null
-    : cliEventLog(root, mode).begin<ComposeCommandEntry>(
+    : cliEventLog(root, profile).begin<ComposeCommandEntry>(
         { type: 'compose-command', args: maskSecrets(args) },
         commandBy(root, { agent: startedByAgent(), invocationCwd }),
       );

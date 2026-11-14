@@ -12,8 +12,8 @@ function startServer(handler: http.RequestListener): Promise<number> {
   );
 }
 
-// Pinned, so a run from inside a stackctl session of another mode can't change the answers.
-beforeEach(() => vi.stubEnv('STACKCTL_MODE', 'development'));
+// Pinned, so a run from inside a stackctl session of another profile can't change the answers.
+beforeEach(() => vi.stubEnv('STACKCTL_PROFILE', 'development'));
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(
@@ -31,10 +31,10 @@ const SNAPSHOT = {
   pid: 4242,
   sessionId: 'b1946ac9-2e5f-4f0b-9d3e-1c6f0a9e3d21',
   configPath: '/ws/stackctl.config.ts',
-  mode: 'test',
-  modeSource: 'flag',
+  profile: 'test',
+  profileSource: 'flag',
   startedByAgent: true,
-  logFile: '/ws/node_modules/.stackctl/modes/test/logs/171.log',
+  logFile: '/ws/node_modules/.stackctl/profiles/test/logs/171.log',
   services: { web: 'running' },
   ready: { web: true },
   infra: { db: 'running' },
@@ -78,22 +78,13 @@ describe('createControlClient', () => {
     });
   });
 
-  test('query.status() reads a missing mode as development (an instance from before per-mode sessions)', async () => {
-    const { mode: _omitted, ...oldShape } = SNAPSHOT;
+  test('query.status() reads a missing profileSource as null', async () => {
+    const { profileSource: _omitted, ...oldShape } = SNAPSHOT;
     const port = await startServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(oldShape));
     });
-    expect(await createControlClient(port).query.status()).toEqual({ ...oldShape, mode: 'development' }); // oxfmt-ignore
-  });
-
-  test('query.status() reads a missing modeSource as null', async () => {
-    const { modeSource: _omitted, ...oldShape } = SNAPSHOT;
-    const port = await startServer((_req, res) => {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(oldShape));
-    });
-    expect(await createControlClient(port).query.status()).toEqual({ ...oldShape, modeSource: null }); // oxfmt-ignore
+    expect(await createControlClient(port).query.status()).toEqual({ ...oldShape, profileSource: null }); // oxfmt-ignore
   });
 
   test('query.status() returns null when nothing is listening', async () => {
@@ -254,7 +245,7 @@ describe('probeInstance', () => {
     expect(await probeInstance(port)).toEqual({
       pid: SNAPSHOT.pid,
       configPath: SNAPSHOT.configPath,
-      mode: 'test',
+      profile: 'test',
     });
   });
 

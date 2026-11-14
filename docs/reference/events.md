@@ -1,5 +1,5 @@
 ---
-description: The event log - each session's record of what acted on its stack (keys, control API requests, stackctl commands) and what the session did (starts, exits, readiness), one JSON object per line, in node_modules/.stackctl/modes/<mode>/sessions/<id>/events.jsonl and on GET /events.
+description: The event log - each session's record of what acted on its stack (keys, control API requests, stackctl commands) and what the session did (starts, exits, readiness), one JSON object per line, in node_modules/.stackctl/profiles/<profile>/sessions/<id>/events.jsonl and on GET /events.
 ---
 
 # Events
@@ -13,12 +13,13 @@ stackctl events -n 20   # the last 20 lines
 stackctl events -f      # and follow them
 ```
 
-Each session has its own file, `node_modules/.stackctl/modes/<mode>/sessions/<id>/events.jsonl`,
-in the folder that holds [its log](../guide/logs.md#log-files). The control API's
-[`GET /events`](./control-api.md#get-events) streams the same lines as they are written.
+Each session has its own file,
+`node_modules/.stackctl/profiles/<profile>/sessions/<id>/events.jsonl`, in the folder that holds
+[its log](../guide/logs.md#log-files). The control API's [`GET
+/events`](./control-api.md#get-events) streams the same lines as they are written.
 
 ```jsonc
-{"type":"infra-command","phase":"begin","id":"56de9f1a","action":"restart","requested":["db"],"by":{"kind":"cli","argv":["infra","restart","-s","db"],"cwd":".","agent":false},"time":"2026-11-11T13:22:12.255-06:00","mode":"development","sessionId":"1794424917144","pid":91514}
+{"type":"infra-command","phase":"begin","id":"56de9f1a","action":"restart","requested":["db"],"by":{"kind":"cli","argv":["infra","restart","-s","db"],"cwd":".","agent":false},"time":"2026-11-11T13:22:12.255-06:00","profile":"development","sessionId":"1794424917144","pid":91514}
 {"type":"infra-state","service":"db","status":"stopped","previousStatus":"running", /* … */}
 {"type":"service-state","service":"backend","status":"running","ready":false,"previousStatus":"running","previousReady":true, /* … */}
 {"type":"infra-command","phase":"end","id":"56de9f1a", /* … */ "ok":true,"durationMs":2249,"services":["db"],"results":{"db":"ready"}, /* … */}
@@ -43,8 +44,8 @@ in the folder that holds [its log](../guide/logs.md#log-files). The control API'
 | Field       | What it is                                                                  |
 | ----------- | --------------------------------------------------------------------------- |
 | `time`      | When, ISO 8601 with the machine's offset, to the millisecond.               |
-| `mode`      | The mode.                                                                   |
-| `sessionId` | The mode's running session, as `/query/status` names it, or `null`.         |
+| `profile`   | The profile.                                                                |
+| `sessionId` | The profile's running session, as `/query/status` names it, or `null`.      |
 | `pid`       | The process that wrote the line.                                            |
 
 Paths are relative to the workspace root. A reader ignores a `type` it doesn't know.

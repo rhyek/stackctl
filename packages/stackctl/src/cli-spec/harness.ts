@@ -235,9 +235,9 @@ export function setUpCliWorkspace(name: string): void {
         "      PINNED_DIR: '/from/config',",
         '    }),',
         "    override: ['PINNED_DIR', 'APPENDED'],",
-        '    additionalFiles: ({ mode }) => [',
-        "      { file: `.env.${mode}.pre`, before: 'mode' },",
-        "      { file: `.env.${mode}.pre.local`, before: 'mode' },",
+        '    additionalFiles: ({ profile }) => [',
+        "      { file: `.env.${profile}.pre`, before: 'profile' },",
+        "      { file: `.env.${profile}.pre.local`, before: 'profile' },",
         '    ],',
         '  },',
         '  services: {',
@@ -297,8 +297,8 @@ export function setUpCliWorkspace(name: string): void {
       path.join(ws, '.env.development'),
       'DERIVED_DIR=$PINNED_DIR/storage\nAPPENDED="$APPENDED --flag"\nPRE_URL=x:${PRE_PORT}\n',
     );
-    // `env.additionalFiles`: a port, read before the mode's file that derives a URL from it, and a
-    // checkout's own port, read after the first.
+    // `env.additionalFiles`: a port, read before the profile's file that derives a URL from it, and
+    // a checkout's own port, read after the first.
     fs.writeFileSync(path.join(ws, '.env.development.pre'), 'PRE_PORT=21000\n');
     fs.writeFileSync(path.join(ws, '.env.development.pre.local'), 'PRE_PORT=21010\n');
     fs.writeFileSync(path.join(ws, '.env.test.pre'), 'PRE_PORT=21100\n');
@@ -318,7 +318,7 @@ export function setUpCliWorkspace(name: string): void {
     // A target with a port, and a directory inside no service with an .env file of its own.
     writePackage('api', {
       // A first argument of its own, so node takes the ones forwarded after it as the script's.
-      build: `${script('console.log(JSON.stringify([process.cwd(),process.env.STACKCTL_MODE,process.argv.slice(2)]))')} first`,
+      build: `${script('console.log(JSON.stringify([process.cwd(),process.env.STACKCTL_PROFILE,process.argv.slice(2)]))')} first`,
     });
     fs.mkdirSync(path.join(ws, 'scripts'));
     fs.writeFileSync(path.join(ws, 'scripts', '.env.development'), 'SCRIPTS_VAR=from-scripts\n');

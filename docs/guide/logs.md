@@ -52,7 +52,7 @@ stackctl writes to the same stream, in gold, under labels of its own:
 
 | Label              | What it logs                                                                       |
 | ------------------ | ---------------------------------------------------------------------------------- |
-| `[stackctl]`       | The session: its mode, why each dependency runs, startup failures, shutting down.  |
+| `[stackctl]`       | The session: its profile, why each dependency runs, startup failures, shutting down. |
 | `[control]`        | Commands received over the [control API](../reference/control-api.md).             |
 | `[infra]`          | Docker Compose's output.                                                           |
 | `[infra:<service>]` | One [infra service](../config/infra.md)'s output, its callbacks included.         |
@@ -69,7 +69,7 @@ Every session writes its whole stream to a file, timestamps included, colors rem
 folder of its own named by when it started:
 
 ```
-node_modules/.stackctl/modes/<mode>/sessions/<id>/
+node_modules/.stackctl/profiles/<profile>/sessions/<id>/
   logs.txt        the session's log
   events.jsonl    its event log (see below)
   commands/       a log per sctl exec and sctl run
@@ -85,10 +85,10 @@ node_modules/.stackctl/modes/<mode>/sessions/<id>/
 From another terminal, without disturbing the session:
 
 ```bash
-sctl logs               # print the current session's log
-sctl logs -f            # print it, then follow new lines
-sctl logs --path        # print only the file's path
-sctl logs --mode test   # the test session's
+sctl logs                 # print the current session's log
+sctl logs -f              # print it, then follow new lines
+sctl logs --path          # print only the file's path
+sctl logs --profile test  # the test session's
 ```
 
 Ctrl+C stops the following, never the session. The following also stops when the next session

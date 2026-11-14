@@ -25,14 +25,14 @@ setUpCliWorkspace('sessions');
 describe('sessions', () => {
   let sws: string;
   const stateDir = () => path.join(sws, 'node_modules', '.stackctl');
-  const recordOf = (mode: string) => path.join(stateDir(), 'modes', mode, 'running.json');
-  /** The modes with a session record, as `<mode>/running.json`. */
+  const recordOf = (profile: string) => path.join(stateDir(), 'profiles', profile, 'running.json');
+  /** The profiles with a session record, as `<profile>/running.json`. */
   const records = () =>
-    fs.existsSync(path.join(stateDir(), 'modes'))
+    fs.existsSync(path.join(stateDir(), 'profiles'))
       ? fs
-          .readdirSync(path.join(stateDir(), 'modes'))
-          .filter((mode) => fs.existsSync(recordOf(mode)))
-          .map((mode) => `${mode}/running.json`)
+          .readdirSync(path.join(stateDir(), 'profiles'))
+          .filter((profile) => fs.existsSync(recordOf(profile)))
+          .map((profile) => `${profile}/running.json`)
       : [];
 
   beforeAll(() => {
@@ -91,7 +91,7 @@ describe('sessions', () => {
     for (const name of records()) {
       try {
         const record = JSON.parse(
-          fs.readFileSync(path.join(stateDir(), 'modes', name), 'utf8'),
+          fs.readFileSync(path.join(stateDir(), 'profiles', name), 'utf8'),
         ) as {
           pid: number;
           children?: { pid: number }[];
@@ -167,11 +167,11 @@ describe('sessions', () => {
     );
 
     test.each([
-      ['before start', ['--mode', 'test', 'start', '--headless', '-s', 'web']],
-      ['after start', ['start', '--mode', 'test', '--headless', '-s', 'web']],
-      ['with no start typed', ['--headless', '--mode', 'test', '-s', 'web']],
+      ['before start', ['--profile', 'test', 'start', '--headless', '-s', 'web']],
+      ['after start', ['start', '--profile', 'test', '--headless', '-s', 'web']],
+      ['with no start typed', ['--headless', '--profile', 'test', '-s', 'web']],
     ])(
-      '--mode %s runs the session in that mode',
+      '--profile %s runs the session in that profile',
       async (_, args) => {
         const { child } = await startSession(args, '[web     ] started');
         expect(records()).toEqual(['test/running.json']);
@@ -214,7 +214,7 @@ describe('sessions', () => {
   });
 
   describe("headless -s doesn't touch the saved selection", () => {
-    const selectionFile = () => path.join(stateDir(), 'modes', 'development', 'selection.json');
+    const selectionFile = () => path.join(stateDir(), 'profiles', 'development', 'selection.json');
     /** Saves `["worker"]` as the selection, dated an hour back so a rewrite shows. */
     const saveWorker = () => {
       fs.mkdirSync(path.dirname(selectionFile()), { recursive: true });
@@ -341,7 +341,7 @@ describe.skipIf(process.platform === 'win32')(
       });
       const { session, output } = startSession(ws);
 
-      const record = path.join(ws.dir, 'node_modules', '.stackctl', 'modes', 'development', 'running.json'); // oxfmt-ignore
+      const record = path.join(ws.dir, 'node_modules', '.stackctl', 'profiles', 'development', 'running.json'); // oxfmt-ignore
       const status = async (): Promise<{
         services?: Record<string, string>;
         logFile?: string;

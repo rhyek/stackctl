@@ -49,7 +49,7 @@ printf '{ "declined": true }\n' > ../../../example/node_modules/.stackctl/agent-
 
 # The example's infra (Postgres, the mail catcher), up and migrated before the recording starts,
 # so a recorded startup takes the second it takes on a warm machine.
-(cd ../../../example && pnpm stackctl --mode development infra start)
+(cd ../../../example && pnpm stackctl --profile development infra start)
 
 for scene in "${SCENES[@]}"; do
   cast="$WORK/$scene.cast"
@@ -57,7 +57,7 @@ for scene in "${SCENES[@]}"; do
   kept=""
   for take in $(seq 1 "$MAX_TAKES"); do
     # Forget the remembered selection, so the picker starts empty.
-    (cd ../../../example && pnpm stackctl --mode development reset >/dev/null)
+    (cd ../../../example && pnpm stackctl --profile development reset >/dev/null)
     if node record.ts "$scene" "$cast" "$text"; then
       kept="$take"
       break

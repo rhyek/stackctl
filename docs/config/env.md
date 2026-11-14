@@ -5,7 +5,7 @@ description: The env option of stackctl.config.ts - env.vars for variables set i
 # Environment
 
 The `env` option adjusts how stackctl builds each process's environment.
-[Environment and modes](../guide/env.md) explains what loads by default; this page is the
+[Environment and profiles](../guide/env.md) explains what loads by default; this page is the
 option reference.
 
 ```ts
@@ -16,8 +16,8 @@ export default defineConfig({
       UPLOADS_DIR: `${envs.STACKCTL_WORKSPACE_DIR}/.data/uploads`,
     }),
     override: ['NODE_OPTIONS'],
-    additionalFiles: ({ mode }) => [
-      { file: `.env.${mode}.generated`, after: 'mode' },
+    additionalFiles: ({ profile }) => [
+      { file: `.env.${profile}.generated`, after: 'profile' },
     ],
   },
   services: {/* … */},
@@ -94,27 +94,27 @@ higher-ranked one always wins. With `LOG_LEVEL=info` in the workspace's `.env` a
 
 ## `env.additionalFiles`
 
-- **Type:** `Array<{ file, before | after, scope? }> | ({ mode }) => Array<…>`
+- **Type:** `Array<{ file, before | after, scope? }> | ({ profile }) => Array<…>`
 
 Extra `.env` files, each loaded just before or after one of stackctl's four.
 
-A file a setup script writes, say, which your own `.env.<mode>.local` can still override:
+A file a setup script writes, say, which your own `.env.<profile>.local` can still override:
 
 ```ts
 env: {
-  additionalFiles: ({ mode }) => [
-    { file: `.env.${mode}.generated`, after: 'mode' },
+  additionalFiles: ({ profile }) => [
+    { file: `.env.${profile}.generated`, after: 'profile' },
   ],
 },
 ```
 
-With `--mode development`, each scope then loads `.env`, `.env.local`, `.env.development`,
+With `--profile development`, each scope then loads `.env`, `.env.local`, `.env.development`,
 `.env.development.generated`, `.env.development.local`.
 
 | Field              | Value                                                                                       |
 | ------------------ | ------------------------------------------------------------------------------------------- |
 | `file`             | The file's name: a name, not a path. Only a file that exists is read.                       |
-| `before` / `after` | Exactly one. The stackctl file it loads next to: `'base'` (`.env`), `'local'` (`.env.local`), `'mode'` (`.env.<mode>`) or `'modeLocal'` (`.env.<mode>.local`). |
+| `before` / `after` | Exactly one. The stackctl file it loads next to: `'base'` (`.env`), `'local'` (`.env.local`), `'profile'` (`.env.<profile>`) or `'profileLocal'` (`.env.<profile>.local`). |
 | `scope`            | `'workspace'` or `'service'` to look in one place only. Unset: both, like stackctl's own.   |
 
 - **It is an ordinary `.env` file at its place.** It wins over the files before it and loses

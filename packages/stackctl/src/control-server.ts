@@ -6,7 +6,7 @@ import {
   type SessionServiceStatus,
 } from './control-client.js';
 import type { DevReverseProxyServer } from './dev-reverse-proxy.js';
-import { currentMode, currentModeSource } from './env-base.js';
+import { currentProfile, currentProfileSource } from './env-base.js';
 import { EventTail, fileSize, type EventBy, type EventLog, type StateEntry } from './event-log.js';
 import {
   INFRA_ACTIONS,
@@ -159,8 +159,8 @@ export async function startControlServer(opts: {
     pid: process.pid,
     sessionId: sessionId(),
     configPath: opts.configPath ?? null,
-    mode: currentMode(),
-    modeSource: currentModeSource(),
+    profile: currentProfile(),
+    profileSource: currentProfileSource(),
     startedByAgent: startedByAgent(),
     logFile: manager ? manager.getLogFile() : (opts.logFile ?? null),
     ...liveState(),

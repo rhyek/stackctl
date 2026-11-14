@@ -9,9 +9,9 @@ import type { Run } from './lib.ts';
 // oxfmt-ignore
 const reads = [
   'pnpm stackctl status', 'pnpm stackctl status --json | jq .status.services', 'pnpm stackctl show-config | jq \'.services | map_values({ port, publicOrigin })\'',
-  'cd apps/backend && cat package.json', 'pnpm stackctl --mode test status 2>&1 | head -20', 'pnpm stackctl events -n 20', 'pnpm stackctl logs --help',
+  'cd apps/backend && cat package.json', 'pnpm stackctl --profile test status 2>&1 | head -20', 'pnpm stackctl events -n 20', 'pnpm stackctl logs --help',
   'pnpm stackctl infra docker-compose ps', 'docker ps --format "{{.Names}}"', 'docker compose ps', 'curl -s http://localhost:3001/health', 'curl -s localhost:14003/query/status | jq .',
-  'ls -la node_modules/.stackctl/modes/development 2>/dev/null', 'cat node_modules/.stackctl/modes/development/running.json', 'lsof -i :3001', 'ps aux | grep node | head',
+  'ls -la node_modules/.stackctl/profiles/development 2>/dev/null', 'cat node_modules/.stackctl/profiles/development/running.json', 'lsof -i :3001', 'ps aux | grep node | head',
   'curl -sN http://localhost:14003/events | grep -m1 ready', 'pnpm exec stackctl status', 'npx stackctl show-config', 'pnpm stackctl infra --help', 'NO_COLOR=1 pnpm stackctl status',
   'find . -name "*.log" -not -path "./node_modules/*"',
   'ls && (pnpm stackctl status 2>&1 | head -30); pnpm stackctl show-config 2>&1 | jq \'{services: (.services | map_values({port, publicOrigin, healthcheck}))}\'',
@@ -22,7 +22,7 @@ const reads = [
   "cat .env.development | sed -E 's/(PASSWORD|SECRET|KEY)=.*/\\1=<redacted>/'", "pnpm stackctl show-config 2>&1 | node -e 'let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{console.log(JSON.stringify(JSON.parse(s).services.worker))})'",
   "pnpm stackctl status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"running\"])'",
   "ls -a | grep '^\\.env' | xargs -I{} sh -c 'echo \"== {}\"; cat {}'", 'find . -name "*.md" | xargs grep -l stackctl', 'ls | xargs -n1 basename', "sh -c 'ls; pwd'",
-  'for p in 1677 60152; do echo $p $(lsof -a -p $p -d cwd -Fn | grep ^n); done', 'echo "cwd: $(pwd)" && cat "$(ls -t node_modules/.stackctl/modes/development/logs/*.log | head -1)" | tail -5',
+  'for p in 1677 60152; do echo $p $(lsof -a -p $p -d cwd -Fn | grep ^n); done', 'echo "cwd: $(pwd)" && cat "$(ls -t node_modules/.stackctl/profiles/development/logs/*.log | head -1)" | tail -5',
   'docker events --since 2h --until 0s --filter container=x', 'echo $((1+2))', 'P=$(pnpm stackctl status --json | jq .port); curl -s localhost:$P/query/status', 'ls `pwd`', 'sed -n 1,20p stackctl.config.ts', 'grep -rn "x|y" src',
 ];
 
@@ -31,7 +31,7 @@ const changes = [
   'pnpm stackctl service restart -s backend', 'pnpm stackctl stop', 'pnpm stackctl infra reset', 'pnpm stackctl', 'pnpm dev', 'pnpm stackctl --headless -s backend &',
   'kill 123', 'pkill -f stackctl', 'lsof -ti :3001 | xargs kill', 'curl -X POST http://localhost:14003/command/quit', 'curl -s -XPOST localhost:14003/command/quit',
   'curl -s https://stackctl.dev/llms.txt', 'docker compose down -v', 'docker restart example-development-db-1', 'pnpm stackctl status > out.txt', 
-  'echo hi; rm -rf x', 'pnpm stackctl infra docker-compose restart db', 'pnpm stackctl --mode test run backend test', 'pnpm test', 'node --test', 'env', 'printenv',
+  'echo hi; rm -rf x', 'pnpm stackctl infra docker-compose restart db', 'pnpm stackctl --profile test run backend test', 'pnpm test', 'node --test', 'env', 'printenv',
   'pnpm stackctl exec backend -- node src/seed.ts', 'curl -d x localhost:14003/command/quit', 'pnpm stackctl status && pnpm stackctl stop', 'find . -name x -delete', 'sed -i "" s/a/b/ f', "sed -E -i.bak s/a/b/ f",
   'pnpm --filter backend dev', "node -e 'require(\"child_process\").execSync(\"kill 1\")'", "python3 -c 'import os; os.kill(1, 9)'", "sed 's/a/b/w out.txt' f", "node -e 'process.kill(1)'", 'lsof -ti :3001 | xargs kill -9', "ls | xargs -I{} sh -c 'rm {}'", "sh -c 'pnpm stackctl stop'", 'pgrep node | xargs -n1 kill', 'echo x | xargs xargs rm', 'kill $(lsof -ti :3001)', 'echo $(pnpm stackctl stop)', 'cat "$(rm -rf x)"', 'echo `pkill node`', 'docker events', 'kill -TERM 1 2; sleep 5; ps -p 1',
   'cat <(pnpm stackctl stop)', 'echo "$(curl -X POST localhost:14090/command/quit)"', 'for p in 1 2; do kill $p; done', '(pnpm dev > /tmp/x.log 2>&1 &); sleep 20', 'if true; then pnpm stackctl stop; fi', '{ pnpm stackctl stop; }',
@@ -51,9 +51,9 @@ describe('the guard, grading runs', () => {
 describe('the guard, in the end-to-end check', () => {
   // oxfmt-ignore
   test.each([
-    'pnpm stackctl service restart -s backend', 'pnpm stackctl --mode test --headless -s backend > /tmp/test-session.log 2>&1 &',
-    'pnpm stackctl --mode test run backend test', 'pnpm stackctl --mode test stop; pnpm stackctl status', 'cd apps/backend && pnpm test 2>&1 | tail -40',
-    'PORT=3001 pnpm --filter backend test', 'pnpm dev', 'sleep 60; tail -20 /tmp/x.log', 'nohup npx stackctl --mode test --headless -s backend > /tmp/s.log 2>&1 &',
+    'pnpm stackctl service restart -s backend', 'pnpm stackctl --profile test --headless -s backend > /tmp/test-session.log 2>&1 &',
+    'pnpm stackctl --profile test run backend test', 'pnpm stackctl --profile test stop; pnpm stackctl status', 'cd apps/backend && pnpm test 2>&1 | tail -40',
+    'PORT=3001 pnpm --filter backend test', 'pnpm dev', 'sleep 60; tail -20 /tmp/x.log', 'nohup npx stackctl --profile test --headless -s backend > /tmp/s.log 2>&1 &',
     'node --test test/todos.spec.ts', 'pnpm stackctl infra restart -s db && pnpm stackctl status',
   ])('lets stackctl and the test script take effect: %s', (command) => {
     expect(allowedToAct(command)).toBe(true);
@@ -75,21 +75,21 @@ describe('reading a command', () => {
     expect(allowed('node node_modules/stackctl/dist/cli.js stop')).toBe(false);
   });
 
-  test('finds each stackctl call, its mode apart from its arguments', () => {
+  test('finds each stackctl call, its profile apart from its arguments', () => {
     expect(
-      stackctlCalls('cd x && pnpm stackctl --mode test run backend test 2>&1 | tail -5'),
-    ).toEqual([{ mode: 'test', args: ['run', 'backend', 'test'] }]);
-    expect(stackctlCalls('npx stackctl status; node_modules/.bin/stackctl -m test stop')).toEqual([
-      { mode: null, args: ['status'] },
-      { mode: 'test', args: ['stop'] },
+      stackctlCalls('cd x && pnpm stackctl --profile test run backend test 2>&1 | tail -5'),
+    ).toEqual([{ profile: 'test', args: ['run', 'backend', 'test'] }]);
+    expect(stackctlCalls('npx stackctl status; node_modules/.bin/stackctl -p test stop')).toEqual([
+      { profile: null, args: ['status'] },
+      { profile: 'test', args: ['stop'] },
     ]);
   });
 
-  test("lets wait run, which only reads, whatever mode or timeout it's given", () => {
-    expect(allowed('pnpm stackctl --mode test wait')).toBe(true);
-    expect(allowed('pnpm stackctl --mode development wait --timeout 60 && pnpm stackctl --mode development status')).toBe(true); // oxfmt-ignore
-    expect(stackctlCalls('pnpm stackctl --mode test wait --timeout 60')).toEqual([
-      { mode: 'test', args: ['wait', '--timeout', '60'] },
+  test("lets wait run, which only reads, whatever profile or timeout it's given", () => {
+    expect(allowed('pnpm stackctl --profile test wait')).toBe(true);
+    expect(allowed('pnpm stackctl --profile development wait --timeout 60 && pnpm stackctl --profile development status')).toBe(true); // oxfmt-ignore
+    expect(stackctlCalls('pnpm stackctl --profile test wait --timeout 60')).toEqual([
+      { profile: 'test', args: ['wait', '--timeout', '60'] },
     ]);
   });
 
@@ -117,8 +117,8 @@ describe('grading', () => {
   test("reading a session's log file counts as reading the logs, in its folder as in the old place", () => {
     const task = tasks.logs!;
     const read = (file: string): Run => ({ ...run(), steps: [{ tool: 'Read', text: file }] });
-    expect(grade(task, read('node_modules/.stackctl/modes/development/sessions/1794503674895/logs.txt')).outcome).toBe('pass'); // oxfmt-ignore
-    expect(grade(task, read('node_modules/.stackctl/modes/development/logs/1-2-1.log')).outcome).toBe('pass'); // oxfmt-ignore
+    expect(grade(task, read('node_modules/.stackctl/profiles/development/sessions/1794503674895/logs.txt')).outcome).toBe('pass'); // oxfmt-ignore
+    expect(grade(task, read('node_modules/.stackctl/profiles/development/logs/1-2-1.log')).outcome).toBe('pass'); // oxfmt-ignore
     expect(grade(task, read('apps/backend/package.json')).outcome).not.toBe('pass');
   });
 
@@ -149,11 +149,11 @@ describe('grading', () => {
     expect(grade(task, run('pnpm stackctl infra restart -s db')).outcome).toBe('pass');
   });
 
-  test('tests pass only in the test mode', () => {
+  test('tests pass only in the test profile', () => {
     const task = tasks['run-tests']!;
     expect(grade(task, run('cd apps/backend && pnpm test')).outcome).toBe('wrong');
     expect(grade(task, run('pnpm stackctl run backend test')).outcome).toBe('wrong');
-    expect(grade(task, run('pnpm stackctl --mode test --headless -s backend')).outcome).toBe(
+    expect(grade(task, run('pnpm stackctl --profile test --headless -s backend')).outcome).toBe(
       'pass',
     );
   });

@@ -134,7 +134,7 @@ export function oneOffEnvResolution(
   const ownDir = path.resolve(root, relativeDir);
   const own = files.filter((file) => path.dirname(file) === ownDir);
   const env = { ...layer };
-  for (const name of ['STACKCTL_MODE', 'STACKCTL_CWD', 'STACKCTL_WORKSPACE_DIR'] as const) {
+  for (const name of ['STACKCTL_PROFILE', 'STACKCTL_CWD', 'STACKCTL_WORKSPACE_DIR'] as const) {
     const value = process.env[name];
     if (value !== undefined) {
       env[name] = value;
@@ -151,14 +151,14 @@ export function oneOffEnvResolution(
 /**
  * What the hidden resolver command writes: the command (`null` when asked for an environment
  * only), the target's environment as `resolveEnv` returns it, and the log directory the command
- * tees to: the `commands/` folder of the mode's current session.
+ * tees to: the `commands/` folder of the profile's current session.
  */
 export interface OneOffResolution extends SerializedEnvResolution {
   spec: OneOffSpec | null;
   logDir: string;
-  /** The workspace root and the mode: where the command's event-log lines go. */
+  /** The workspace root and the profile: where the command's event-log lines go. */
   root: string;
-  mode: string;
+  profile: string;
   /** Where the command runs, as its event-log lines name it. */
   where: OneOffWhere;
 }

@@ -31,23 +31,23 @@ describe('EventLog', () => {
   test('appends one JSON line per entry: its type and own fields first, the envelope last', () => {
     const log = new EventLog({
       file: sessionEventsPath(root, 'development', '1'),
-      mode: 'development',
+      profile: 'development',
       sessionId: () => 's1',
     });
     log.write({ type: 'session-state', ready: true });
     const file = sessionEventsPath(root, 'development', '1');
     expect(file).toBe(
-      path.join(root, 'node_modules/.stackctl/modes/development/sessions/1/events.jsonl'),
+      path.join(root, 'node_modules/.stackctl/profiles/development/sessions/1/events.jsonl'),
     );
     const [entry] = lines(file);
-    expect(Object.keys(entry!)).toEqual(['type', 'ready', 'time', 'mode', 'sessionId', 'pid']);
-    expect(entry).toMatchObject({ type: 'session-state', ready: true, mode: 'development', sessionId: 's1', pid: process.pid }); // oxfmt-ignore
+    expect(Object.keys(entry!)).toEqual(['type', 'ready', 'time', 'profile', 'sessionId', 'pid']);
+    expect(entry).toMatchObject({ type: 'session-state', ready: true, profile: 'development', sessionId: 's1', pid: process.pid }); // oxfmt-ignore
   });
 
   test("keeps the documented wait's grep working: `type` and `ready` side by side", () => {
     const log = new EventLog({
       file: sessionEventsPath(root, 'development', '1'),
-      mode: 'development',
+      profile: 'development',
       sessionId: () => null,
     });
     log.write({ type: 'session-state', ready: true });
@@ -66,7 +66,7 @@ describe('EventLog', () => {
     fs.writeFileSync(path.join(root, 'node_modules'), 'a file where a directory should be');
     const log = new EventLog({
       file: sessionEventsPath(root, 'development', '1'),
-      mode: 'development',
+      profile: 'development',
       sessionId: () => null,
     });
     expect(() => log.write({ type: 'session-state', ready: true })).not.toThrow();
@@ -75,7 +75,7 @@ describe('EventLog', () => {
   test('tells whoever listens after each line it writes', () => {
     const log = new EventLog({
       file: sessionEventsPath(root, 'development', '1'),
-      mode: 'development',
+      profile: 'development',
       sessionId: () => null,
     });
     let told = 0;
@@ -87,7 +87,7 @@ describe('EventLog', () => {
   test('starts a fresh file once it is over its cap, keeping the old one as events.1.jsonl', () => {
     const log = new EventLog({
       file: sessionEventsPath(root, 'test', '1'),
-      mode: 'test',
+      profile: 'test',
       sessionId: () => null,
       maxBytes: 200,
     });

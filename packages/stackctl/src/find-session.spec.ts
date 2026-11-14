@@ -47,7 +47,7 @@ function status(over: Record<string, unknown> = {}): Record<string, unknown> {
     pid: process.pid,
     sessionId: SESSION_ID,
     configPath: '/ws/stackctl.config.ts',
-    mode: 'test',
+    profile: 'test',
     startedByAgent: false,
     logFile: null,
     services: null,
@@ -60,8 +60,8 @@ function status(over: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 
-// Pinned, so a run from inside a stackctl session of another mode can't change the answers.
-beforeEach(() => vi.stubEnv('STACKCTL_MODE', 'development'));
+// Pinned, so a run from inside a stackctl session of another profile can't change the answers.
+beforeEach(() => vi.stubEnv('STACKCTL_PROFILE', 'development'));
 afterEach(async () => {
   vi.unstubAllEnvs();
   for (const child of children.splice(0)) {
@@ -77,7 +77,7 @@ afterEach(async () => {
 
 describe('findSession', () => {
   test('is none with no record', async () => {
-    expect(await findSession({ workspaceDir: tmpWorkspace(), mode: 'test' })).toEqual({
+    expect(await findSession({ workspaceDir: tmpWorkspace(), profile: 'test' })).toEqual({
       kind: 'none',
     });
   });
@@ -87,14 +87,14 @@ describe('findSession', () => {
     const child = spawn(process.execPath, ['-e', '']);
     await new Promise((r) => child.once('exit', r));
     writeRunning(workspaceDir, { port: await deadPort(), pid: child.pid!, sessionId: SESSION_ID }, 'test'); // oxfmt-ignore
-    expect((await findSession({ workspaceDir, mode: 'test' })).kind).toBe('none');
+    expect((await findSession({ workspaceDir, profile: 'test' })).kind).toBe('none');
   });
 
   test('is the session when its pid is alive and it answers with the recorded id', async () => {
     const workspaceDir = tmpWorkspace();
     const port = await startServer((_req, res) => res.end(JSON.stringify(status())));
     writeRunning(workspaceDir, { port, pid: process.pid, sessionId: SESSION_ID }, 'test');
-    const found = await findSession({ workspaceDir, mode: 'test' });
+    const found = await findSession({ workspaceDir, profile: 'test' });
     expect(found.kind).toBe('running');
     expect(found.kind === 'running' && found.client.port).toBe(port);
   });
@@ -104,7 +104,7 @@ describe('findSession', () => {
     const pid = idleProcess(workspaceDir);
     const port = await deadPort();
     writeRunning(workspaceDir, { port, pid, sessionId: SESSION_ID }, 'test');
-    expect(await findSession({ workspaceDir, mode: 'test', settleMs: 300 })).toEqual({
+    expect(await findSession({ workspaceDir, profile: 'test', settleMs: 300 })).toEqual({
       kind: 'unresponsive',
       pid,
       port,
@@ -119,7 +119,7 @@ describe('findSession', () => {
       res.end(JSON.stringify(status({ pid, sessionId: 'another' }))),
     );
     writeRunning(workspaceDir, { port, pid, sessionId: SESSION_ID }, 'test');
-    expect(await findSession({ workspaceDir, mode: 'test' })).toMatchObject({
+    expect(await findSession({ workspaceDir, profile: 'test' })).toMatchObject({
       kind: 'unresponsive',
       reason: 'mismatch',
     });
@@ -130,7 +130,7 @@ describe('findSession', () => {
     const workspaceDir = tmpWorkspace();
     const pid = idleProcess(tmpWorkspace());
     writeRunning(workspaceDir, { port: await deadPort(), pid, sessionId: SESSION_ID }, 'test');
-    expect((await findSession({ workspaceDir, mode: 'test', settleMs: 300 })).kind).toBe('none');
+    expect((await findSession({ workspaceDir, profile: 'test', settleMs: 300 })).kind).toBe('none');
   });
 
   test('waits for a session whose control API is about to listen', async () => {
@@ -143,7 +143,7 @@ describe('findSession', () => {
       servers.push(server);
       server.listen(port, '127.0.0.1');
     }, 300);
-    expect((await findSession({ workspaceDir, mode: 'test' })).kind).toBe('running');
+    expect((await findSession({ workspaceDir, profile: 'test' })).kind).toBe('running');
   });
 });
 
@@ -155,13 +155,13 @@ describe('connectControlClient', () => {
   test('returns a client bound to the live session', async () => {
     const cwd = tmpWorkspace();
     const port = await startServer((_req, res) =>
-      res.end(JSON.stringify(status({ mode: 'development' }))),
+      res.end(JSON.stringify(status({ profile: 'development' }))),
     );
     writeRunning(cwd, { port, pid: process.pid, sessionId: SESSION_ID });
     expect((await connectControlClient(cwd))?.port).toBe(port);
   });
 
-  test("finds the given mode's session, not another mode's", async () => {
+  test("finds the given profile's session, not another profile's", async () => {
     const cwd = tmpWorkspace();
     const port = await startServer((_req, res) => res.end(JSON.stringify(status())));
     writeRunning(cwd, { port, pid: process.pid, sessionId: SESSION_ID }, 'test');
@@ -183,9 +183,9 @@ describe('connectSessionControl', () => {
     return { workspaceDir, configPath, port };
   }
 
-  test("binds to this config's session in this mode", async () => {
+  test("binds to this config's session in this profile", async () => {
     const { workspaceDir, configPath, port } = await session();
-    const client = await connectSessionControl({ workspaceDir, configPath, mode: 'test' });
+    const client = await connectSessionControl({ workspaceDir, configPath, profile: 'test' });
     expect(client?.port).toBe(port);
   });
 
@@ -193,17 +193,23 @@ describe('connectSessionControl', () => {
     const { workspaceDir, configPath } = await session({
       configPath: '/elsewhere/stackctl.config.ts',
     });
-    expect(await connectSessionControl({ workspaceDir, configPath, mode: 'test' })).toBeUndefined();
+    expect(
+      await connectSessionControl({ workspaceDir, configPath, profile: 'test' }),
+    ).toBeUndefined();
   });
 
-  test('leaves a session of another mode alone', async () => {
-    const { workspaceDir, configPath } = await session({ mode: 'development' });
-    expect(await connectSessionControl({ workspaceDir, configPath, mode: 'test' })).toBeUndefined();
+  test('leaves a session of another profile alone', async () => {
+    const { workspaceDir, configPath } = await session({ profile: 'development' });
+    expect(
+      await connectSessionControl({ workspaceDir, configPath, profile: 'test' }),
+    ).toBeUndefined();
   });
 
   test('is undefined when the session answering is not the one recorded', async () => {
     const { workspaceDir, configPath } = await session({ sessionId: 'another' });
-    expect(await connectSessionControl({ workspaceDir, configPath, mode: 'test' })).toBeUndefined();
+    expect(
+      await connectSessionControl({ workspaceDir, configPath, profile: 'test' }),
+    ).toBeUndefined();
   });
 
   test('matches the config path through a symlink', async () => {
@@ -212,7 +218,7 @@ describe('connectSessionControl', () => {
     fs.symlinkSync(workspaceDir, link);
     const viaLink = path.join(link, 'stackctl.config.ts');
     expect(
-      await connectSessionControl({ workspaceDir, configPath: viaLink, mode: 'test' }),
+      await connectSessionControl({ workspaceDir, configPath: viaLink, profile: 'test' }),
     ).toBeDefined();
     expect(configPath).not.toBe(viaLink);
   });
@@ -225,7 +231,7 @@ describe('connectSessionControl', () => {
         await connectSessionControl({
           workspaceDir: other,
           configPath,
-          mode: 'test',
+          profile: 'test',
           apiPort: port,
         })
       )?.port,

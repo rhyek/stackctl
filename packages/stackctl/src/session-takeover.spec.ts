@@ -189,7 +189,7 @@ describe('which recorded groups the sweep considers', () => {
     expect(sweepableGroups([{ pid: 4000, cwd }], table, 4001)).toEqual([]);
   });
 
-  test('a group a live other-mode session recorded, or holding that session, is never swept', () => {
+  test('a group a live other-profile session recorded, or holding that session, is never swept', () => {
     const table = [
       { pid: 100, other: 100 },
       { pid: 300, other: 300 },
@@ -227,7 +227,7 @@ describe('which dev-port holders are killed', () => {
     });
   });
 
-  test("another mode's session itself is left wherever it runs; its groups, in the workspace", () => {
+  test("another profile's session itself is left wherever it runs; its groups, in the workspace", () => {
     const others = { pids: new Map([[30, 'test']]), groups: new Map([[40, 'test']]) };
     const holders = [
       { pid: 30, cwd: '/elsewhere', group: 5 },
@@ -261,7 +261,7 @@ describe.runIf(unix)('the orphan sweep', () => {
     expect(alive(child.pid!)).toBe(true);
   });
 
-  test('skips a group a live other-mode session recorded, though a stale record names it', async () => {
+  test('skips a group a live other-profile session recorded, though a stale record names it', async () => {
     const dir = tmpDir();
     const child = detached('sleep 30', dir);
     // The live `test` session (this process stands in for it) recorded the same group.
@@ -271,7 +271,7 @@ describe.runIf(unix)('the orphan sweep', () => {
     expect(alive(child.pid!)).toBe(true);
   });
 
-  test("kills an orphan's tree but not a live other-mode session below it", async () => {
+  test("kills an orphan's tree but not a live other-profile session below it", async () => {
     const dir = tmpDir();
     // The orphan started a detached process that is now the live `test` session.
     const code = `
@@ -363,45 +363,45 @@ async function listener(cwd: string): Promise<{ child: ChildProcess; port: numbe
 }
 
 describe.runIf(unix)('freeing the dev ports', () => {
-  test("kills the workspace's holders and leaves another mode's and a foreign program's", async () => {
+  test("kills the workspace's holders and leaves another profile's and a foreign program's", async () => {
     const root = tmpDir();
     const outside = tmpDir();
     fs.mkdirSync(path.join(root, 'web'));
     const own = await listener(path.join(root, 'web'));
-    const otherMode = await listener(root);
+    const otherProfile = await listener(root);
     const otherSession = await listener(root);
     const foreign = await listener(outside);
     // A live `test` session, which is the third listener, recorded the second listener's group.
-    writeRunning(root, { port: 1, pid: otherSession.child.pid!, children: [{ pid: otherMode.child.pid!, cwd: root }] }, 'test'); // oxfmt-ignore
+    writeRunning(root, { port: 1, pid: otherSession.child.pid!, children: [{ pid: otherProfile.child.pid!, cwd: root }] }, 'test'); // oxfmt-ignore
     const free = await deadPort();
 
     const messages: string[] = [];
     const exited = once(own.child, 'exit');
     await freeDevPorts({
       root,
-      mode: 'development',
-      ports: [own.port, otherMode.port, otherSession.port, foreign.port, free],
+      profile: 'development',
+      ports: [own.port, otherProfile.port, otherSession.port, foreign.port, free],
       onStatus: (m) => messages.push(m),
     });
     await exited;
 
     // Under a loaded suite another test may have taken the released port meanwhile: its holder
     // is no process of this test's, so only the messages naming these are compared.
-    const ours = [otherMode, otherSession, foreign].map(
+    const ours = [otherProfile, otherSession, foreign].map(
       ({ child }) => `(pid ${String(child.pid)})`,
     );
     const seen = messages.filter((m, i) => i === 0 || ours.some((p) => m.includes(p)));
     const held = (pid?: number) => `dev port held by this project's test session (pid ${String(pid)}) — leaving it alone`; // oxfmt-ignore
     expect(seen[0]).toBe('freeing dev ports');
-    // The other mode's lines, in the order the listeners were found, then the foreign one.
-    expect(seen.slice(1, 3).sort()).toEqual([held(otherMode.child.pid), held(otherSession.child.pid)].sort()); // oxfmt-ignore
+    // The other profile's lines, in the order the listeners were found, then the foreign one.
+    expect(seen.slice(1, 3).sort()).toEqual([held(otherProfile.child.pid), held(otherSession.child.pid)].sort()); // oxfmt-ignore
     expect(seen.slice(3)).toEqual([`dev port held by another program (pid ${String(foreign.child.pid)}) — leaving it alone`]); // oxfmt-ignore
-    expect(running(otherMode.child)).toBe(true);
+    expect(running(otherProfile.child)).toBe(true);
     expect(running(otherSession.child)).toBe(true);
     expect(running(foreign.child)).toBe(true);
   }, 20_000);
 
-  test("leaves a holder in another mode's session's own group, which it never recorded", async () => {
+  test("leaves a holder in another profile's session's own group, which it never recorded", async () => {
     const root = tmpDir();
     // The `test` session's process starts a listener in its own group, not as a recorded child.
     const code = `
@@ -418,7 +418,7 @@ describe.runIf(unix)('freeing the dev ports', () => {
     writeRunning(root, { port: 1, pid: session.pid! }, 'test');
 
     const messages: string[] = [];
-    await freeDevPorts({ root, mode: 'development', ports: [held.port], onStatus: (m) => messages.push(m) }); // oxfmt-ignore
+    await freeDevPorts({ root, profile: 'development', ports: [held.port], onStatus: (m) => messages.push(m) }); // oxfmt-ignore
     expect(messages).toEqual([
       'freeing dev ports',
       `dev port held by this project's test session (pid ${String(held.pid)}) — leaving it alone`,
@@ -426,7 +426,7 @@ describe.runIf(unix)('freeing the dev ports', () => {
     expect(alive(held.pid)).toBe(true);
   }, 20_000);
 
-  test("kills a holder's tree but not a live other-mode session below it", async () => {
+  test("kills a holder's tree but not a live other-profile session below it", async () => {
     const root = tmpDir();
     // The holder started a detached process that is now the live `test` session.
     const code = `
@@ -442,7 +442,7 @@ describe.runIf(unix)('freeing the dev ports', () => {
     try {
       writeRunning(root, { port: 1, pid: below }, 'test');
       const exited = once(holder, 'exit');
-      await freeDevPorts({ root, mode: 'development', ports: [port], onStatus: () => {} });
+      await freeDevPorts({ root, profile: 'development', ports: [port], onStatus: () => {} });
       await exited;
       expect(alive(below)).toBe(true);
     } finally {
@@ -465,7 +465,7 @@ describe.runIf(unix)('freeing the dev ports', () => {
     const saved = process.env.PATH;
     process.env.PATH = bin;
     try {
-      await freeDevPorts({ root, mode: 'development', ports: [held.port], onStatus: (m) => messages.push(m) }); // oxfmt-ignore
+      await freeDevPorts({ root, profile: 'development', ports: [held.port], onStatus: (m) => messages.push(m) }); // oxfmt-ignore
     } finally {
       process.env.PATH = saved;
     }
@@ -478,7 +478,7 @@ describe.runIf(unix)('freeing the dev ports', () => {
 
   test('says so even with no port to free', async () => {
     const messages: string[] = [];
-    await freeDevPorts({ root: tmpDir(), mode: 'development', ports: [], onStatus: (m) => messages.push(m) }); // oxfmt-ignore
+    await freeDevPorts({ root: tmpDir(), profile: 'development', ports: [], onStatus: (m) => messages.push(m) }); // oxfmt-ignore
     expect(messages).toEqual(['freeing dev ports']);
   });
 });

@@ -37,7 +37,7 @@ export default defineConfig({
  *   shouldn't put files in a repo unasked.
  *
  * Does NOT prompt for a log location: each session writes its log in a folder of its own under
- * `node_modules/.stackctl/modes/<mode>/sessions/`.
+ * `node_modules/.stackctl/profiles/<profile>/sessions/`.
  */
 export async function runInit(
   opts: {

@@ -101,13 +101,13 @@ web: { deps: [{ service: 'api', wait: true }, 'worker'] },
 - **Deps are not transitive.** Only the services you select have their deps run. If `api` needs
   `auth`, list `auth` in `web`'s deps too, or select `api`.
 
-`deps` can be a callback over `{ mode, envs, tokens }`, resolved once per session, for a dep
-that only runs in some modes:
+`deps` can be a callback over `{ profile, envs, tokens }`, resolved once per session, for a dep
+that only runs in some profiles:
 
 ```ts
 api: {
-  deps: ({ mode }) =>
-    mode === 'test' ? ['gateway'] : ['codegen', 'gateway'],
+  deps: ({ profile }) =>
+    profile === 'test' ? ['gateway'] : ['codegen', 'gateway'],
 },
 ```
 

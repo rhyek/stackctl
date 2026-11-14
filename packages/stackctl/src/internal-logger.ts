@@ -6,7 +6,7 @@ import { logging } from './log-formatter.js';
 
 /** stackctl's two internal log channels, both children of one stackctl-wide pino logger. */
 export interface InternalLoggers {
-  /** stackctl's own lifecycle events (the mode, shutdown, …); rendered under `[stackctl]`. */
+  /** stackctl's own lifecycle events (the profile, shutdown, …); rendered under `[stackctl]`. */
   system: Logger;
   /** Control-API command notices: the command is the message, its variables are attrs; `[control]`. */
   control: Logger;

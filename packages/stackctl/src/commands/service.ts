@@ -7,7 +7,7 @@ import { findConfigPath } from '../workspace-root.js';
 import { type StopTarget, activeTarget, noSessionLine, otherSessionLines } from './stop.js';
 import { loadedConfigOrExit } from './workspace.js';
 
-// `stackctl service start|stop|restart -s <name>…`: drives application services of the mode's
+// `stackctl service start|stop|restart -s <name>…`: drives application services of the profile's
 // running session through its control API. It never starts a session of its own.
 
 export type ServiceCommand = 'start' | 'stop' | 'restart';
@@ -89,7 +89,7 @@ function actedLine(
   }
 }
 
-/** Runs `service <action>` against the mode's session; resolves with the exit code. */
+/** Runs `service <action>` against the profile's session; resolves with the exit code. */
 export async function runServiceCommand(
   action: ServiceCommand,
   opts: ServiceCommandOptions,
@@ -104,20 +104,20 @@ export async function runServiceCommand(
     return 1;
   }
 
-  const { mode } = ctx.target;
+  const { profile } = ctx.target;
   const found = await (ctx.find ?? findSession)({
     workspaceDir: ctx.root,
-    mode,
+    profile,
     configPath: ctx.configPath,
     apiPort: ctx.apiPort,
   });
   if (found.kind === 'unresponsive') {
-    error(unresponsiveMessage(found, mode));
+    error(unresponsiveMessage(found, profile));
     return 1;
   }
   if (found.kind === 'none') {
     error(noSessionLine(ctx.target));
-    for (const line of await otherSessionLines(ctx.root, mode)) {
+    for (const line of await otherSessionLines(ctx.root, profile)) {
       error(line);
     }
     return 1;
@@ -162,7 +162,7 @@ function infraNames(): string[] {
   return Object.keys(getLoadedConfig()?.infra?.['docker-compose']?.services ?? {});
 }
 
-/** `stackctl service <action>`: loads the config, then runs against the mode's session. */
+/** `stackctl service <action>`: loads the config, then runs against the profile's session. */
 export async function runService(
   action: ServiceCommand,
   opts: ServiceCommandOptions,

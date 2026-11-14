@@ -52,8 +52,8 @@ test("a yes installs stackctl's own files, leaves AGENTS.md alone, and is not as
 
 test('an agent is never asked, and gets nothing installed', async () => {
   fs.rmSync(path.join(ws(), '.claude'), { recursive: true });
-  // An agent names the mode, as it must.
-  const pty = await Pty.start({ cwd: ws(), args: ['--mode', 'development'], env: { STACKCTL_STARTED_BY_AGENT: '1' } }); // oxfmt-ignore
+  // An agent names the profile, as it must.
+  const pty = await Pty.start({ cwd: ws(), args: ['--profile', 'development'], env: { STACKCTL_STARTED_BY_AGENT: '1' } }); // oxfmt-ignore
   await pty.waitFor('choose services');
   expect(pty.everShown(asked)).toBe(false);
   expect(fs.existsSync(path.join(ws(), '.claude'))).toBe(false);

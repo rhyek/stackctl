@@ -43,7 +43,14 @@ interface OneOffEvent {
 
 /** Every `one-off-command` line in the workspace's development sessions' event logs. */
 function oneOffEvents(): OneOffEvent[] {
-  const sessions = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+  const sessions = path.join(
+    ws,
+    'node_modules',
+    '.stackctl',
+    'profiles',
+    'development',
+    'sessions',
+  );
   return fs
     .readdirSync(sessions)
     .map((id) => path.join(sessions, id, 'events.jsonl'))
@@ -164,9 +171,9 @@ describe('exec()', () => {
     ).rejects.toThrow('stackctl-no-such-command');
   });
 
-  test('runs in the mode asked for', async () => {
+  test('runs in the profile asked for', async () => {
     const result = await inDir(ws, () =>
-      sdk.exec({ mode: 'test', command: ['printenv', 'STACKCTL_MODE'], stdio: 'pipe' }),
+      sdk.exec({ profile: 'test', command: ['printenv', 'STACKCTL_PROFILE'], stdio: 'pipe' }),
     );
     expect(result.stdout).toBe('test\n');
   });
@@ -223,7 +230,14 @@ describe('exec()', () => {
   });
 
   test("tees to a log file in the latest session's commands/", async () => {
-    const sessions = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+    const sessions = path.join(
+      ws,
+      'node_modules',
+      '.stackctl',
+      'profiles',
+      'development',
+      'sessions',
+    );
     const latest = String(Date.now() + 60_000);
     const logDir = path.join(sessions, latest, 'commands');
     fs.mkdirSync(path.join(sessions, latest), { recursive: true });
@@ -252,7 +266,14 @@ describe('exec()', () => {
   });
 
   test('inside a command stackctl runs, it writes no event and no log: that command has them', async () => {
-    const sessions = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+    const sessions = path.join(
+      ws,
+      'node_modules',
+      '.stackctl',
+      'profiles',
+      'development',
+      'sessions',
+    );
     const logs = () =>
       fs.readdirSync(sessions).flatMap((id) => {
         const dir = path.join(sessions, id, 'commands');
@@ -317,7 +338,7 @@ describe('unknown options', () => {
 
   test('every documented option is accepted', async () => {
     const all = {
-      mode: undefined,
+      profile: undefined,
       target: undefined,
       workspaceDir: undefined,
       stdio: 'pipe' as const,
@@ -376,8 +397,8 @@ describe('resolveEnv()', () => {
   });
 
   test('accepts an allowed option set to undefined', async () => {
-    const { env } = await inDir(ws, async () => sdk.resolveEnv({ mode: undefined }));
-    expect(env.STACKCTL_MODE).toBe('development');
+    const { env } = await inDir(ws, async () => sdk.resolveEnv({ profile: undefined }));
+    expect(env.STACKCTL_PROFILE).toBe('development');
   });
 
   test("what the config prints goes to the caller's stderr, not its stdout", async () => {

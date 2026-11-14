@@ -380,11 +380,11 @@ function groupAlive(pgid: number): boolean {
 
 /**
  * The process groups a session has spawned, kept in its session record
- * (`node_modules/.stackctl/modes/<mode>/running.json`, `children`) for the next session's orphan
- * sweep. A record stays while any process of its group lives: a wrapper may exit while the rest of
- * its group lives on. Every add drops the records whose group has no process left, since a dead
- * group's pgid can be reused by a process stackctl never started. The list is bounded; over the
- * bound, the oldest record goes.
+ * (`node_modules/.stackctl/profiles/<profile>/running.json`, `children`) for the next session's
+ * orphan sweep. A record stays while any process of its group lives: a wrapper may exit while the
+ * rest of its group lives on. Every add drops the records whose group has no process left, since a
+ * dead group's pgid can be reused by a process stackctl never started. The list is bounded; over
+ * the bound, the oldest record goes.
  */
 export class ChildRecords {
   private readonly root: string;

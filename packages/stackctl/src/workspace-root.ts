@@ -88,7 +88,7 @@ export function recordedConfigDir(): string | undefined {
 }
 
 /** Options that take a value, in `stackctl`'s own argument position. */
-const VALUE_OPTIONS = new Set(['-m', '--mode', '--workspace-dir', '-s', '--service']);
+const VALUE_OPTIONS = new Set(['-p', '--profile', '--workspace-dir', '-s', '--service']);
 
 /** The end of stackctl's own arguments: a bare `--`, or an `infra <provider>` passthrough. */
 function ownArgs(argv: readonly string[]): readonly string[] {
@@ -98,7 +98,7 @@ function ownArgs(argv: readonly string[]): readonly string[] {
 }
 
 /**
- * `--workspace-dir`, read from raw argv like the mode is (the workspace is located before
+ * `--workspace-dir`, read from raw argv like the profile is (the workspace is located before
  * Commander parses). Stops where stackctl's own arguments do. `undefined` when absent.
  */
 export function resolveWorkspaceDirArg(argv: readonly string[]): string | undefined {

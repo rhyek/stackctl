@@ -139,7 +139,7 @@ function setup(seams: Partial<SessionSeams>) {
       installSignals: () => () => {},
       events: new EventLog({
         file: sessionEventsPath(root, 'development', '1'),
-        mode: 'development',
+        profile: 'development',
         sessionId: () => 'headless-test',
       }),
       ...seams,
@@ -185,7 +185,7 @@ describe('the headless printer', () => {
     expect(exitCode).toBe(0);
     // The session's first line, which the capture predates, then the capture's.
     expect(unstamped(stdout.text)).toBe(
-      `<stamp> [stackctl] [INFO] mode development (default)\n${unstamped(CAPTURE)}`,
+      `<stamp> [stackctl] [INFO] profile development (default)\n${unstamped(CAPTURE)}`,
     );
     expect(stderr.text).toBe('');
   });
@@ -246,7 +246,7 @@ describe('the headless printer', () => {
     await runHeadless(session, { echo: true, stdout, stderr, exit });
     expect(exit).toHaveBeenCalledExactlyOnceWith(1);
     expect(unstamped(stdout.text)).toBe(
-      '<stamp> [stackctl] [INFO] mode development (default)\n<stamp> [stackctl] [INFO] freeing dev ports\n',
+      '<stamp> [stackctl] [INFO] profile development (default)\n<stamp> [stackctl] [INFO] freeing dev ports\n',
     );
     expect(unstamped(stderr.text)).toBe(
       '<stamp> [stackctl] [ERROR] dev reverse proxy port 21050 is already in use by another program.\n',

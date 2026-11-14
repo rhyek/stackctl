@@ -6,7 +6,7 @@ description: stackctl's SDK, the functions it exports for your own scripts and t
 
 stackctl's SDK is what it exports for your own code: a test suite's global setup, a seed or
 migration script, a launcher. It does from a script what the CLI does from a shell, with the
-same workspace, modes and environment. Everything is a named export of `stackctl`:
+same workspace, profiles and environment. Everything is a named export of `stackctl`:
 
 ```ts
 import {
@@ -52,7 +52,7 @@ Starts a headless session as a child of the calling process and resolves once th
 every service asked for are healthy. See [Tests and CI](../guide/testing.md).
 
 ```ts
-const stack = await startStack({ mode: 'test', services: ['api'] });
+const stack = await startStack({ profile: 'test', services: ['api'] });
 try {
   await fetch(`${stack.origins.api}/health`);
 } finally {
@@ -62,11 +62,11 @@ try {
 
 | Option         | Default                | What it is                                                                 |
 | -------------- | ---------------------- | -------------------------------------------------------------------------- |
-| `services`     | **required**           | The services to bring up. Their deps and the mode's infra come too.        |
-| `mode`         | as the CLI resolves it | The mode.                                                                  |
+| `services`     | **required**           | The services to bring up. Their deps and the profile's infra come too.     |
+| `profile`      | as the CLI resolves it | The profile.                                                               |
 | `workspaceDir` | nearest config         | The directory holding `stackctl.config.ts`.                                |
 | `waitTimeout`  | `300`                  | Seconds to wait for everything to be healthy.                              |
-| `killOthers`   | `false`                | Quit a session already running in the mode, as `--kill-others` does.       |
+| `killOthers`   | `false`                | Quit a session already running in the profile, as `--kill-others` does.    |
 | `env`          | `stackEnvironment()`   | The environment the session starts with.                                   |
 
 It resolves with:
@@ -79,15 +79,15 @@ It resolves with:
 | `control`         | A [control API client](./control-api.md#the-client) for the session.                    |
 | `stop()`          | Quits the session, resolving once it has exited.                                        |
 | `pid`, `port`     | The session's process and its control-API port.                                         |
-| `mode`, `modeSource`, `logFile` | The session's mode, where it came from, and its log.                      |
+| `profile`, `profileSource`, `logFile` | The session's profile, where it came from, and its log.             |
 
 - **The session ends with the calling process**, however that ends.
 - **Healthy** means running and passing its healthcheck. A service with no healthcheck must
   stay up for a second.
 - **A service with `autostart: false` stays stopped** and isn't waited on. Start it with
   `stack.control.command.service.start(name)`.
-- **It rejects** when a session of the mode is already running (unless `killOthers`), when the
-  session exits or a service stops while starting, or when `waitTimeout` passes
+- **It rejects** when a session of the profile is already running (unless `killOthers`), when
+  the session exits or a service stops while starting, or when `waitTimeout` passes
   (`not healthy after 300s: worker`). The session is stopped first, and the error has the
   log's path.
 
@@ -126,7 +126,7 @@ const { exitCode, stdout } = await run({
   target: 'api',
   script: 'seed',
   args: ['--rows=100'],
-  mode: 'test',
+  profile: 'test',
   stdio: 'pipe',
 });
 ```
@@ -137,7 +137,7 @@ const { exitCode, stdout } = await run({
 | `script`       | **required** (`run`)   | The script or Makefile target.                                               |
 | `args`         | none                   | `run` only: arguments forwarded to the script.                               |
 | `target`       | the current directory  | A service's name, or a directory.                                            |
-| `mode`         | as the CLI resolves it | The mode.                                                                    |
+| `profile`      | as the CLI resolves it | The profile.                                                                 |
 | `workspaceDir` | nearest config         | The directory holding `stackctl.config.ts`.                                  |
 | `stdio`        | `'inherit'`            | `'inherit'` gives the command this process's stdout and stderr, [as the CLI does](../guide/commands.md#output-and-exit-code). `'pipe'` collects them into `stdout` and `stderr`. |
 
@@ -163,14 +163,14 @@ For a script stackctl doesn't start, such as a launcher that needs a port before
 up. It is synchronous.
 
 ```ts
-const { env } = resolveEnv({ mode: 'test', target: 'api' });
+const { env } = resolveEnv({ profile: 'test', target: 'api' });
 const databaseUrl = env.DATABASE_URL;
 ```
 
 | Option         | Default                | What it is                                      |
 | -------------- | ---------------------- | ----------------------------------------------- |
 | `target`       | the current directory  | A service's name, or a directory.               |
-| `mode`         | as the CLI resolves it | The mode whose files to read.                   |
+| `profile`      | as the CLI resolves it | The profile whose files to read.                |
 | `workspaceDir` | nearest config         | The directory holding `stackctl.config.ts`.     |
 
 | Field        | What it is                                                                               |

@@ -141,7 +141,7 @@ Result on the primary screen after a session:
 > pnpm dev
 ▶ stackctl started
 ■ stackctl exited after 2 hours 14 minutes
-  logfile: node_modules/.stackctl/modes/development/sessions/1794149236103/logs.txt
+  logfile: node_modules/.stackctl/profiles/development/sessions/1794149236103/logs.txt
 >
 ```
 

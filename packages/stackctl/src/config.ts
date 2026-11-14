@@ -23,12 +23,12 @@ import {
   resolveEnvFrom,
   envFileNames,
   envFileOrder,
-  currentMode,
+  currentProfile,
   type EnvAdditionalFile,
   type EnvFileOrder,
   type Envs,
   type EnvOverride,
-  type Mode,
+  type Profile,
 } from './env.js';
 import { composeProjectName } from './infra/project-name.js';
 import {
@@ -87,7 +87,7 @@ export interface ConfigContext<T = TokenRecord> {
    * workspace-wide `urls`, which belong to no service, this is the workspace scope alone.)
    * The config's own `env.vars` are in it too, ranked as a file below every real one — except
    * for the `env.vars` callback itself, which is what computes them. The variables stackctl
-   * sets (`STACKCTL_MODE`, `STACKCTL_CWD`, `STACKCTL_WORKSPACE_DIR`) are always in it, by name.
+   * sets (`STACKCTL_PROFILE`, `STACKCTL_CWD`, `STACKCTL_WORKSPACE_DIR`) are always in it, by name.
    */
   envs: Envs;
   /**
@@ -307,14 +307,14 @@ export type EnvInput<T = TokenRecord> =
       override?: EnvOverride;
       /**
        * Extra `.env` files, each placed just `before` or `after` one of stackctl's own: `'base'`
-       * (`.env`), `'local'` (`.env.local`), `'mode'` (`.env.<mode>`) or `'modeLocal'`
-       * (`.env.<mode>.local`). Files on the same anchor load in array order. Each is an ordinary
+       * (`.env`), `'local'` (`.env.local`), `'profile'` (`.env.<profile>`) or `'profileLocal'`
+       * (`.env.<profile>.local`). Files on the same anchor load in array order. Each is an ordinary
        * `.env` file at its place: it wins over the files before it and loses to those after.
        * Looked for at both scopes unless `scope` says `'workspace'` or `'service'`, and read
-       * wherever stackctl reads its own files. An array, or a callback over `{ mode }`:
+       * wherever stackctl reads its own files. An array, or a callback over `{ profile }`:
        *
        * ```ts
-       * additionalFiles: ({ mode }) => [{ file: `.env.${mode}.generated`, after: 'mode' }]
+       * additionalFiles: ({ profile }) => [{ file: `.env.${profile}.generated`, after: 'profile' }]
        * ```
        */
       additionalFiles?: EnvAdditionalFile[] | EnvAdditionalFilesResolver;
@@ -331,11 +331,11 @@ export type EnvInput<T = TokenRecord> =
 
 /** What an `env.additionalFiles` callback is given. */
 export interface EnvFilesContext {
-  /** The active mode, whose `.env.<mode>` files load. */
-  mode: Mode;
+  /** The active profile, whose `.env.<profile>` files load. */
+  profile: Profile;
 }
 
-/** `env.additionalFiles` computed from the mode. */
+/** `env.additionalFiles` computed from the profile. */
 export type EnvAdditionalFilesResolver = (ctx: EnvFilesContext) => EnvAdditionalFile[];
 
 /** A URL computed from the service's environment. */
@@ -444,11 +444,13 @@ export interface ResolvedDep<N extends string = string> {
 
 /**
  * What a `deps` callback receives: {@link ConfigContext} (the service's environment and tokens)
- * and the session's mode.
+ * and the session's profile.
  */
 export interface DepsContext<T = TokenRecord> extends ConfigContext<T> {
-  /** The active mode: `development` unless `--mode` says otherwise, or any name you pass it. */
-  mode: Mode;
+  /**
+   * The active profile: `development` unless `--profile` says otherwise, or any name you pass it.
+   */
+  profile: Profile;
 }
 
 /** A service's `deps` computed from its context: the same entries the array form lists. */
@@ -464,8 +466,8 @@ type DepsInput<N extends string, T = TokenRecord> = {
    * `healthcheck` passes — `deps: ['worker', { service: 'api', wait: true }]`.
    *
    * Or a callback returning those entries, run once per session with the service's `envs` and
-   * `tokens` and the session's `mode`, so a dep can run in some modes only:
-   * `deps: ({ mode }) => (mode === 'test' ? ['gateway'] : ['codegen', 'gateway'])`.
+   * `tokens` and the session's `profile`, so a dep can run in some profiles only:
+   * `deps: ({ profile }) => (profile === 'test' ? ['gateway'] : ['codegen', 'gateway'])`.
    */
   deps?: DepInput<NoInfer<N>>[] | DepsResolver<NoInfer<N>, NoInfer<T>>;
 };
@@ -1007,8 +1009,8 @@ export type DefineConfigOptions<
   I extends string = string,
 > = {
   /**
-   * Fixed control-API port; omit to let stackctl pick one (recorded in `modes/<mode>/running.json`). A
-   * fixed port serves the session of one mode at a time.
+   * Fixed control-API port; omit to let stackctl pick one (recorded in
+   * `profiles/<profile>/running.json`). A fixed port serves the session of one profile at a time.
    */
   apiPort?: number | undefined;
   /**
@@ -1031,7 +1033,7 @@ export type DefineConfigOptions<
   /**
    * Environment options: `vars`, variables of the config's own, `override`, which `.env`
    * values may beat the ambient environment, and `additionalFiles`, extra `.env` files placed
-   * among stackctl's own. Which of stackctl's files load is chosen with `--mode`. A callback
+   * among stackctl's own. Which of stackctl's files load is chosen with `--profile`. A callback
    * here is shorthand for `vars`. See {@link EnvInput}.
    */
   env?: EnvInput<Top>;
@@ -1177,12 +1179,15 @@ export interface Config<
   /** The infra providers, resolved, or `undefined` when the config declares none. */
   infra?: ResolvedInfra<I>;
   /**
-   * The `.env` files looked for at each scope for the active mode, ascending precedence:
+   * The `.env` files looked for at each scope for the active profile, ascending precedence:
    * stackctl's own, with `env.additionalFiles` placed among them.
    */
   envFiles: EnvFileOrder;
-  /** The active mode (`--mode`, else `STACKCTL_MODE`, else `test` in CI, else `development`). */
-  envMode: Mode;
+  /**
+   * The active profile (`--profile`, else `STACKCTL_PROFILE`, else `test` in CI, else
+   * `development`).
+   */
+  profile: Profile;
   /** Variables whose `.env` or `env.vars` value may beat the ambient environment. */
   envOverride?: EnvOverride;
   /** Whether dotenvx's encrypted values are decrypted (`env.decrypt`). */
@@ -1498,28 +1503,28 @@ function envFilesNote(files: string[]): string {
 }
 
 /**
- * `env.additionalFiles` for `mode`: the array, or its callback's result, checked against the
+ * `env.additionalFiles` for `profile`: the array, or its callback's result, checked against the
  * schema and then entry by entry. A bad entry is an error naming it — its index and its `file` —
- * and, for a callback, the mode it was called for.
+ * and, for a callback, the profile it was called for.
  */
 function resolveAdditionalFiles(
-  input: EnvAdditionalFile[] | ((ctx: { mode: Mode }) => EnvAdditionalFile[]) | undefined,
-  mode: Mode,
+  input: EnvAdditionalFile[] | ((ctx: { profile: Profile }) => EnvAdditionalFile[]) | undefined,
+  profile: Profile,
 ): EnvAdditionalFile[] {
   if (input === undefined) {
     return [];
   }
   const computed = typeof input === 'function';
   const called = computed
-    ? `\n  (returned by the env.additionalFiles callback for mode "${mode}")`
+    ? `\n  (returned by the env.additionalFiles callback for profile "${profile}")`
     : '';
   const result = parseAt(
     v.array(EnvAdditionalFileSchema),
-    computed ? input({ mode }) : input,
+    computed ? input({ profile }) : input,
     'env.additionalFiles',
     called,
   );
-  const standard = new Set(envFileNames(mode));
+  const standard = new Set(envFileNames(profile));
   const seen: { file: string; scope: unknown; at: string }[] = [];
   return result.map((entry, i): EnvAdditionalFile => {
     const at = `env.additionalFiles[${String(i)}]`;
@@ -1532,7 +1537,7 @@ function resolveAdditionalFiles(
     }
     if (standard.has(file)) {
       fail(
-        `${JSON.stringify(file)} is one of stackctl's own files for mode "${mode}", which load anyway`,
+        `${JSON.stringify(file)} is one of stackctl's own files for profile "${profile}", which load anyway`,
       );
     }
     // Two entries clash when they name one file at a scope both are looked for at.
@@ -1652,9 +1657,9 @@ type ParsedInfraService = v.InferOutput<typeof InfraServiceSchema>;
 
 /**
  * Resolves one infra service: `enabled` first, then — only for a service that runs — its `port`
- * and `urls` callbacks, over the workspace context. A service disabled in a mode is often exactly
- * the one whose variables that mode doesn't set, so its callbacks must not run there. The infra
- * callbacks are kept as written.
+ * and `urls` callbacks, over the workspace context. A service disabled in a profile is often
+ * exactly the one whose variables that profile doesn't set, so its callbacks must not run there.
+ * The infra callbacks are kept as written.
  */
 function resolveInfraService(
   name: string,
@@ -1662,20 +1667,20 @@ function resolveInfraService(
   opts: {
     reverseProxy: ResolvedReverseProxy | undefined;
     ctx: () => ConfigContext;
-    mode: Mode;
+    profile: Profile;
     envFilesLoaded: () => string[];
   },
 ): ResolvedInfraService {
   const identity: ServiceIdentity = { name, kind: 'infra' };
   const reach = reachOf(opts.reverseProxy, name);
-  // Before `enabled` is read: a route with nothing to point at is a config bug in every mode.
+  // Before `enabled` is read: a route with nothing to point at is a config bug in every profile.
   if (reach.routed && port === undefined) {
     throw new Error(
       `reverseProxy.routes routes to infra service "${name}", which declares no \`port\``,
     );
   }
   const isEnabled = resolveInfraEnabled(name, enabled, () => ({
-    mode: opts.mode,
+    profile: opts.profile,
     ...opts.ctx(),
     service: identity,
   }));
@@ -2332,7 +2337,7 @@ export function defineConfig<
 
   // Every infra service's name, whichever provider runs it. A route, `deps` and every message
   // name a service by its key alone, so an application service and an infra service sharing one
-  // could not be told apart: a config bug in every mode, routed or not.
+  // could not be told apart: a config bug in every profile, routed or not.
   const infraNames = Object.values(parsed.infra ?? {}).flatMap((block) =>
     Object.keys(servicesOf<ParsedInfraService>(block)),
   );
@@ -2345,8 +2350,8 @@ export function defineConfig<
   const tokens = parsed.tokens ?? {};
 
   const envFiles = envFileOrder(
-    currentMode(),
-    resolveAdditionalFiles(parsed.env?.additionalFiles, currentMode()),
+    currentProfile(),
+    resolveAdditionalFiles(parsed.env?.additionalFiles, currentProfile()),
   );
   const envOverride = parsed.env?.override;
   const envDecrypt = parsed.env?.decrypt ?? false;
@@ -2465,7 +2470,10 @@ export function defineConfig<
     const scope = (where: string): UrlScope => ({ ctx, port, publicOrigin, where, noPublicOrigin });
     return {
       ...config,
-      deps: resolveDeps(config.name, config.deps, () => ({ ...baseCtx(), mode: currentMode() })),
+      deps: resolveDeps(config.name, config.deps, () => ({
+        ...baseCtx(),
+        profile: currentProfile(),
+      })),
       // Stored resolved (config tokens + this service's own) so the exported config exposes
       // each service's tokens: `config.services.api.tokens`.
       tokens: pkgTokens,
@@ -2511,7 +2519,7 @@ export function defineConfig<
         resolveInfraService(name, service, {
           reverseProxy,
           ctx: workspaceBase,
-          mode: currentMode(),
+          profile: currentProfile(),
           envFilesLoaded: workspaceEnv.files,
         }),
       ]),
@@ -2523,7 +2531,7 @@ export function defineConfig<
       projectName: composeProjectName({
         envs: workspaceEnv.envs(),
         workspaceDir,
-        mode: currentMode(),
+        profile: currentProfile(),
       }),
       readyTimeout: compose.readyTimeout ?? DEFAULT_READY_TIMEOUT_MS,
       services: resolveServices(compose.services),
@@ -2548,7 +2556,7 @@ export function defineConfig<
     reverseProxy,
     infra,
     envFiles,
-    envMode: currentMode(),
+    profile: currentProfile(),
     envOverride,
     envDecrypt,
     envVars,

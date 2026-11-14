@@ -25,7 +25,7 @@ import {
   stepOf,
   tasks,
   testsPassedAnywhere,
-  testsPassedInTestMode,
+  testsPassedInTestProfile,
 } from './lib.ts';
 import type { Grade, State, Step } from './lib.ts';
 
@@ -278,7 +278,7 @@ async function ensureSession(work: string): Promise<void> {
 
 const personRestartedDb = (work: string) => {
   // The running session's event log: the latest session folder's.
-  const sessions = path.join(baseDir(work), 'node_modules/.stackctl/modes/development/sessions');
+  const sessions = path.join(baseDir(work), 'node_modules/.stackctl/profiles/development/sessions');
   const latest = fs.existsSync(sessions)
     ? fs.readdirSync(sessions).filter((name) => /^\d+$/.test(name)).sort((a, b) => Number(a) - Number(b)).at(-1) // oxfmt-ignore
     : undefined;
@@ -535,9 +535,9 @@ interface Outcome {
   ms: number;
 }
 
-/** Whether the test mode's session runs. */
+/** Whether the test profile's session runs. */
 const testSessionRuns = (work: string) =>
-  (JSON.parse(stackctl(work, ['--mode', 'test', 'status', '--json'])) as Status).running;
+  (JSON.parse(stackctl(work, ['--profile', 'test', 'status', '--json'])) as Status).running;
 
 /**
  * Two tasks run for real, one at a time: the guard lets stackctl and the test script take
@@ -563,7 +563,7 @@ async function e2e(work: string, outDir: string): Promise<void> {
           continue;
         }
         if (testSessionRuns(work)) {
-          stackctl(work, ['--mode', 'test', 'stop']);
+          stackctl(work, ['--profile', 'test', 'stop']);
         }
         await setState(work, tasks[task]!.state);
         const meta = await runJob(work, { setup: name, task, rep, file }, true);
@@ -574,7 +574,7 @@ async function e2e(work: string, outDir: string): Promise<void> {
             ? { 'every service ready': allReady(now) }
             : {
                 'tests passed': testsPassedAnywhere(ran),
-                'in the test mode': testsPassedInTestMode(ran),
+                'in the test profile': testsPassedInTestProfile(ran),
                 'dev session untouched': allReady(now),
                 'test session stopped': !testSessionRuns(work),
               };
@@ -586,7 +586,7 @@ async function e2e(work: string, outDir: string): Promise<void> {
     }
   }
   if (testSessionRuns(work)) {
-    stackctl(work, ['--mode', 'test', 'stop']);
+    stackctl(work, ['--profile', 'test', 'stop']);
   }
   const lines = ['| Setup | Task | Finished | What held |', '| --- | --- | --- | --- |'];
   for (const name of wantedSetups) {

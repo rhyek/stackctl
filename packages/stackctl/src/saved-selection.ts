@@ -1,13 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getLoadedConfig, getRegisteredPackages } from './config.js';
-import { modeStateDir } from './log-files.js';
+import { profileStateDir } from './log-files.js';
 
 // The selection the picker saves, and where a session starts from it: the picker, or the saved
 // services straight away (`--last-answers`).
 
-/** The active mode's saved selection: `node_modules/.stackctl/modes/<mode>/selection.json`. */
-const selectionFile = () => path.join(modeStateDir(process.cwd()), 'selection.json');
+/**
+ * The active profile's saved selection: `node_modules/.stackctl/profiles/<profile>/selection.json`.
+ */
+const selectionFile = () => path.join(profileStateDir(process.cwd()), 'selection.json');
 
 /**
  * Keeps only the names that are packages of the loaded config. A saved selection outlives

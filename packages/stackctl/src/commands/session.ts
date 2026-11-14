@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { getLoadedConfig } from '../config.js';
-import { currentMode } from '../env-base.js';
+import { currentProfile } from '../env-base.js';
 import { findSession, unresponsiveMessage } from '../find-session.js';
 import { findConfigPath } from '../load-config.js';
 import { renderAppInProduction } from '../render-app-production.js';
@@ -16,7 +16,7 @@ import { type StartOptions, resolveSelectedNamesOrExit } from './default.js';
 
 /**
  * Why a forked session (`startStack()`'s) must not start, or `undefined` when it may: a session of
- * its mode is running, or recorded alive, and `--kill-others` didn't say to quit it. A forked
+ * its profile is running, or recorded alive, and `--kill-others` didn't say to quit it. A forked
  * session never quits one unasked, whoever started it.
  */
 async function forkedSessionRefusal(
@@ -26,25 +26,25 @@ async function forkedSessionRefusal(
   if (killOthers) {
     return undefined;
   }
-  const mode = currentMode();
+  const profile = currentProfile();
   const found = await findSession({
     workspaceDir: process.cwd(),
-    mode,
+    profile,
     configPath,
     apiPort: getLoadedConfig()?.apiPort,
   });
   if (found.kind === 'running') {
-    return `a ${mode} session of this workspace is already running (pid ${String(found.status.pid)}); quit it, or start with killOthers to have it quit first`; // oxfmt-ignore
+    return `a ${profile} session of this workspace is already running (pid ${String(found.status.pid)}); quit it, or start with killOthers to have it quit first`; // oxfmt-ignore
   }
   if (found.kind === 'unresponsive') {
-    return `${unresponsiveMessage(found, mode)}; stop it, or start with killOthers to have it killed`;
+    return `${unresponsiveMessage(found, profile)}; stop it, or start with killOthers to have it killed`;
   }
   return undefined;
 }
 
 /** Starts the session the options ask for. It ends by exiting the process. */
 export async function runDevSession(opts: StartOptions): Promise<void> {
-  const logFile = sessionLogPath(process.cwd(), currentMode(), sessionId());
+  const logFile = sessionLogPath(process.cwd(), currentProfile(), sessionId());
   const configPath =
     findConfigPath(process.cwd()) ?? path.join(process.cwd(), 'stackctl.config.ts');
 

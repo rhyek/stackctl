@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import tls from 'node:tls';
 import { type Config, proxyKeyAndCert } from './config.js';
-import { currentMode } from './env-base.js';
+import { currentProfile } from './env-base.js';
 import { stateDirOf } from './log-files.js';
 import { routeHosts as hostsOf } from './route-hosts.js';
 import { trustFilePath } from './trust-file.js';
@@ -134,14 +134,14 @@ function isUnder(host: string, domains: string[]): boolean {
 
 /**
  * The proxy's TLS from self-signed certificates: one for each of `hosts` (every hostname a route
- * names, the bare domains included), made now unless still good on disk, and a mode's trust file
+ * names, the bare domains included), made now unless still good on disk, and a profile's trust file
  * with all of them. A client asking for another name under a domain (a host `'*'` routes, or a
  * mistyped subdomain) gets one made then, so it reaches the route or sees the proxy's 404; any
  * other name, or none, gets the canonical domain's.
  */
 export async function selfSignedTls(opts: {
   workspaceDir: string;
-  mode: string;
+  profile: string;
   /** Every hostname a route names, under each domain, and each bare domain. */
   hosts: string[];
   /** The domains (`publicAddress.domain`), canonical first. */
@@ -153,7 +153,7 @@ export async function selfSignedTls(opts: {
     await Promise.all(hosts.map(async (host) => [host, await hostCert(dir, host)] as const)),
   );
 
-  const trustFile = trustFilePath(opts.workspaceDir, opts.mode);
+  const trustFile = trustFilePath(opts.workspaceDir, opts.profile);
   writeTrustFile(
     trustFile,
     [...certs.values()].map((c) => c.cert),
@@ -231,12 +231,12 @@ function writeTrustFile(file: string, certs: string[]) {
 /**
  * The dev reverse proxy's TLS as the config asks for it (`reverseProxy.tls`): nothing, the
  * config's own key and certificate, or self-signed certificates for every hostname it serves,
- * with the mode's trust file written.
+ * with the profile's trust file written.
  */
 export async function proxyTlsFor(
   config: Pick<Config<string>, 'reverseProxy'>,
   workspaceDir: string,
-  mode: string = currentMode(),
+  profile: string = currentProfile(),
 ): Promise<{ tls?: ProxyTls; trustFile?: string }> {
   const proxy = config.reverseProxy;
   if (!proxy || proxy.tls === false) {
@@ -248,7 +248,7 @@ export async function proxyTlsFor(
   const { domains } = proxy.publicAddress;
   return selfSignedTls({
     workspaceDir,
-    mode,
+    profile,
     hosts: [...domains, ...hostsOf(proxy.routes, domains)],
     domains,
   });

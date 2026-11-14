@@ -38,13 +38,13 @@ sctl exec libs/db -- node src/migrate.ts    # a directory that isn't a service
   `PORT`.
 - **No target** means the current directory.
 
-## Modes
+## Profiles
 
-`--mode` picks the environment, as for a session:
+`--profile` picks the environment, as for a session:
 
 ```bash
-sctl --mode test run api seed
-sctl --mode test exec -- vitest
+sctl --profile test run api seed
+sctl --profile test exec -- vitest
 ```
 
 ## Output and exit code
@@ -75,7 +75,7 @@ await exec({ target: 'api', command: ['node', 'src/migrate.ts'] });
 const { exitCode } = await run({
   target: 'api',
   script: 'seed',
-  mode: 'test',
+  profile: 'test',
 });
 ```
 

@@ -144,7 +144,7 @@ export default defineConfig({
         items: [
           { text: 'Services', link: '/guide/services' },
           { text: 'Terminal UI', link: '/guide/terminal-ui' },
-          { text: 'Environment and modes', link: '/guide/env' },
+          { text: 'Environment and profiles', link: '/guide/env' },
           { text: 'One-off commands', link: '/guide/commands' },
           { text: 'Logs', link: '/guide/logs' },
           { text: 'Tests and CI', link: '/guide/testing' },

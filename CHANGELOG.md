@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.0
+
+### Features
+
+- **`stackctl start` and `stackctl run` type-check `stackctl.config.ts` first.** See
+  [docs/config/config-file.md](docs/config/config-file.md#type-checking).
+
+### Breaking changes
+
+- **Modes are now profiles**: replace `--mode`/`-m` with `--profile`/`-p`, `STACKCTL_MODE` with
+  `STACKCTL_PROFILE`, `mode` with `profile` in config callbacks, `startStack()`, the SDK and the
+  control API, and the `env.additionalFiles` anchors `'mode'`/`'modeLocal'` with
+  `'profile'`/`'profileLocal'`. See [docs/guide/env.md](docs/guide/env.md#profiles).
+- **A session's state lives in `node_modules/.stackctl/profiles/<profile>/`**: stop running
+  sessions before upgrading, and the picker starts without your last selection.
+- **`start` and `run` refuse a `stackctl.config.ts` with type errors**: fix what tsc reports.
+
 ## 0.7.2
 
 ### Features

@@ -4,9 +4,9 @@
 #   pnpm stackctl infra start          # start it and wait until it's ready
 #   pnpm stackctl infra docker-compose ps
 #
-# Every ${VAR} comes from the mode's .env file (.env.development, or .env.test under
-# `--mode test`), which stackctl hands to Compose — so each mode gets its own port, and its own
-# Compose project (`example-development`, `example-test`).
+# Every ${VAR} comes from the profile's .env file (.env.development, or .env.test under
+# `--profile test`), which stackctl hands to Compose — so each profile gets its own port, and its
+# own Compose project (`example-development`, `example-test`).
 services:
   db:
     image: postgres:18.6

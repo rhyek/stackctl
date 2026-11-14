@@ -2089,7 +2089,7 @@ describe('tls', () => {
     const port = await headersEcho();
     const { tls: proxyTls, trustFile } = await selfSignedTls({
       workspaceDir,
-      mode: 'spec',
+      profile: 'spec',
       hosts: [ROOT, `web.${ROOT}`, `api.${ROOT}`],
       domains: [ROOT],
     });

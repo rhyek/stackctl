@@ -63,10 +63,10 @@ export class InfraManager {
     ]);
     const runtime: ProviderRuntime = {
       workspaceDir,
-      mode: config.envMode,
+      profile: config.profile,
       config,
       // The same environment a workspace-scope config callback sees: the config's own variables
-      // and the mode's `.env` files, and the ambient environment, which wins over both except
+      // and the profile's `.env` files, and the ambient environment, which wins over both except
       // where `env.override` says.
       envs: Object.assign(
         baseEnvs(workspaceDir),
@@ -83,7 +83,7 @@ export class InfraManager {
       exec: deps.exec ?? execLines,
       spawnInherit: deps.spawnInherit ?? spawnInherit,
       stream: deps.stream ?? streamLines,
-      // The session a callback's `control` drives: this config's, in this mode — the same
+      // The session a callback's `control` drives: this config's, in this profile — the same
       // config file a session started here records, wherever the command was run from.
       connectControl:
         deps.connectControl ??
@@ -92,7 +92,7 @@ export class InfraManager {
             workspaceDir,
             configPath:
               findConfigPath(workspaceDir) ?? path.join(workspaceDir, 'stackctl.config.ts'),
-            mode: config.envMode,
+            profile: config.profile,
             apiPort: config.apiPort,
           })),
     };

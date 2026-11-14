@@ -12,7 +12,7 @@ const ws = fixtureWorkspace();
 /** The development session folders there are now. */
 const sessionFolders = (): string[] => {
   try {
-    return fs.readdirSync(path.join(ws(), 'node_modules/.stackctl/modes/development/sessions'));
+    return fs.readdirSync(path.join(ws(), 'node_modules/.stackctl/profiles/development/sessions'));
   } catch {
     return [];
   }

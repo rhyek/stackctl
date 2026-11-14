@@ -128,7 +128,7 @@ test('Ctrl+C once asks for a second; twice quits with exit 0 and gives the termi
   const printed = expectTerminalRestored(pty);
   expect(printed).toContain('■ stackctl exited after');
   expect(printed).toMatch(
-    /logfile: node_modules\/\.stackctl\/modes\/development\/sessions\/\d+\/logs\.txt/,
+    /logfile: node_modules\/\.stackctl\/profiles\/development\/sessions\/\d+\/logs\.txt/,
   );
 });
 
@@ -144,7 +144,7 @@ test("writes the keys to the event log: r's restart and Ctrl+C's quit, each with
   expect(await pty.waitForExit()).toEqual({ code: 0, signal: null });
 
   // Each session has a file of its own: this one is the latest.
-  const sessions = path.join(ws(), 'node_modules/.stackctl/modes/development/sessions');
+  const sessions = path.join(ws(), 'node_modules/.stackctl/profiles/development/sessions');
   const latest = fs
     .readdirSync(sessions)
     .sort((a, b) => Number(a) - Number(b))
