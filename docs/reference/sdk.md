@@ -52,7 +52,7 @@ Starts a headless session as a child of the calling process and resolves once th
 every service asked for are healthy. See [Tests and CI](../guide/testing.md).
 
 ```ts
-const stack = await startStack({ mode: 'test', services: ['web'] });
+const stack = await startStack({ mode: 'test', services: ['api'] });
 try {
   await fetch(`${stack.origins.api}/health`);
 } finally {
