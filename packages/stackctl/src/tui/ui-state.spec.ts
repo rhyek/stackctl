@@ -708,8 +708,8 @@ describe('the commands menu', () => {
     }
   });
 
-  test('a click on ↑↓ choose moves the highlight down one row', () => {
-    const hint = hintsFor(keyContext(open(), context()), 'menu').find((h) => h.key === '↑↓')!;
+  test('a click on ↑ ↓ choose moves the highlight down one row', () => {
+    const hint = hintsFor(keyContext(open(), context()), 'menu').find((h) => h.key === '↑ ↓')!;
     expect(run(open(), [{ click: hint.action }]).state.menu?.selected).toBe(1);
   });
 });

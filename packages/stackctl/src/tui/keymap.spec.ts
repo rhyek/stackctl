@@ -90,9 +90,9 @@ function pressFor(hintKey: string): [string, KeyFlags] {
       return ['', { escape: true }];
     case '⏎':
       return ['\r', { return: true }];
-    case '↑↓':
+    case '↑ ↓':
       return ['', { downArrow: true }];
-    case '←→':
+    case '← →':
       return ['', { rightArrow: true }];
   }
   expect(hintKey).toHaveLength(1);
@@ -131,7 +131,7 @@ function allPresses(): [string, KeyFlags][] {
   return presses;
 }
 
-/** A row as drawn: `  ` then hints 3 cells apart, groups split by `  │  ` (run-screen §2.11.1). */
+/** A row as drawn: `  ` then hints 2 cells apart, groups split by `  │  ` (run-screen §2.11.1). */
 function keysRow(hints: Hint[]): string {
   const groups: string[][] = [];
   let last: number | undefined;
@@ -143,7 +143,7 @@ function keysRow(hints: Hint[]): string {
     }
     groups.at(-1)!.push(text);
   }
-  return `  ${groups.map((g) => g.join('   ')).join('  │  ')}`;
+  return `  ${groups.map((g) => g.join('  ')).join('  │  ')}`;
 }
 
 function menuRow(hints: Hint[]): string {
@@ -167,7 +167,7 @@ const HIDDEN: Record<Mode, (a: Action) => boolean> = {
     ].includes(a.type),
   // The filter row has no room for `^c quit`.
   filter: (a) => ['filter-input', 'filter-backspace', 'quit'].includes(a.type),
-  // ↑ and ← are drawn as the `↑↓` and `←→` hints, whose clicks go down and right.
+  // ↑ and ← are drawn as the `↑ ↓` and `← →` hints, whose clicks go down and right.
   commands: (a) =>
     (a.type === 'menu-move' && a.delta === -1) ||
     (a.type === 'menu-service' && a.delta === -1) ||
@@ -220,19 +220,19 @@ describe('the key table', () => {
 describe('the keys row', () => {
   test('an app service focused, running: spec mockup 1', () => {
     expect(keysRow(hintsFor(ctx({ focused: appFocused() })))).toBe(
-      '  ←→ select   r restart   s stop   m commands  │  f filter   c clear  │  ^c quit',
+      '  ← → select  r restart  s stop  m commands  │  f filter  c clear  │  ^c quit',
     );
   });
 
   test('an infra entry focused: spec mockup 2', () => {
     expect(keysRow(hintsFor(ctx({ focused: infraFocused() })))).toBe(
-      '  ←→ select   r restart   s stop   R reset data  │  f filter   c clear  │  ^c quit',
+      '  ← → select  r restart  s stop  R reset data  │  f filter  c clear  │  ^c quit',
     );
   });
 
   test('starting up and after a startup failure: spec mockup 3', () => {
     for (const phase of ['starting', 'failed'] as const) {
-      expect(keysRow(hintsFor(ctx({ phase })))).toBe('  f filter   c clear  │  ^c quit');
+      expect(keysRow(hintsFor(ctx({ phase })))).toBe('  f filter  c clear  │  ^c quit');
       expect(resolveKey(ctx({ phase }), 't', {})).toBeNull();
     }
   });
@@ -253,15 +253,15 @@ describe('the keys row', () => {
     }
     // A service pending at startup is about to start: its key reads what it will once it has.
     expect(keysRow(hintsFor(ctx({ phase: 'starting', focused: appFocused('pending') })))).toBe(
-      '  ←→ select   r restart   s stop   m commands  │  f filter   c clear  │  ^c quit',
+      '  ← → select  r restart  s stop  m commands  │  f filter  c clear  │  ^c quit',
     );
     expect(keysRow(hintsFor(ctx({ phase: 'starting', focused: appFocused('stopped') })))).toBe(
-      '  ←→ select   r restart   s start   m commands  │  f filter   c clear  │  ^c quit',
+      '  ← → select  r restart  s start  m commands  │  f filter  c clear  │  ^c quit',
     );
   });
 
   test('running with no entries shows the log keys and quit', () => {
-    expect(keysRow(hintsFor(ctx()))).toBe('  f filter   c clear  │  ^c quit');
+    expect(keysRow(hintsFor(ctx()))).toBe('  f filter  c clear  │  ^c quit');
   });
 
   test('t is no key, in any state', () => {
@@ -274,7 +274,7 @@ describe('the keys row', () => {
   test('an applied filter shows its terms on f and adds esc clear filter', () => {
     const hints = hintsFor(ctx({ focused: appFocused(), filter: 'error api' }));
     expect(keysRow(hints)).toBe(
-      '  ←→ select   r restart   s stop   m commands  │  f filter: error api   esc clear filter   c clear  │  ^c quit',
+      '  ← → select  r restart  s stop  m commands  │  f filter: error api  esc clear filter  c clear  │  ^c quit',
     );
     expect(hints.find((h) => h.key === 'f')).toMatchObject({
       label: 'filter:',
@@ -320,7 +320,7 @@ describe('the keys row', () => {
         .filter((h) => h.group === 1)
         .map((h) => [h.key, h.label, h.disabled]),
     ).toEqual([
-      ['←→', 'select', false],
+      ['← →', 'select', false],
       ['r', 'restart', true],
       ['s', 'start', false],
       ['R', 'reset data', false],
@@ -331,10 +331,10 @@ describe('the keys row', () => {
       expect(
         group1.map((h) => h.key),
         state,
-      ).toEqual(['←→', 'r', 's', 'R']);
-      // Every action on it is dim; ←→ still moves the selection.
+      ).toEqual(['← →', 'r', 's', 'R']);
+      // Every action on it is dim; ← → still moves the selection.
       expect(
-        group1.filter((h) => h.key !== '←→').every((h) => h.disabled),
+        group1.filter((h) => h.key !== '← →').every((h) => h.disabled),
         state,
       ).toBe(true);
     }
@@ -416,7 +416,7 @@ describe('filter mode', () => {
   const c = ctx({ mode: 'filter', focused: appFocused() });
 
   test('its row is ⏎ apply and esc clear, with no ^c quit', () => {
-    expect(keysRow(hintsFor(c))).toBe('  ⏎ apply   esc clear');
+    expect(keysRow(hintsFor(c))).toBe('  ⏎ apply  esc clear');
     expect(resolveKey(c, 'c', { ctrl: true })).toEqual({ type: 'quit' });
   });
 
@@ -451,9 +451,11 @@ describe('commands mode', () => {
     expect(resolveKey(menu(), 'f', {})).toBeNull();
   });
 
-  test('its own hint row, without ←→ service for one app service', () => {
-    expect(menuRow(hintsFor(menu(), 'menu'))).toBe('↑↓ choose  ←→ service  ⏎ run  esc close');
-    expect(menuRow(hintsFor(menu({ appServices: 1 }), 'menu'))).toBe('↑↓ choose  ⏎ run  esc close');
+  test('its own hint row, without ← → service for one app service', () => {
+    expect(menuRow(hintsFor(menu(), 'menu'))).toBe('↑ ↓ choose  ← → service  ⏎ run  esc close');
+    expect(menuRow(hintsFor(menu({ appServices: 1 }), 'menu'))).toBe(
+      '↑ ↓ choose  ⏎ run  esc close',
+    );
     expect(resolveKey(menu({ appServices: 1 }), '', { rightArrow: true })).toBeNull();
   });
 

@@ -13,12 +13,12 @@ screen with their combined log. Everything in it works with the keyboard or the 
 
 ## Choosing services
 
-<llm-exclude><TerminalPlayer src="/casts/picker-1794447091.cast" label="The service picker: picking the frontend selects the backend it needs, then the list is filtered" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/picker-1794682007.cast" label="The service picker: picking the frontend selects the backend it needs, then the list is filtered" /></llm-exclude>
 <llm-only>
 
 ```text
 ── example ⎇ main ───────────────────────────────────── choose services ──
-  space select   ↑↓ move   / filter   n none   ⏎ start   ^c quit
+  space select  ↑ ↓ move  / filter  n none  ⏎ start  ^c quit
 
     ◉ backend     needed by frontend
     ◉ frontend
@@ -44,15 +44,15 @@ selection.
 
 The log fills the screen, above a footer:
 
-<llm-exclude><TerminalPlayer src="/casts/run-screen-1794549354.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/run-screen-1794682036.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
 <llm-only>
 
 ```text
 ── example ⎇ main ────────────────────────────────────────────────────────
-● backend 63M   ● frontend 239M   ● worker 25M
-infra: ● db 26M   ● mail 9M
-←→ select   r restart   s stop   m commands
-logs: f filter   c clear  │  ^c quit
+❯ ● backend 64M  ● frontend 236M  ● worker 26M
+infra: ● db 26M  ● mail 18M
+← → select  r restart  s stop  m commands
+logs: f filter  c clear  │  ^c quit
 backend ↗   public ↗   frontend ↗   root ↗   inbox ↗   mail ↗
 ```
 
@@ -93,7 +93,7 @@ code `1`.
 | `esc`                     | Drop the text selection, then the newest notice, then the filter.                       |
 | Ctrl+C                    | Quit. Asks for a second press within two seconds once services are running.             |
 
-In the commands menu, `↑↓` choose a script, `←→` switch service, `⏎` runs it with the
+In the commands menu, `↑ ↓` choose a script, `← →` switch service, `⏎` runs it with the
 service's environment, and `esc` closes the menu.
 
 ## Mouse

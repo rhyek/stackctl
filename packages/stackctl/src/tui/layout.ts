@@ -401,7 +401,11 @@ function ruleLine(workspace: SessionSnapshot['workspace'], cols: number): Segmen
 // ---------------------------------------------------------------------------
 
 /** Blank cells between two entries of the services row. */
-const ENTRY_GAP = 3;
+const ENTRY_GAP = 2;
+
+/** The cursor before the focused entry, the picker's `❯`, drawn like the name it points at. */
+const CARET: Segment[] = [{ text: '❯', color: SELECTED_COLOR, bold: true }, blank(1)];
+const CARET_WIDTH = rowWidth(CARET);
 
 interface Piece {
   col: number;
@@ -436,11 +440,15 @@ function servicesRows(
   const rows: Piece[][] = [[]];
   const rects: ItemRect[] = [];
   const targets: Target[] = [];
-  // The next entry starts here, at the row's first cell, or `ENTRY_GAP` cells after the last.
+  // The next entry starts here, at the row's first cell, or `ENTRY_GAP` cells after the last,
+  // counted without the caret. Every row keeps room for the caret, so where the rows wrap never
+  // depends on the focus; on the focused entry's row, `shift` moves the entries after it along.
   let next = 1;
+  let shift = 0;
   const newRow = () => {
     rows.push([]);
     next = 1;
+    shift = 0;
   };
   entries.forEach((entry, index) => {
     const w = rowWidth(entry.content);
@@ -453,24 +461,32 @@ function servicesRows(
       const label = 1;
       rows[rows.length - 1]!.push({ col: label, segments: [{ text: 'infra:', dim: true }] });
       next = label + 7;
-    } else if (rows[rows.length - 1]!.length > 0 && next + w - 1 > cols) {
+    } else if (rows[rows.length - 1]!.length > 0 && next + w - 1 + CARET_WIDTH > cols) {
       newRow();
     }
     const focused = index === focusAt;
-    // The focused entry's name bold and in `SELECTED_COLOR`; the dot keeps its state's color.
+    // The focused entry behind the caret, its name bold and in `SELECTED_COLOR`; the dot keeps
+    // its state's color.
     const content = focused
-      ? entry.content.map((s) =>
-          s.text === entry.name ? { ...s, color: SELECTED_COLOR, bold: true } : s,
-        )
+      ? [
+          ...CARET,
+          ...entry.content.map((s) =>
+            s.text === entry.name ? { ...s, color: SELECTED_COLOR, bold: true } : s,
+          ),
+        ]
       : entry.content;
-    rows[rows.length - 1]!.push({ col: next, segments: content });
+    const col = next + shift;
+    rows[rows.length - 1]!.push({ col, segments: content });
     const row = firstRow + rows.length - 1;
-    rects.push({ col: next, row });
+    rects.push({ col, row });
     targets.push({
       id: `entry:${entry.kind}:${entry.name}`,
-      rect: { col: next, row, width: w, height: 1 },
+      rect: { col, row, width: rowWidth(content), height: 1 },
       action: { type: 'focus-index', index },
     });
+    if (focused) {
+      shift = CARET_WIDTH;
+    }
     next += w + ENTRY_GAP;
   });
   return {
@@ -548,7 +564,7 @@ function filterRow(
   const prompt = 'filter › ';
   const hintsRow = layoutHints(hints, Number.MAX_SAFE_INTEGER, {
     indent: 0,
-    gap: 3,
+    gap: 2,
     separators: false,
   });
   const hintsWidth = rowWidth(hintsRow.rows[0] ?? []);
@@ -618,7 +634,7 @@ export function footerLayout(
   const targets: Target[] = [...services.targets];
   const keysOptions: HintLayoutOptions = {
     indent: 0,
-    gap: 3,
+    gap: 2,
     separators: true,
     headings: KEY_GROUP_HEADINGS,
     keepWithPrevious: KEY_GROUPS_KEPT_WITH_PREVIOUS,

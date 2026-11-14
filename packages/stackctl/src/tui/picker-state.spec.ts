@@ -442,10 +442,10 @@ describe('no rows', () => {
 });
 
 describe('hints', () => {
-  /** The press each hint advertises. `↑↓` is ↓'s hint. */
+  /** The press each hint advertises. `↑ ↓` is ↓'s hint. */
   const PRESS_FOR: Record<string, Press> = {
     space: KEYS.space,
-    '↑↓': KEYS.down,
+    '↑ ↓': KEYS.down,
     '/': '/',
     esc: KEYS.esc,
     n: 'n',
@@ -469,8 +469,9 @@ describe('hints', () => {
       expect(hints.map((t) => t.id.slice('hint:'.length))).toEqual(
         pickerHints(state).map((h) => `${h.key} ${h.label}`),
       );
+      const keyOf = new Map(pickerHints(state).map((h) => [`hint:${h.key} ${h.label}`, h.key]));
       for (const target of hints) {
-        const key = target.id.slice('hint:'.length).split(' ')[0]!;
+        const key = keyOf.get(target.id)!;
         const press = PRESS_FOR[key]!;
         expect(press, key).toBeDefined();
         const event = keyEvent(press);
@@ -490,7 +491,7 @@ describe('hints', () => {
       pickerHints(state).map((h) => `${h.key} ${h.label}${h.detail ? ` ${h.detail}` : ''}`);
     expect(labels(stateOf())).toEqual([
       'space select',
-      '↑↓ move',
+      '↑ ↓ move',
       '/ filter',
       'n none',
       '⏎ start',
@@ -498,7 +499,7 @@ describe('hints', () => {
     ]);
     expect(labels(run(stateOf(), ['/', 'w', KEYS.enter]).state)).toEqual([
       'space select',
-      '↑↓ move',
+      '↑ ↓ move',
       '/ filter: w',
       'esc clear filter',
       'n none',
@@ -514,7 +515,7 @@ describe('hints', () => {
     expect(start(stateOf({ saved: ['worker'] })).disabled).toBe(false);
   });
 
-  test('↑↓ move moves the cursor down one row', () => {
+  test('↑ ↓ move moves the cursor down one row', () => {
     const { state } = run(stateOf(), [{ click: { type: 'move', delta: 1 } }]);
     expect(state.cursor).toBe('frontend');
   });

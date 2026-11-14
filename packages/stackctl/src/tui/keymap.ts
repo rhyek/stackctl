@@ -112,7 +112,7 @@ export type KeySpec =
   | { printable: true };
 
 export interface HintSpec {
-  /** As drawn: `r`, `^c`, `esc`, `⏎`, `↑↓`. */
+  /** As drawn: `r`, `^c`, `esc`, `⏎`, `↑ ↓`. */
   key: string;
   label: string;
   /** Drawn after the label, in cyan: the applied filter's terms. */
@@ -231,7 +231,7 @@ export const KEY_TABLE: readonly KeyBinding[] = [
     mode: 'normal',
     when: focused,
     key: { named: 'right' },
-    hint: { key: '←→', label: 'select', group: 1 },
+    hint: { key: '← →', label: 'select', group: 1 },
     action: { type: 'focus-next' },
   },
   { mode: 'normal', when: focused, key: { named: 'left' }, action: { type: 'focus-prev' } },
@@ -374,11 +374,11 @@ export const KEY_TABLE: readonly KeyBinding[] = [
     action: (text) => ({ type: 'filter-input', text }),
   },
 
-  // Commands mode: the menu's own hint row. ↑ and ← are the hidden halves of `↑↓` and `←→`.
+  // Commands mode: the menu's own hint row. ↑ and ← are the hidden halves of `↑ ↓` and `← →`.
   {
     mode: 'commands',
     key: { named: 'down' },
-    hint: { key: '↑↓', label: 'choose', group: 1, row: 'menu' },
+    hint: { key: '↑ ↓', label: 'choose', group: 1, row: 'menu' },
     action: { type: 'menu-move', delta: 1 },
   },
   { mode: 'commands', key: { named: 'up' }, action: { type: 'menu-move', delta: -1 } },
@@ -386,7 +386,7 @@ export const KEY_TABLE: readonly KeyBinding[] = [
     mode: 'commands',
     when: (ctx) => (ctx.menu?.appServices ?? 0) > 1,
     key: { named: 'right' },
-    hint: { key: '←→', label: 'service', group: 1, row: 'menu' },
+    hint: { key: '← →', label: 'service', group: 1, row: 'menu' },
     action: { type: 'menu-service', delta: 1 },
   },
   {

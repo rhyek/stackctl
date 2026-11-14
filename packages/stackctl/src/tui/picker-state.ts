@@ -265,7 +265,7 @@ const PICKER_KEYS: readonly PickerBinding[] = [
     mode: 'list',
     when: hasRows,
     key: { named: 'down' },
-    hint: { key: '↑↓', label: 'move' },
+    hint: { key: '↑ ↓', label: 'move' },
     action: { type: 'move', delta: 1 },
   },
   { mode: 'list', when: hasRows, key: { named: 'up' }, action: { type: 'move', delta: -1 } },

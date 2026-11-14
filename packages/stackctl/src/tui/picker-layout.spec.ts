@@ -81,7 +81,7 @@ describe('frames', () => {
     expect(frame(layout)).toBe(
       [
         '── example ⎇ 1.0.0 ────────────────────────────────────────────────────────────────── choose services ──',
-        '  space select   ↑↓ move   / filter   n none   ⏎ start   ^c quit',
+        '  space select  ↑ ↓ move  / filter  n none  ⏎ start  ^c quit',
         '',
         '  ❯ ◉ backend     needed by frontend',
         '    ◉ frontend',
@@ -104,12 +104,12 @@ describe('frames', () => {
     expect(frame(layout)).toBe(
       [
         '── example ⎇ 1.0.0 ─────────────────────── choose services ──',
-        '  space select   ↑↓ move   / filter   n none   ⏎ start',
-        '  ^c quit',
+        '  space select  ↑ ↓ move  / filter  n none  ⏎ start  ^c quit',
         '',
         '  ❯ ◉ backend     needed by frontend',
         '    ◉ frontend',
         '    ○ worker',
+        '',
         '',
         '',
         '',
@@ -356,7 +356,7 @@ describe('the filter row', () => {
   test('replaces the keys row while the input is open, and keeps the row count', () => {
     const state = after(createPickerState(pickerInput()), [key('/'), key('f'), key('r')]);
     const layout = pickerLayout(state, pickerInput(), 61, 12);
-    expect(text(layout.rows[1]!)).toBe('  filter › fr▏      ⏎ done   esc clear');
+    expect(text(layout.rows[1]!)).toBe('  filter › fr▏      ⏎ done  esc clear');
     expect(layout.rows[1]!.find((seg) => seg.text === '▏')!.color).toBe(FOCUS_COLOR);
     // The keys row takes two rows at 61 columns; the filter row keeps both.
     expect(text(layout.rows[2]!)).toBe('');
@@ -379,7 +379,7 @@ describe('the filter row', () => {
       .map((c) => key(c));
     const state = after(createPickerState(pickerInput()), [key('/'), ...typing, key('y')]);
     const row = text(pickerLayout(state, pickerInput(), 50, 12).rows[1]!);
-    expect(row).toBe('  filter › …xxxxxxxxxxxxy▏      ⏎ done   esc clear');
+    expect(row).toBe('  filter › …xxxxxxxxxxxxxy▏      ⏎ done  esc clear');
     expect(stringWidth(row)).toBeLessThanOrEqual(50);
   });
 });
@@ -453,6 +453,6 @@ describe('targets match the drawn cells', () => {
       '/ filter: 数',
     );
     const esc = hints.find((t) => t.id === 'hint:esc clear filter')!;
-    expect(esc.rect.col).toBe(filter.rect.col + filter.rect.width + 3);
+    expect(esc.rect.col).toBe(filter.rect.col + filter.rect.width + 2);
   });
 });

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.2
+
+### Features
+
+- **The run screen's footer marks the focused service with a `❯`, as the picker does**, and the
+  key hints sit closer together.
+
 ## 0.7.1
 
 ### Features

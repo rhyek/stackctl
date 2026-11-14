@@ -151,7 +151,7 @@ describe('Picker', () => {
     expect(m.frame()).toBe(
       [
         '── example ⎇ 1.0.0 ────────────────────────────────────────────────────────────────── choose services ──',
-        '  space select   ↑↓ move   / filter   n none   ⏎ start   ^c quit',
+        '  space select  ↑ ↓ move  / filter  n none  ⏎ start  ^c quit',
         '',
         '  ❯ ◉ backend     needed by frontend',
         '    ◉ frontend',
