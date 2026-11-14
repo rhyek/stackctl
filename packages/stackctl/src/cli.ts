@@ -26,12 +26,7 @@ import { takeHandedSessionId } from './running.js';
 // changes before a session starts over from them (see relaunch.ts).
 import { relaunchWithCappedYoungGeneration } from './relaunch.js';
 import { readOwnVersion } from './skill.js';
-import {
-  findConfigPath,
-  locateWorkspace,
-  needsNoWorkspace,
-  resolveWorkspaceDirArg,
-} from './workspace-root.js';
+import { locateWorkspace, needsNoWorkspace, resolveWorkspaceDirArg } from './workspace-root.js';
 
 // The entry point: Commander wiring only. What a command runs lives under `commands/` and is
 // imported by its action, so a command loads its own code and nothing else's — `--help` and
@@ -153,20 +148,6 @@ function anchorAtWorkspaceRoot(invocationCwd: string): void {
   // Before anything puts file values into `process.env`: what is there now is what the shell
   // handed us, and only that may win over a `.env` file (see captureShellEnv).
   captureShellEnv();
-}
-
-/**
- * What `start` and `run` do before anything else: type-check the workspace's config with its own
- * `tsc`, and exit 1 on a type error (see `config-typecheck.ts`).
- */
-async function typecheckConfigOrExit(): Promise<void> {
-  const root = process.cwd();
-  const configPath = findConfigPath(root);
-  if (configPath === null) {
-    return;
-  }
-  const { assertConfigTypechecks } = await import('./config-typecheck.js');
-  await assertConfigTypechecks(configPath, root);
 }
 
 /** Commander option-parser for repeatable `-s/--service <name>` flags. */
@@ -329,14 +310,14 @@ program
         console.error(agentRefusal);
         process.exit(1);
       }
-      await typecheckConfigOrExit();
+      await (await import('./config-typecheck.js')).checkConfigTypes();
       await runDetach(opts);
     }
 
     relaunchWithCappedYoungGeneration();
     // After starting over, so it runs once; the session `--detach` starts was checked by it.
     if (!detachedSession) {
-      await typecheckConfigOrExit();
+      await (await import('./config-typecheck.js')).checkConfigTypes();
     }
     const { runDefaultAction } = await import('./commands/default.js');
     await runDefaultAction(opts);
@@ -529,7 +510,7 @@ program
         code: 'commander.missingArgument',
       });
     }
-    await typecheckConfigOrExit();
+    await (await import('./config-typecheck.js')).checkConfigTypes();
     const { runOneOffCommand } = await import('./commands/one-off.js');
     await runOneOffCommand({ kind: 'run', target, script, args: after }, oneOffContext(flags));
   });

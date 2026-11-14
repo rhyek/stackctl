@@ -1,25 +1,27 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { stateDirOf } from './log-files.js';
+import { findConfigPath } from './workspace-root.js';
 
-// `start` and `run` type-check `stackctl.config.ts` with the `tsc` installed beside it before they
-// do anything, and refuse a config with type errors. A plain `tsc` process, not the compiler API:
+// What `start` and `run` do first: type-check `stackctl.config.ts` with the `tsc` of the
+// `typescript` beside it, and exit 1 on a type error. A `tsc` process, not the compiler API:
 // TypeScript 7 has none.
 
-/** The compiler options stackctl sets over the workspace's tsconfig for its check. */
+/** Set over the tsconfig beside the config: check the config only, and write nothing. */
 const OVERRIDES = {
   noEmit: true,
-  // An incremental or composite base would write its build info into the workspace.
   composite: false,
   incremental: false,
   tsBuildInfoFile: null,
-  // Without `composite`, these need `declaration`, which the base may only get from it.
   emitDeclarationOnly: false,
   declarationMap: false,
+  // Errors inside declaration files, in node_modules say, are no fault of the config's.
+  skipLibCheck: true,
 };
 
-/** Flags for a workspace without a tsconfig. */
+/** Without a tsconfig. */
 const BARE_FLAGS = [
   '--noEmit',
   '--strict',
@@ -31,110 +33,73 @@ const BARE_FLAGS = [
   '--allowImportingTsExtensions',
 ];
 
-/** The `tsc` script of the `typescript` installed in `dir`, or `null` when there is none. */
-export function findTsc(dir: string): string | null {
-  const manifest = path.join(dir, 'node_modules', 'typescript', 'package.json');
-  if (!fs.existsSync(manifest)) {
-    return null;
+/**
+ * Type-checks the workspace's config at `root` and exits 1, printing tsc's errors, when it has
+ * one. A JavaScript config, or one with no `typescript` beside it that runs, passes silently:
+ * `run` prints nothing but its script's output.
+ */
+export async function checkConfigTypes(root: string = process.cwd()): Promise<void> {
+  const config = findConfigPath(root);
+  const tsc = config !== null && /\.[mc]?ts$/.test(config) ? await findTsc(root) : null;
+  if (config === null || tsc === null) {
+    return;
   }
-  const { bin } = JSON.parse(fs.readFileSync(manifest, 'utf8')) as {
-    bin?: string | Record<string, string>;
-  };
-  const rel = typeof bin === 'string' ? bin : bin?.tsc;
-  if (rel === undefined) {
-    return null;
+  const pretty = ['--pretty', process.stderr.isTTY ? 'true' : 'false'];
+  const base = path.join(root, 'tsconfig.json');
+  // The tsconfig `-p` takes: the one beside the config, extended. `rootDir` is set since
+  // TypeScript 7 defaults it to this file's directory.
+  const project = path.join(stateDirOf(root), `tsconfig.check-${String(process.pid)}.json`);
+  let args = [...BARE_FLAGS, ...pretty, config];
+  if (fs.existsSync(base)) {
+    fs.mkdirSync(path.dirname(project), { recursive: true });
+    const tsconfig = { extends: base, compilerOptions: { ...OVERRIDES, rootDir: root } };
+    fs.writeFileSync(project, JSON.stringify({ ...tsconfig, files: [config], include: [] }));
+    args = ['-p', project, ...pretty];
   }
-  const script = path.resolve(path.dirname(manifest), rel);
-  return fs.existsSync(script) ? script : null;
+  const result = await run(tsc, args, root).catch(() => null);
+  fs.rmSync(project, { force: true });
+  if (result !== null && result.code !== 0) {
+    console.error(`stackctl: ${path.basename(config)} has type errors:\n\n${result.out.trimEnd()}`);
+    process.exit(1);
+  }
 }
 
 /**
- * The tsconfig `tsc -p` checks the config with: the workspace's `tsconfig`, extended, with
- * {@link OVERRIDES}, and the config file its only file. `rootDir` is the config's directory,
- * since TypeScript 7 defaults it to the directory of the tsconfig, which this one isn't in.
+ * The command for the `tsc` of the `typescript` in `dir`, or `null`. TypeScript 7's `tsc` script
+ * only starts its native binary, so the binary is run itself, as its `lib/getExePath.js` finds it,
+ * which saves a Node.js start-up. Any other `typescript` has its `bin/tsc` run with Node.js.
  */
-export function checkTsconfig(configPath: string, base: string): object {
-  return {
-    extends: base,
-    compilerOptions: { ...OVERRIDES, rootDir: path.dirname(configPath) },
-    files: [configPath],
-    include: [],
-  };
+async function findTsc(dir: string): Promise<string[] | null> {
+  const pkg = path.join(dir, 'node_modules', 'typescript');
+  try {
+    const locator = pathToFileURL(path.join(pkg, 'lib', 'getExePath.js')).href;
+    const { default: getExePath } = (await import(locator)) as { default: () => unknown };
+    const exe = getExePath();
+    if (typeof exe === 'string' && fs.existsSync(exe)) {
+      return [exe];
+    }
+  } catch {
+    // Not TypeScript 7, or not as it was.
+  }
+  const script = path.join(pkg, 'bin', 'tsc');
+  return fs.existsSync(script) ? [process.execPath, script] : null;
 }
 
-/** What a check found: nothing to check with, a clean config, or tsc's report of its errors. */
-export type TypecheckResult =
-  | { kind: 'skipped'; reason: string }
-  | { kind: 'ok' }
-  | { kind: 'errors'; output: string };
-
-/** Runs `tsc` with `args` in `cwd`, resolving with its exit code and everything it printed. */
-function runTsc(tsc: string, args: string[], cwd: string): Promise<{ code: number; out: string }> {
+/** Runs `command` in `cwd`; resolves with its exit code and output, rejects if it can't start. */
+function run(
+  [command, ...prefix]: string[],
+  args: string[],
+  cwd: string,
+): Promise<{ code: number; out: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [tsc, ...args], {
+    const child = spawn(command!, [...prefix, ...args], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const chunks: Buffer[] = [];
-    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => chunks.push(chunk));
+    const out: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => out.push(chunk));
     child.on('error', reject);
-    child.on('close', (code, signal) =>
-      resolve({
-        code: code ?? (signal ? 1 : 0),
-        out: Buffer.concat(chunks).toString('utf8'),
-      }),
-    );
+    child.on('close', (code) => resolve({ code: code ?? 1, out: Buffer.concat(out).toString() }));
   });
-}
-
-/**
- * Type-checks the config at `configPath` in the workspace at `root` with the `tsc` of the
- * `typescript` in the config's directory: against the `tsconfig.json` beside it, or with
- * {@link BARE_FLAGS} when there is none. A JavaScript config, or one without `typescript` beside
- * it, is skipped.
- */
-export async function typecheckConfig(
-  configPath: string,
-  root: string,
-  opts: { pretty?: boolean } = {},
-): Promise<TypecheckResult> {
-  if (!/\.[mc]?ts$/.test(configPath)) {
-    return { kind: 'skipped', reason: 'a JavaScript config' };
-  }
-  const dir = path.dirname(configPath);
-  const tsc = findTsc(dir);
-  if (tsc === null) {
-    return { kind: 'skipped', reason: 'no typescript installed' };
-  }
-  const pretty = ['--pretty', String(opts.pretty ?? false)];
-  const base = path.join(dir, 'tsconfig.json');
-  if (!fs.existsSync(base)) {
-    const { code, out } = await runTsc(tsc, [...BARE_FLAGS, ...pretty, configPath], dir);
-    return code === 0 ? { kind: 'ok' } : { kind: 'errors', output: out };
-  }
-  const stateDir = stateDirOf(root);
-  fs.mkdirSync(stateDir, { recursive: true });
-  const project = path.join(stateDir, `tsconfig.check-${String(process.pid)}.json`);
-  fs.writeFileSync(project, JSON.stringify(checkTsconfig(configPath, base), null, 2));
-  try {
-    const { code, out } = await runTsc(tsc, ['-p', project, ...pretty], dir);
-    return code === 0 ? { kind: 'ok' } : { kind: 'errors', output: out };
-  } finally {
-    fs.rmSync(project, { force: true });
-  }
-}
-
-/**
- * Exits 1, printing tsc's report, when the config at `configPath` has type errors. A config it
- * can't check passes silently: `run` prints nothing but its script's output.
- */
-export async function assertConfigTypechecks(configPath: string, root: string): Promise<void> {
-  const result = await typecheckConfig(configPath, root, { pretty: process.stderr.isTTY });
-  if (result.kind === 'errors') {
-    console.error(
-      `stackctl: ${path.basename(configPath)} has type errors:\n\n${result.output.trimEnd()}`,
-    );
-    process.exit(1);
-  }
 }
