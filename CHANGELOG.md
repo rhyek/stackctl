@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.1
+
+### Fixes
+
+- **The config type check before `start` and `run` takes about a third of the time, and an error
+  inside a declaration file no longer fails it.**
+
 ## 0.8.0
 
 ### Features

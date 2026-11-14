@@ -220,9 +220,11 @@ stackctl.config.ts(4,24): error TS2322: Type 'string' is not assignable to type 
 
 - **The check runs the `tsc` of the `typescript` installed beside the config**, in the workspace
   root's `node_modules`. Without one, there is no check.
-- **The `tsconfig.json` beside the config sets the compiler options.** Only the config and what
-  it imports are checked, and nothing is written. Without a `tsconfig.json`, the check runs with
-  `--strict`, `--module nodenext` and `--target esnext`.
+- **The `tsconfig.json` beside the config sets the compiler options.** The config, and the source
+  files it imports, are checked against the declarations they use, never the declaration files
+  themselves, so an error inside one in `node_modules` doesn't count. Nothing is written.
+  Without a `tsconfig.json`, the check runs with `--strict`, `--module nodenext` and
+  `--target esnext`.
 - **A JavaScript config (`.js`, `.mjs`) isn't checked**, and no other command checks.
 
 ## `--workspace-dir`
