@@ -26,8 +26,9 @@ function start(
 
 /**
  * `stackctl stop` and `stackctl reset`, against real sessions of the CLI compiled from the current
- * source (as `cli.spec.ts` does, in a directory of this file's own), and against stand-in sessions:
- * a process that answers its control API as a session would, but doesn't do what it's asked.
+ * source (as the `cli-spec` files do, in a directory of this file's own), and against stand-in
+ * sessions: a process that answers its control API as a session would, but doesn't do what it's
+ * asked.
  */
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const buildDir = path.join(packageDir, 'node_modules', '.cache', 'stop-spec');

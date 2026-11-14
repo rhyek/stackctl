@@ -1,9 +1,9 @@
 /**
  * The CLI the e2e suite runs: compiled from the current source once per run (by the global setup),
- * as `cli.spec.ts` does, so no test runs against a stale `dist/` and nothing touches it. It goes
- * under the package's own `node_modules`, so its imports resolve the package's dependencies, in a
- * directory of its own: `cli.spec.ts` deletes its `cli-spec` copy as it starts, and may be running
- * at the same time. It is laid out as the published package is, `dist/` beside `assets/` and
+ * as the `src/cli-spec/` files do, so no test runs against a stale `dist/` and nothing touches it.
+ * It goes under the package's own `node_modules`, so its imports resolve the package's
+ * dependencies, in a directory of its own: each `cli-spec` file deletes its own copy as it starts,
+ * and may be running at the same time. It is laid out as the published package is, `dist/` beside `assets/` and
  * `skills/`, which the compiled code reads from its own directory's parent.
  */
 import { execFile } from 'node:child_process';

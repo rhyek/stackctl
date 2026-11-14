@@ -1,21 +1,21 @@
 name: ci
 
-# Runs on every pull request, where the `check` job is a required status check for merging
-# into `main` (.github/rulesets/main.json), and again from release.yaml before a release is
-# published, so the merged result is tested too.
+# Runs on every pull request. The jobs run side by side; `check` waits for all of them, and it is
+# the required status check for merging into `main` (.github/rulesets/main.json), so a job can be
+# added or split without touching the ruleset.
 on:
   pull_request:
     branches: [main]
-  workflow_call:
 
 permissions: {}
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  group: ci-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  check:
+  lint:
+    name: build and lint
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -45,8 +45,8 @@ jobs:
       - run: pnpm --dir example install --frozen-lockfile
 
       # Build first: the lint's type-aware rules read `stackctl`'s types in `example/` (and
-      # `postinstall.js`'s import) from the package's compiled `dist/`, and some tests import it.
-      # The build also builds the docs site, which fails on a dead link, and packages its llms.txt.
+      # `postinstall.js`'s import) from the package's compiled `dist/`. The build also builds the
+      # docs site, which fails on a dead link, and packages its llms.txt.
       - run: pnpm build
 
       # The source maps name the package's own sources, so a build change that would publish the
@@ -56,11 +56,66 @@ jobs:
       # The root lint covers `example/` too.
       - run: pnpm lint
 
-      - run: pnpm test
-
-      # The real CLI on a pseudo-terminal (python3's stdlib `pty`, which the runner has). It
-      # compiles its own copy of the CLI, so it needs nothing from the build above.
-      - run: pnpm test:e2e
-
-      # Type-level assertions (`*.test-d.ts`) are only enforced under --typecheck.
+      # Type-level assertions (`*.test-d.ts`), which only the type checker enforces.
       - run: pnpm test:types
+
+  test:
+    name: test (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      # One suite failing doesn't cancel the others, so a run reports every suite that fails.
+      fail-fast: false
+      matrix:
+        # The Vitest projects in vitest.config.ts, and the end-to-end suite.
+        suite: [unit, cli, e2e]
+    env:
+      SKIP_SIMPLE_GIT_HOOKS: 1
+      SUITE: ${{ matrix.suite }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.15.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.tool-versions'
+
+      - run: pnpm install --frozen-lockfile
+
+      # Some unit specs import the package's compiled `dist/`. The CLI specs and the end-to-end
+      # suite compile their own copy of the CLI, so they need no build.
+      - if: matrix.suite == 'unit'
+        run: pnpm --filter stackctl build
+
+      # The end-to-end suite runs the real CLI on a pseudo-terminal (python3's stdlib `pty`, which
+      # the runner has).
+      - run: |
+          if [ "$SUITE" = e2e ]; then
+            pnpm test:e2e
+          else
+            pnpm test --project "$SUITE"
+          fi
+
+  # The required status check: passes only when every job above did. It runs always, cancelled
+  # runs included, so it fails rather than being skipped, which a required check would let through.
+  check:
+    needs: [lint, test]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then
+              echo "::error::a job did not succeed: $RESULTS"
+              exit 1
+            fi
+          done

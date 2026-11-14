@@ -10,7 +10,7 @@
     "lint": "oxlint --disable-nested-config && oxfmt --check --disable-nested-config && node maintenance/scripts/format-docs-snippets.ts --check",
     "focus": "pnpm --filter stackctl focus",
     "palette": "pnpm --filter stackctl palette",
-    "test:types": "vitest --typecheck.only --run",
+    "test:types": "vitest run --project types",
     "format": "oxfmt --disable-nested-config && node maintenance/scripts/format-docs-snippets.ts",
     "prepare": "simple-git-hooks",
     "test": "vitest run",
