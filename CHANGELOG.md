@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1
+
+### Features
+
+- **The run screen highlights the filter's terms in the log lines it shows.**
+
 ## 0.7.0
 
 ### Features

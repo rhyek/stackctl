@@ -170,3 +170,8 @@ const COMBINING_DIACRITICS = /[\u0300-\u036f]/g;
 export function normalize(text: string): string {
   return text.normalize('NFD').replace(COMBINING_DIACRITICS, '').toLowerCase();
 }
+
+/** A filter's terms as the log store matches them: split on whitespace, case and accents folded. */
+export function filterTerms(text: string): string[] {
+  return text.split(/\s+/).filter(Boolean).map(normalize);
+}

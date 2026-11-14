@@ -87,7 +87,7 @@ code `1`.
 | `s`                       | Stop it, or start it when it isn't running. A waiting service starts on its own.        |
 | `m`                       | Open the commands menu: the service's scripts, and a custom shell command.              |
 | `R`                       | Reset the focused infra service, **deleting its data**. Asks for a second `R`.          |
-| `f`                       | Filter the log: type terms, `⏎` to apply, `esc` to clear.                               |
+| `f`                       | Filter the log: type terms, `⏎` to apply, `esc` to clear. Matches are highlighted.      |
 | `c`                       | Clear the log on screen. The log file keeps every line.                                 |
 | PageUp/PageDown, Home/End | Scroll the log. End follows the newest line again.                                      |
 | `esc`                     | Drop the text selection, then the newest notice, then the filter.                       |

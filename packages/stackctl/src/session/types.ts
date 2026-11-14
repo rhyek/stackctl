@@ -113,6 +113,8 @@ export interface WrappedRow {
   text: string;
   /** The column where the row's own content begins: past the gutter and any hanging indent. */
   contentStart: number;
+  /** The columns of the gutter's `[label]`, brackets included, end exclusive. */
+  label: { start: number; end: number };
 }
 
 /**

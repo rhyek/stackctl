@@ -18,7 +18,8 @@ services and stackctl's own), so every line's text starts in one column. A servi
 mid-session widens them all.
 
 stderr lines are red. In the terminal UI, `f` filters the stream by any text, ignoring case and
-accents: type a service's name to see only that service.
+accents: type a service's name to see only that service. The terms are highlighted in the lines
+shown.
 
 ## JSON logs are formatted for you
 

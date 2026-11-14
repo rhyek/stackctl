@@ -49,6 +49,8 @@ export type RowMeta = {
   contentStart: number;
   /** Column where the line's value begins. Equals `contentStart` on a wrapped continuation row. */
   valueStart: number;
+  /** The columns of the gutter's `[label]`, brackets included, end exclusive. */
+  label?: Span;
   /** Index of the buffered line this row came from; wrapped rows of one line share it. */
   lineIndex: number;
   kind: LineKind;

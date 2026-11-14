@@ -119,6 +119,18 @@ describe('on-screen log timestamps', () => {
     expect(row).not.toMatch(DATE);
   });
 
+  test('every row knows the columns of its `[label]`, whatever the timestamp layout', () => {
+    for (const [line, mode] of [
+      [system('hello world'), 'date'],
+      [system('hello world'), 'time'],
+      [system('hello world', false), 'date'],
+    ] as const) {
+      const row = wrapLineRows(line, 200, mode)[0]!;
+      const plain = stripAnsi(row.text);
+      expect(plain.slice(row.label.start, row.label.end)).toMatch(/^\[stackctl\s*\]$/);
+    }
+  });
+
   test("renders no timestamp column in the 'none' layout", () => {
     expect(firstRow(system('hello world'), 'none')).toMatch(/^\[stackctl\] \S/);
   });
