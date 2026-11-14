@@ -31,7 +31,7 @@ const startCwd = process.cwd();
 
 /**
  * The environment and working directory the process was started with, before `cli.ts` changed
- * either: what `start --detach` starts its session from, so the session resolves its mode, and
+ * either: what `start --detach` starts its session from, so the session resolves its profile, and
  * its ambient environment, as this invocation did.
  */
 export function startState(): { env: NodeJS.ProcessEnv; cwd: string } {

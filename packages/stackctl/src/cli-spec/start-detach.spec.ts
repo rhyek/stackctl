@@ -16,7 +16,7 @@ import {
 setUpCliWorkspace('start-detach');
 
 describe('start --detach', () => {
-  const recordOf = (mode: string) => path.join(ws, 'node_modules', '.stackctl', 'modes', mode, 'running.json'); // oxfmt-ignore
+  const recordOf = (profile: string) => path.join(ws, 'node_modules', '.stackctl', 'profiles', profile, 'running.json'); // oxfmt-ignore
   /** Not an agent, whatever runs the suite: the refusal has a test of its own. */
   const human = { STACKCTL_STARTED_BY_AGENT: '0' };
   const alive = (pid: number) => {
@@ -35,27 +35,32 @@ describe('start --detach', () => {
     return done();
   };
 
-  /** Sessions a test detached, by mode and pid: stopped after it, then killed should one still run. */
-  const detached: (Owned & { mode: string })[] = [];
-  const keep = async (mode: string, pid: number) => {
+  /**
+   * Sessions a test detached, by profile and pid: stopped after it, then killed should one still
+   * run.
+   */
+  const detached: (Owned & { profile: string })[] = [];
+  const keep = async (profile: string, pid: number) => {
     const owned = await own(pid);
     if (owned) {
-      detached.push({ ...owned, mode });
+      detached.push({ ...owned, profile });
     }
   };
   afterEach(async () => {
     for (const session of detached.splice(0)) {
-      await stackctl(['--mode', session.mode, 'stop']);
+      await stackctl(['--profile', session.profile, 'stop']);
       await killOwned(session);
     }
   });
 
-  /** The `<mode> session ready: pid <pid>, control API on <port>, log <logFile>` line, parsed. */
+  /**
+   * The `<profile> session ready: pid <pid>, control API on <port>, log <logFile>` line, parsed.
+   */
   const readyLine = (stdout: string) => {
     const match = /^(\S+) session ready: pid (\d+), control API on (\d+), log (.+)$/m.exec(stdout);
     expect(match, stdout).not.toBeNull();
-    const [, mode, pid, port, logFile] = match!;
-    return { mode: mode!, pid: Number(pid), port: Number(port), logFile: logFile! };
+    const [, profile, pid, port, logFile] = match!;
+    return { profile: profile!, pid: Number(pid), port: Number(port), logFile: logFile! };
   };
 
   /** `stackctl <args> start --detach <rest>`. */
@@ -66,22 +71,22 @@ describe('start --detach', () => {
     const result = await detach(['-s', 'idle']);
     expect(result.exitCode, result.stderr).toBe(0);
     const ready = readyLine(result.stdout);
-    expect(ready.mode).toBe('development');
+    expect(ready.profile).toBe('development');
     await keep('development', ready.pid);
     // The command has exited; the session hasn't, and answers as itself.
-    const status = (await (await fetch(`http://127.0.0.1:${String(ready.port)}/query/status`)).json()) as { pid: number; sessionReady: boolean; mode: string; modeSource: string }; // oxfmt-ignore
-    expect(status).toMatchObject({ pid: ready.pid, sessionReady: true, mode: 'development', modeSource: 'default' }); // oxfmt-ignore
+    const status = (await (await fetch(`http://127.0.0.1:${String(ready.port)}/query/status`)).json()) as { pid: number; sessionReady: boolean; profile: string; profileSource: string }; // oxfmt-ignore
+    expect(status).toMatchObject({ pid: ready.pid, sessionReady: true, profile: 'development', profileSource: 'default' }); // oxfmt-ignore
     expect(JSON.parse(fs.readFileSync(recordOf('development'), 'utf8'))).toMatchObject({ pid: ready.pid }); // oxfmt-ignore
-    // Its log starts with the mode and where it came from.
-    expect(fs.readFileSync(ready.logFile as string, 'utf8')).toContain('[stackctl] [INFO] mode development (default)'); // oxfmt-ignore
+    // Its log starts with the profile and where it came from.
+    expect(fs.readFileSync(ready.logFile as string, 'utf8')).toContain('[stackctl] [INFO] profile development (default)'); // oxfmt-ignore
 
-    // A session of the mode is running: another --detach fails, naming it.
+    // A session of the profile is running: another --detach fails, naming it.
     const again = await detach(['-s', 'idle']);
     expect(again.exitCode).toBe(1);
     expect(again.stderr).toContain(`a development session of this workspace is already running (pid ${String(ready.pid)})`); // oxfmt-ignore
     expect(alive(ready.pid)).toBe(true);
 
-    const stopped = await stackctl(['--mode', 'development', 'stop']);
+    const stopped = await stackctl(['--profile', 'development', 'stop']);
     expect(stopped.stdout).toBe(`stopped development session (pid ${String(ready.pid)})`);
     expect(alive(ready.pid)).toBe(false);
   }, 90_000);
@@ -89,7 +94,7 @@ describe('start --detach', () => {
   test('a $(…) capture returns, with the one line it prints', async () => {
     const result = await start(
       'sh',
-      ['-c', 'out=$(node "$0" --mode test start -d -s idle); echo "$out"', cli],
+      ['-c', 'out=$(node "$0" --profile test start -d -s idle); echo "$out"', cli],
       { cwd: ws, env: human, timeout: 60_000 },
     ).done;
     expect(result.exitCode, result.stderr).toBe(0);
@@ -97,7 +102,7 @@ describe('start --detach', () => {
     expect(match, result.stdout).not.toBeNull();
     await keep('test', Number(match![1]));
     expect(JSON.parse(fs.readFileSync(recordOf('test'), 'utf8'))).toMatchObject({ pid: Number(match![1]), port: Number(match![2]) }); // oxfmt-ignore
-    expect(fs.readFileSync(match![3]!, 'utf8')).toContain('[stackctl] [INFO] mode test (from --mode)'); // oxfmt-ignore
+    expect(fs.readFileSync(match![3]!, 'utf8')).toContain('[stackctl] [INFO] profile test (from --profile)'); // oxfmt-ignore
   }, 90_000);
 
   test('a service that crashes on start: exit 1, the log tail, and nothing left', async () => {
@@ -106,9 +111,9 @@ describe('start --detach', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr).toMatch(/start --detach failed: broken stopped while starting/);
     expect(result.stderr).toMatch(/\nlog: .*\/sessions\/\d+\/logs\.txt\n/);
-    expect(result.stderr).toContain('[stackctl] [INFO] mode development (default)');
+    expect(result.stderr).toContain('[stackctl] [INFO] profile development (default)');
     expect(fs.existsSync(recordOf('development'))).toBe(false);
-    expect((await stackctl(['--mode', 'development', 'stop'])).stdout).toBe('No development stackctl session is running.'); // oxfmt-ignore
+    expect((await stackctl(['--profile', 'development', 'stop'])).stdout).toBe('No development stackctl session is running.'); // oxfmt-ignore
   }, 90_000);
 
   test('a picked autostart: false service stays stopped, and the start succeeds', async () => {
@@ -125,7 +130,7 @@ describe('start --detach', () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toMatch(/start --detach failed: .*(not healthy after 1s: slow|didn't come up within 1s)/); // oxfmt-ignore
     expect(fs.existsSync(recordOf('development'))).toBe(false);
-    expect((await stackctl(['--mode', 'development', 'stop'])).stdout).toBe('No development stackctl session is running.'); // oxfmt-ignore
+    expect((await stackctl(['--profile', 'development', 'stop'])).stdout).toBe('No development stackctl session is running.'); // oxfmt-ignore
   }, 90_000);
 
   test('SIGINT while waiting: exit 130, and nothing left', async () => {
@@ -164,8 +169,8 @@ describe('start --detach', () => {
 
   test('is refused for a coding agent outside CI, and allowed in CI or with the override', async () => {
     const agent = { CLAUDECODE: '1', CI: '', STACKCTL_STARTED_BY_AGENT: '' };
-    // An agent names the mode, as it must.
-    const refused = await detach(['-s', 'idle', '--mode', 'development'], agent);
+    // An agent names the profile, as it must.
+    const refused = await detach(['-s', 'idle', '--profile', 'development'], agent);
     expect(refused.exitCode).toBe(1);
     expect(refused.stderr).toContain('start --detach is for CI');
     expect(refused.stderr).toContain('STACKCTL_STARTED_BY_AGENT=0');
@@ -174,14 +179,14 @@ describe('start --detach', () => {
     // In CI too: the CI default is a default.
     const unnamed = await detach(['-s', 'idle'], { ...agent, CI: 'true' });
     expect(unnamed.exitCode).toBe(1);
-    expect(unnamed.stderr).toContain('stackctl --mode development start');
-    const ci = await detach(['-s', 'idle', '--mode', 'test'], { ...agent, CI: 'true' });
+    expect(unnamed.stderr).toContain('stackctl --profile development start');
+    const ci = await detach(['-s', 'idle', '--profile', 'test'], { ...agent, CI: 'true' });
     expect(ci.exitCode, ci.stderr).toBe(0);
     const inCi = readyLine(ci.stdout);
     await keep('test', inCi.pid);
-    expect(inCi.mode).toBe('test');
-    const ciStatus = (await (await fetch(`http://127.0.0.1:${String(inCi.port)}/query/status`)).json()) as { modeSource: string }; // oxfmt-ignore
-    expect(ciStatus.modeSource).toBe('flag');
+    expect(inCi.profile).toBe('test');
+    const ciStatus = (await (await fetch(`http://127.0.0.1:${String(inCi.port)}/query/status`)).json()) as { profileSource: string }; // oxfmt-ignore
+    expect(ciStatus.profileSource).toBe('flag');
 
     const overridden = await detach(['-s', 'idle'], { ...agent, STACKCTL_STARTED_BY_AGENT: '0' }); // oxfmt-ignore
     expect(overridden.exitCode, overridden.stderr).toBe(0);

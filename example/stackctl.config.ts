@@ -43,7 +43,8 @@ export default defineConfig({
         db: {
           // Once Postgres is healthy — on every `infra start` and every session start, including
           // when it was already running, so this has to be idempotent. `exec` executes a command
-          // with the mode's environment (DATABASE_URI among it) and sends its output to stackctl.
+          // with the profile's environment (DATABASE_URI among it) and sends its output to
+          // stackctl.
           afterReady: async ({ exec, fresh }) => {
             await exec('node', ['src/migrate.ts'], { cwd: 'libs/db' });
             // `fresh`: this run created the database's volume — the very first start, or the

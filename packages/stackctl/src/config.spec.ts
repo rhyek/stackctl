@@ -105,22 +105,22 @@ describe('meta defaults', () => {
     expect(getLoadedConfig()?.apiPort).toBe(5000);
   });
 
-  test("defaults envFiles to the development mode's set", () => {
+  test("defaults envFiles to the development profile's set", () => {
     const cfg = defineConfig({ serviceRootDir: 'packages', services: { svc: {} } });
     const files = ['.env', '.env.local', '.env.development', '.env.development.local'];
     expect(cfg.envFiles).toEqual({ workspace: files, service: files });
-    expect(cfg.envMode).toBe('development');
+    expect(cfg.profile).toBe('development');
   });
 
-  test('follows STACKCTL_MODE for both envFiles and envMode', () => {
-    process.env.STACKCTL_MODE = 'test';
+  test('follows STACKCTL_PROFILE for both envFiles and profile', () => {
+    process.env.STACKCTL_PROFILE = 'test';
     try {
       const cfg = defineConfig({ serviceRootDir: 'packages', services: { svc: {} } });
       const files = ['.env', '.env.local', '.env.test', '.env.test.local'];
       expect(cfg.envFiles).toEqual({ workspace: files, service: files });
-      expect(cfg.envMode).toBe('test');
+      expect(cfg.profile).toBe('test');
     } finally {
-      delete process.env.STACKCTL_MODE;
+      delete process.env.STACKCTL_PROFILE;
     }
   });
 
@@ -852,25 +852,27 @@ describe('deps as a callback', () => {
 
   afterEach(() => {
     fs.rmSync(ws, { recursive: true, force: true });
-    delete process.env.STACKCTL_MODE;
+    delete process.env.STACKCTL_PROFILE;
   });
 
-  /** The config a mode-keyed callback gives in `mode`: `api` needs `codegen` outside `test`. */
-  function inMode(mode: string) {
-    process.env.STACKCTL_MODE = mode;
+  /**
+   * The config a profile-keyed callback gives in `profile`: `api` needs `codegen` outside `test`.
+   */
+  function inMode(profile: string) {
+    process.env.STACKCTL_PROFILE = profile;
     return defineConfig({
       serviceRootDir: 'packages',
       workspaceDir: ws,
       services: {
-        api: { deps: ({ mode }) => (mode === 'test' ? ['gateway'] : ['codegen', 'gateway']) },
+        api: { deps: ({ profile }) => (profile === 'test' ? ['gateway'] : ['codegen', 'gateway']) },
         codegen: {},
         gateway: {},
       },
     });
   }
 
-  test("gets the session's mode and the service's resolved envs and tokens", () => {
-    process.env.STACKCTL_MODE = 'test';
+  test("gets the session's profile and the service's resolved envs and tokens", () => {
+    process.env.STACKCTL_PROFILE = 'test';
     fs.writeFileSync(path.join(ws, 'packages/api/.env.test'), 'GATEWAY=on\n');
     const seen: unknown[] = [];
     const cfg = defineConfig({
@@ -879,19 +881,19 @@ describe('deps as a callback', () => {
       tokens: { region: 'eu' },
       services: {
         api: {
-          deps: ({ mode, envs, tokens }) => {
-            seen.push({ mode, gateway: envs.GATEWAY, region: tokens.region });
+          deps: ({ profile, envs, tokens }) => {
+            seen.push({ profile, gateway: envs.GATEWAY, region: tokens.region });
             return envs.GATEWAY === 'on' ? [{ service: 'gateway', wait: true }] : [];
           },
         },
         gateway: { healthcheck: 'http://localhost:21050/' },
       },
     });
-    expect(seen).toEqual([{ mode: 'test', gateway: 'on', region: 'eu' }]);
+    expect(seen).toEqual([{ profile: 'test', gateway: 'on', region: 'eu' }]);
     expect(cfg.services.api.deps).toEqual([{ service: 'gateway', wait: true }]);
   });
 
-  test('resolves to the mode it runs in', () => {
+  test('resolves to the profile it runs in', () => {
     expect(inMode('development').services.api.deps).toEqual([
       { service: 'codegen', wait: false },
       { service: 'gateway', wait: false },
@@ -1074,8 +1076,8 @@ describe('port callback', () => {
     expect(packages[0]!.port).toBe(7777);
   });
 
-  test('reads the mode-specific file for the active mode', () => {
-    process.env.STACKCTL_MODE = 'test';
+  test('reads the profile-specific file for the active profile', () => {
+    process.env.STACKCTL_PROFILE = 'test';
     try {
       fs.writeFileSync(path.join(ws, '.env.test'), 'BACKEND_PORT=8888\n');
       fs.writeFileSync(path.join(ws, '.env.development'), 'BACKEND_PORT=4321\n');
@@ -1088,7 +1090,7 @@ describe('port callback', () => {
       );
       expect(packages[0]!.port).toBe(8888);
     } finally {
-      delete process.env.STACKCTL_MODE;
+      delete process.env.STACKCTL_PROFILE;
     }
   });
 
@@ -1459,7 +1461,7 @@ describe('reverseProxy.routes', () => {
       );
     });
 
-    test('needs a port, in every mode, and a port callback must return one', () => {
+    test('needs a port, in every profile, and a port callback must return one', () => {
       const routes = [{ subdomain: 'mail', service: 'mail' }];
       expect(withMail({}, routes)).toThrow(
         'reverseProxy.routes routes to infra service "mail", which declares no `port`',
@@ -1472,7 +1474,7 @@ describe('reverseProxy.routes', () => {
       );
     });
 
-    test('disabled in this mode: still a valid target, with no port, route or origin', () => {
+    test('disabled in this profile: still a valid target, with no port, route or origin', () => {
       const cfg = withMail({ enabled: false, port: () => { throw new Error('not run'); } }, [{ subdomain: 'mail', service: 'mail' }])(); // oxfmt-ignore
       const mail = cfg.infra!['docker-compose']!.services.mail!;
       expect(mail.port).toBeUndefined();
@@ -2947,7 +2949,7 @@ describe('infra', () => {
     });
   });
 
-  test('enabled defaults to true, takes a literal, and resolves a callback over mode, envs and tokens', () => {
+  test('enabled defaults to true, takes a literal, and resolves a callback over profile, envs and tokens', () => {
     fs.writeFileSync(path.join(ws, '.env'), 'TRACING_KEY=abc\n');
     const seen: unknown[] = [];
     const cfg = defineConfig({
@@ -2960,9 +2962,9 @@ describe('infra', () => {
             db: {},
             emulator: { enabled: false },
             tracing: {
-              enabled: ({ mode, envs, tokens }) => {
-                seen.push({ mode, region: tokens.region });
-                return mode !== 'test' && Boolean(envs.TRACING_KEY);
+              enabled: ({ profile, envs, tokens }) => {
+                seen.push({ profile, region: tokens.region });
+                return profile !== 'test' && Boolean(envs.TRACING_KEY);
               },
             },
             mailer: { enabled: ({ envs }) => Boolean(envs.STACKCTL_SPEC_NO_SUCH_VAR) },
@@ -2976,7 +2978,7 @@ describe('infra', () => {
     expect(services.emulator!.enabled).toBe(false);
     expect(services.tracing!.enabled).toBe(true);
     expect(services.mailer!.enabled).toBe(false);
-    expect(seen).toEqual([{ mode: 'development', region: 'eu' }]);
+    expect(seen).toEqual([{ profile: 'development', region: 'eu' }]);
   });
 
   test('rejects an enabled callback that does not return a boolean, naming the service', () => {
@@ -3129,7 +3131,11 @@ describe('infra service port and route', () => {
           port: 8025,
           urls: [
             (ctx) => {
-              seen.push({ port: ctx.port, service: ctx.service, mode: ctx.envs.STACKCTL_MODE });
+              seen.push({
+                port: ctx.port,
+                service: ctx.service,
+                profile: ctx.envs.STACKCTL_PROFILE,
+              });
               return '/';
             },
           ],
@@ -3147,7 +3153,7 @@ describe('infra service port and route', () => {
           route: { host: 'mail.example.test', subdomain: 'mail' },
           publicOrigin: 'http://mail.example.test:4000',
         },
-        mode: 'development',
+        profile: 'development',
       },
     ]);
   });
@@ -3213,7 +3219,7 @@ describe('infra service port and route', () => {
     expect(db.urls).toBeUndefined();
   });
 
-  test("a service switched off for the mode gets no public origin, and its port callback doesn't run", () => {
+  test("a service switched off for the profile gets no public origin, and its port callback doesn't run", () => {
     let calls = 0;
     const cfg = withServices(
       {
@@ -3412,7 +3418,7 @@ describe('env vars', () => {
   });
 
   describe('with no stackctl CLI around the config', () => {
-    const names = ['STACKCTL_MODE', 'STACKCTL_CWD', 'STACKCTL_WORKSPACE_DIR'] as const;
+    const names = ['STACKCTL_PROFILE', 'STACKCTL_CWD', 'STACKCTL_WORKSPACE_DIR'] as const;
     let before: (string | undefined)[];
 
     beforeEach(() => {
@@ -3436,7 +3442,7 @@ describe('env vars', () => {
       const cfg = defineConfig({
         ...base(),
         env: ({ envs }) => ({
-          SEEN: [envs.STACKCTL_MODE, envs.STACKCTL_CWD, envs.STACKCTL_WORKSPACE_DIR].join('|'),
+          SEEN: [envs.STACKCTL_PROFILE, envs.STACKCTL_CWD, envs.STACKCTL_WORKSPACE_DIR].join('|'),
         }),
         services: {
           api: { urls: [({ envs }) => `file://${String(envs.STACKCTL_WORKSPACE_DIR)}`] },
@@ -3595,7 +3601,7 @@ describe('env.additionalFiles', () => {
 
   afterEach(() => {
     fs.rmSync(ws, { recursive: true, force: true });
-    delete process.env.STACKCTL_MODE;
+    delete process.env.STACKCTL_PROFILE;
   });
 
   const base = () => ({ serviceRootDir: 'packages' as const, workspaceDir: ws });
@@ -3606,8 +3612,8 @@ describe('env.additionalFiles', () => {
       ...base(),
       env: {
         additionalFiles: [
-          { file: '.env.development.pre', before: 'mode' },
-          { file: '.env.secrets', after: 'modeLocal', scope: 'service' },
+          { file: '.env.development.pre', before: 'profile' },
+          { file: '.env.secrets', after: 'profileLocal', scope: 'service' },
         ],
       },
       services: { api: {} },
@@ -3631,20 +3637,20 @@ describe('env.additionalFiles', () => {
     });
   });
 
-  test('calls a callback with the active mode', () => {
-    process.env.STACKCTL_MODE = 'test';
-    const modes: string[] = [];
+  test('calls a callback with the active profile', () => {
+    process.env.STACKCTL_PROFILE = 'test';
+    const profiles: string[] = [];
     const cfg = defineConfig({
       ...base(),
       env: {
-        additionalFiles: ({ mode }) => {
-          modes.push(mode);
-          return [{ file: `.env.${mode}.pre`, before: 'mode' }];
+        additionalFiles: ({ profile }) => {
+          profiles.push(profile);
+          return [{ file: `.env.${profile}.pre`, before: 'profile' }];
         },
       },
       services: { api: {} },
     });
-    expect(modes).toEqual(['test']);
+    expect(profiles).toEqual(['test']);
     expect(cfg.envFiles.workspace).toEqual([
       '.env',
       '.env.local',
@@ -3661,9 +3667,9 @@ describe('env.additionalFiles', () => {
     const cfg = defineConfig({
       ...base(),
       env: {
-        additionalFiles: ({ mode }) => [
-          { file: `.env.${mode}.pre`, before: 'mode' },
-          { file: `.env.${mode}.pre.local`, before: 'mode' },
+        additionalFiles: ({ profile }) => [
+          { file: `.env.${profile}.pre`, before: 'profile' },
+          { file: `.env.${profile}.pre.local`, before: 'profile' },
         ],
       },
       services: { api: { port: ({ envs }) => Number(envs.PORT_OF_API) } },
@@ -3691,7 +3697,7 @@ describe('env.additionalFiles', () => {
       const cfg = defineConfig({
         ...base(),
         env: {
-          additionalFiles: [{ file: '.env.development.pre', before: 'mode' }],
+          additionalFiles: [{ file: '.env.development.pre', before: 'profile' }],
           override: ['STACKCTL_SPEC_PINNED'],
         },
         services: { api: {} },
@@ -3719,70 +3725,70 @@ describe('env.additionalFiles', () => {
     const invalid = (issue: string) => `invalid stackctl config:\n  - env.additionalFiles.${issue}`;
 
     test('an entry with both before and after, or neither', () => {
-      expect(load([{ file: '.env.x', before: 'mode', after: 'local' }])).toThrow(
+      expect(load([{ file: '.env.x', before: 'profile', after: 'local' }])).toThrow(
         invalid('0.after: Invalid type: Expected never but received "local"'),
       );
-      expect(load([{ file: '.env.ok', before: 'mode' }, { file: '.env.x' }])).toThrow(
+      expect(load([{ file: '.env.ok', before: 'profile' }, { file: '.env.x' }])).toThrow(
         invalid('1.before: Invalid key: Expected "before" but received undefined'),
       );
     });
 
     test('an unknown anchor', () => {
       expect(load([{ file: '.env.x', after: '.env.local' }])).toThrow(
-        invalid('0.after: Invalid type: Expected ("base" | "local" | "mode" | "modeLocal") but received ".env.local"'), // oxfmt-ignore
+        invalid('0.after: Invalid type: Expected ("base" | "local" | "profile" | "profileLocal") but received ".env.local"'), // oxfmt-ignore
       );
     });
 
     test('an empty file', () => {
-      expect(load([{ file: '', before: 'mode' }])).toThrow(
+      expect(load([{ file: '', before: 'profile' }])).toThrow(
         'env.additionalFiles.0.file: Invalid length: Expected >=1 but received 0',
       );
     });
 
     test.each(['/etc/.env', '../.env.x', 'config/.env.x', '..', '.'])('the path %j', (file) => {
-      expect(load([{ file, before: 'mode' }])).toThrow(
+      expect(load([{ file, before: 'profile' }])).toThrow(
         `env.additionalFiles[0] (${JSON.stringify(file)}): \`file\` must be a filename in the scope's directory, not a path`,
       );
     });
 
     test("one of stackctl's own files", () => {
       expect(load([{ file: '.env.development', after: 'local' }])).toThrow(
-        `env.additionalFiles[0] (".env.development"): ".env.development" is one of stackctl's own files for mode "development", which load anyway`,
+        `env.additionalFiles[0] (".env.development"): ".env.development" is one of stackctl's own files for profile "development", which load anyway`,
       );
     });
 
     test('a file another entry lists at a scope they share', () => {
       expect(
         load([
-          { file: '.env.x', before: 'mode', scope: 'service' },
-          { file: '.env.x', after: 'modeLocal' },
+          { file: '.env.x', before: 'profile', scope: 'service' },
+          { file: '.env.x', after: 'profileLocal' },
         ]),
       ).toThrow('env.additionalFiles[1] (".env.x"): already listed as env.additionalFiles[0]');
     });
 
     test('an unknown key or scope', () => {
-      expect(load([{ file: '.env.x', befor: 'mode' }])).toThrow(
+      expect(load([{ file: '.env.x', befor: 'profile' }])).toThrow(
         invalid('0.befor: Invalid key: Expected never but received "befor"'),
       );
-      expect(load([{ file: '.env.x', before: 'mode', scope: 'root' }])).toThrow(
+      expect(load([{ file: '.env.x', before: 'profile', scope: 'root' }])).toThrow(
         invalid('0.scope: Invalid type: Expected ("workspace" | "service") but received "root"'),
       );
     });
 
-    test('an entry from a callback, by its index, with the mode it was called for', () => {
-      expect(load(() => [{ file: '.env.x', before: 'mode', befor: 'x' }])).toThrow(
-        'invalid stackctl config:\n  - env.additionalFiles.0.befor: Invalid key: Expected never but received "befor"\n  (returned by the env.additionalFiles callback for mode "development")', // oxfmt-ignore
+    test('an entry from a callback, by its index, with the profile it was called for', () => {
+      expect(load(() => [{ file: '.env.x', before: 'profile', befor: 'x' }])).toThrow(
+        'invalid stackctl config:\n  - env.additionalFiles.0.befor: Invalid key: Expected never but received "befor"\n  (returned by the env.additionalFiles callback for profile "development")', // oxfmt-ignore
       );
       expect(
         load(() => [
-          { file: '.env.ok', before: 'mode' },
+          { file: '.env.ok', before: 'profile' },
           { file: '.env.x', before: 'nope' },
         ]),
       ).toThrow(
-        'env.additionalFiles.1.before: Invalid type: Expected ("base" | "local" | "mode" | "modeLocal") but received "nope"\n  (returned by the env.additionalFiles callback for mode "development")', // oxfmt-ignore
+        'env.additionalFiles.1.before: Invalid type: Expected ("base" | "local" | "profile" | "profileLocal") but received "nope"\n  (returned by the env.additionalFiles callback for profile "development")', // oxfmt-ignore
       );
-      expect(load(() => [{ file: 'a/.env.x', before: 'mode' }])).toThrow(
-        'env.additionalFiles[0] ("a/.env.x"): `file` must be a filename in the scope\'s directory, not a path\n  (returned by the env.additionalFiles callback for mode "development")', // oxfmt-ignore
+      expect(load(() => [{ file: 'a/.env.x', before: 'profile' }])).toThrow(
+        'env.additionalFiles[0] ("a/.env.x"): `file` must be a filename in the scope\'s directory, not a path\n  (returned by the env.additionalFiles callback for profile "development")', // oxfmt-ignore
       );
     });
 
@@ -3798,8 +3804,8 @@ describe('env.additionalFiles', () => {
       ...base(),
       env: {
         additionalFiles: [
-          { file: '.env.x', before: 'mode', scope: 'workspace' },
-          { file: '.env.x', after: 'modeLocal', scope: 'service' },
+          { file: '.env.x', before: 'profile', scope: 'workspace' },
+          { file: '.env.x', after: 'profileLocal', scope: 'service' },
         ],
       },
       services: { api: {} },

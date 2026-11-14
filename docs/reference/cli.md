@@ -10,8 +10,8 @@ description: Every stackctl command and flag - start, stop, wait, reset, service
 stackctl                          # the terminal UI: pick services, run them
 stackctl -s web -s api            # run these services, skipping the picker
 stackctl --headless -s web        # no UI: stream logs to stdout
-stackctl --mode test              # another mode: .env.test, its own session
-stackctl stop                     # stop the mode's session
+stackctl --profile test           # another profile: .env.test, its own session
+stackctl stop                     # stop the profile's session
 stackctl service restart -s api   # restart one service in the running session
 stackctl run api seed             # one script, with api's environment
 stackctl infra start              # start the infra, then exit
@@ -25,9 +25,9 @@ above the current one, that holds `stackctl.config.ts`. Without one, every comma
 | Command                                        | What it does                                              |
 | ---------------------------------------------- | --------------------------------------------------------- |
 | [`start`](#stackctl-start)                     | Start a session. The default command.                     |
-| [`stop`](#stackctl-stop)                       | Stop the mode's session.                                  |
-| [`wait`](#stackctl-wait)                       | Wait until the mode's session is ready.                   |
-| [`reset`](#stackctl-reset)                     | Stop it, then delete the mode's state.                    |
+| [`stop`](#stackctl-stop)                       | Stop the profile's session.                               |
+| [`wait`](#stackctl-wait)                       | Wait until the profile's session is ready.                |
+| [`reset`](#stackctl-reset)                     | Stop it, then delete the profile's state.                 |
 | [`service`](#stackctl-service)                 | Start, stop or restart services in a running session.     |
 | [`status`](#stackctl-status)                   | The session now, and the last commands that acted on it.  |
 | [`events`](#stackctl-events)                   | Print or follow the session's event log.                  |
@@ -44,15 +44,15 @@ Accepted before or after any command.
 
 | Option                  | What it does                                                                          |
 | ----------------------- | ------------------------------------------------------------------------------------- |
-| `-m, --mode <name>`     | The [mode](../guide/env.md#modes). Default: `STACKCTL_MODE`, else `test` in CI, else `development`. A coding agent must name it. |
+| `-p, --profile <name>`  | The [profile](../guide/env.md#profiles). Default: `STACKCTL_PROFILE`, else `test` in CI, else `development`. A coding agent must name it. |
 | `--workspace-dir <dir>` | The directory holding the config, to run against a workspace from outside it. No walk-up. |
 | `-V, --version`         | Print the version.                                                                    |
 | `-h, --help`            | Help for the command.                                                                 |
 
-- **A coding agent names the mode on every command**, `development` included, with `--mode` or
-  `STACKCTL_MODE`. A command it runs in the default mode, or CI's, exits `1` and says how to
-  name it. `init`, `--help` and `--version` need no mode, and neither does the session
-  [`startStack()`](./sdk.md#startstack) starts.
+- **A coding agent names the profile on every command**, `development` included, with
+  `--profile` or `STACKCTL_PROFILE`. A command it runs in the default profile, or CI's, exits
+  `1` and says how to name it. `init`, `--help` and `--version` need no profile, and neither
+  does the session [`startStack()`](./sdk.md#startstack) starts.
 
 ## `stackctl start`
 
@@ -67,7 +67,10 @@ Starts a session. `stackctl` with no command is `stackctl start`, so `stackctl -
 | `--headless`             | No UI: stream the log to stdout. Needs `-s` or `--last-answers`.                     |
 | `-d, --detach`           | For CI: a headless session that outlives the command. Needs `-s` or `--last-answers`. |
 | `--wait-timeout <s>`     | How long `--detach` waits for the session to be ready. Default `300`.                |
-| `--kill-others`          | Quit a session already running in this mode without asking.                          |
+| `--kill-others`          | Quit a session already running in this profile without asking.                       |
+
+It first [type-checks the config](../config/config-file.md#type-checking), and exits on a type
+error.
 
 The first time a person starts a session in a terminal, stackctl offers to install the
 [agent guidance](../ai/overview.md#agent-guidance). It asks once, and never asks an agent, a
@@ -79,7 +82,7 @@ Runs in the foreground until the session is quit, printing every log line, date-
 labelled, with the infra's progress among them:
 
 ```
-2026-11-10 16:00:11 [stackctl] [INFO] mode development (default)
+2026-11-10 16:00:11 [stackctl] [INFO] profile development (default)
 ▶ infra (development): db, mail
   mail  ready (0.4s)
 2026-11-10 16:00:11 [infra:db] schema is up to date
@@ -95,28 +98,29 @@ shuts it down gracefully.
 ### `--detach`
 
 ```bash
-stackctl --mode test start --detach -s web
+stackctl --profile test start --detach -s web
 ```
 
 Starts a headless session with no tie to the terminal, waits until the infra and every service
 are healthy, prints one line and exits `0`, leaving the session running:
 
 ```
-test session ready: pid 4242, control API on 14012, log /repo/node_modules/.stackctl/modes/test/sessions/1794164978752/logs.txt
+test session ready: pid 4242, control API on 14012, log /repo/node_modules/.stackctl/profiles/test/sessions/1794164978752/logs.txt
 ```
 
 - **Progress goes to stderr**, so `$(…)` captures that line alone.
 - **On failure** it stops the session, prints the error and the log's last 50 lines, and exits
   `1` with nothing left running.
-- **End it** with `stackctl stop` (same mode).
-- **A session already running in the mode fails it**, unless `--kill-others` is passed.
+- **End it** with `stackctl stop` (same profile).
+- **A session already running in the profile fails it**, unless `--kill-others` is passed.
 - **It is refused for a coding agent outside CI**: a detached session would outlive the
   agent's task. See [the agent playbook](../ai/playbook.md#start-a-stack).
 
 ### Taking over a running session
 
-A workspace runs one session per mode. Sessions in different modes run side by side. Starting
-a second one in the **same** mode means quitting the first, with every process under it:
+A workspace runs one session per profile. Sessions in different profiles run side by side.
+Starting a second one in the **same** profile means quitting the first, with every process under
+it:
 
 | Situation                                    | What happens                            |
 | -------------------------------------------- | --------------------------------------- |
@@ -131,36 +135,36 @@ an agent by the environment variables agents set (`CLAUDECODE`, `CURSOR_AGENT`, 
 detection.
 
 A recorded session whose process is alive but doesn't answer its control API looks hung, and
-starting another in its mode is refused. `--kill-others` kills it, once it has confirmed the
+starting another in its profile is refused. `--kill-others` kills it, once it has confirmed the
 process really is that session.
 
 ## `stackctl stop`
 
 ```bash
-stackctl stop                # the session of the resolved mode
-stackctl --mode test stop
+stackctl stop                # the session of the resolved profile
+stackctl --profile test stop
 ```
 
-Asks the mode's session to quit and waits for its services to stop. A session that doesn't
+Asks the profile's session to quit and waits for its services to stop. A session that doesn't
 exit in time is force-killed with its process tree. Exits `0` when there was nothing to stop
-(`No <mode> stackctl session is running.`), and `1` if the session is still running.
+(`No <profile> stackctl session is running.`), and `1` if the session is still running.
 
-Other modes' sessions and [infra](../config/infra.md) are never touched.
+Other profiles' sessions and [infra](../config/infra.md) are never touched.
 
 `stop` only signals a process it can confirm is the recorded session. When it can't, it says
-so and names the record: `node_modules/.stackctl/modes/<mode>/running.json`. Delete that file
-by hand if no session is running.
+so and names the record: `node_modules/.stackctl/profiles/<profile>/running.json`. Delete that
+file by hand if no session is running.
 
 ## `stackctl wait`
 
 ```bash
-stackctl --mode test --headless -s api   # in a background task
-stackctl --mode test wait                 # returns once it is ready
-stackctl --mode test run api test
-stackctl --mode test stop
+stackctl --profile test --headless -s api   # in a background task
+stackctl --profile test wait                 # returns once it is ready
+stackctl --profile test run api test
+stackctl --profile test stop
 ```
 
-Waits for the mode's session to start, then until its services and the infra are up and
+Waits for the profile's session to start, then until its services and the infra are up and
 healthy, as [`startStack()`](./sdk.md#startstack) waits. Prints the session's pid, control API
 port and log, and exits `0`.
 
@@ -176,22 +180,22 @@ port and log, and exits `0`.
 ## `stackctl reset`
 
 ```bash
-stackctl --mode development reset
+stackctl --profile development reset
 ```
 
-Runs `stop`, then deletes the mode's state, `node_modules/.stackctl/modes/<mode>/`: its
-session record, saved selection and every session's folder. `--mode` is required. Infra and other
-modes are left alone. The reset writes its own lines to a new event log.
+Runs `stop`, then deletes the profile's state, `node_modules/.stackctl/profiles/<profile>/`: its
+session record, saved selection and every session's folder. `--profile` is required. Infra and
+other profiles are left alone. The reset writes its own lines to a new event log.
 
 ## `stackctl service`
 
 ```bash
 stackctl service restart -s api              # restart api, wait until it is ready
 stackctl service start -s worker -s web      # start them, adding any the session lacks
-stackctl --mode test service stop -s worker
+stackctl --profile test service stop -s worker
 ```
 
-Drives application services in the mode's **running** session, through its
+Drives application services in the profile's **running** session, through its
 [control API](./control-api.md). It never starts a session: with none running it exits `1`.
 
 | Subcommand | What it does                                                                     |
@@ -210,7 +214,7 @@ services, use [`stackctl infra`](#stackctl-infra).
 ## `stackctl status`
 
 ```bash
-stackctl status          # the mode's session, and what last acted on it
+stackctl status          # the profile's session, and what last acted on it
 stackctl status --json   # the same, as JSON
 ```
 
@@ -221,8 +225,8 @@ services  backend   running, not ready
           worker    running, ready
 infra     db        running
           mail      running
-log       node_modules/.stackctl/modes/development/sessions/1794424917144/logs.txt
-events    node_modules/.stackctl/modes/development/sessions/1794424917144/events.jsonl
+log       node_modules/.stackctl/profiles/development/sessions/1794424917144/logs.txt
+events    node_modules/.stackctl/profiles/development/sessions/1794424917144/events.jsonl
 
 last commands
   today 13:21:57  session-start  backend, frontend, worker, headless
@@ -230,7 +234,7 @@ last commands
   today 13:22:12  infra-command  restart db                           ok, 2.2s   by cli: infra restart -s db (a person)
 ```
 
-- **The session** is the mode's running one, checked as
+- **The session** is the profile's running one, checked as
   [Finding the port](./control-api.md#finding-the-port) does. Without one it says so.
 - **The last commands** are the last 10 commands and lifecycle entries of the session's event log,
   or the latest session's, each command's two lines as one row. See [Events](./events.md).
@@ -255,7 +259,7 @@ session's, else the latest one's. It never asks the session anything.
 
 ```bash
 stackctl show-config
-stackctl show-config --mode test
+stackctl show-config --profile test
 stackctl show-config | jq '.services | map_values({ port, publicOrigin })'
 stackctl show-config | jq '.envFiles.workspace'
 ```
@@ -267,9 +271,9 @@ are applied. It is the same object a session reports as `config` on
 | Field           | What it holds                                                                          |
 | --------------- | -------------------------------------------------------------------------------------- |
 | `services`      | Each service's `port`, `publicOrigin`, `urls`, `healthcheck`, `deps`, `command`, `relativeDir` and `absoluteDir`. |
-| `infra`         | Per provider: the compose `file`, the mode's `projectName`, and each service's `enabled`, `port`, `urls` and `publicOrigin`. |
+| `infra`         | Per provider: the compose `file`, the profile's `projectName`, and each service's `enabled`, `port`, `urls` and `publicOrigin`. |
 | `reverseProxy`  | Its `port`, `tls`, `publicAddress` and `routes`.                                       |
-| `envFiles`      | The `.env` files the mode looks for, in load order, at the `workspace` and `service` scopes. |
+| `envFiles`      | The `.env` files the profile looks for, in load order, at the `workspace` and `service` scopes. |
 
 Functions (`logs.formatter`, infra callbacks) have no JSON form and are left out.
 
@@ -286,6 +290,8 @@ goes in the latest session's folder, under `commands/`.
 
 - **`exec` needs the `--`.** Everything after it is the command.
 - **`run` forwards what follows `--`** to the script. A script that doesn't exist is an error.
+- **`run` first [type-checks the config](../config/config-file.md#type-checking)**, and exits on
+  a type error. `exec` doesn't.
 - **`-s` is not accepted.** The target is the first argument.
 - **The exit code is the command's.**
 - **On a terminal, the command gets it**, stdout and stderr each on its own, except for a coding
@@ -329,13 +335,13 @@ session.
 | `restart`                  | `stop`, then `start`: the containers are recreated, picking up a changed compose file. Data is kept. |
 | `reset`                    | Removes the services **and their data**, then starts them clean.                      |
 | `destroy`                  | Removes the containers **and their data**, and starts nothing. With no `-s`, the whole project. |
-| `docker-compose [args...]` | Runs `docker compose <args>` on this project and mode, with your terminal.            |
+| `docker-compose [args...]` | Runs `docker compose <args>` on this project and profile, with your terminal.         |
 
 - **`-s, --service <name>` picks the services**, repeatable. With none, every enabled one:
   `stackctl infra reset` deletes **every** infra service's data.
 - **`start` runs `afterReady` even for a service already running**, so it applies new
   migrations to a database that is up.
-- **`reset` here is not `stackctl reset`**, which deletes the mode's session state and leaves
+- **`reset` here is not `stackctl reset`**, which deletes the profile's session state and leaves
   infra alone.
 
 ```
@@ -346,11 +352,11 @@ session.
 ✔ infra ready (3.1s)
 ```
 
-`--mode` picks the mode's `.env` files and its Compose project. With the passthrough it must
-come **before** `docker-compose`, because everything after that word is Compose's:
+`--profile` picks the profile's `.env` files and its Compose project. With the passthrough it
+must come **before** `docker-compose`, because everything after that word is Compose's:
 
 ```bash
-stackctl -m test infra docker-compose ps
+stackctl -p test infra docker-compose ps
 stackctl infra docker-compose logs -f db
 stackctl infra docker-compose exec db psql -U example
 ```
@@ -395,8 +401,8 @@ Everything stackctl keeps is under `node_modules/.stackctl/`:
 
 ```
 node_modules/.stackctl/
-  tls/                  the proxy's self-signed certificates, shared by every mode
-  modes/<mode>/
+  tls/                  the proxy's self-signed certificates, shared by every profile
+  profiles/<profile>/
     running.json        the session record: pid, control-API port, log file
     selection.json      the selection --last-answers reuses
     trusted.pem         the NODE_EXTRA_CA_CERTS bundle

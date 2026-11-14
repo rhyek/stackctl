@@ -1,4 +1,4 @@
-import { currentMode } from '../env-base.js';
+import { currentProfile } from '../env-base.js';
 import { createInfraReporter } from '../infra/report.js';
 import type { LogStore } from './log-store.js';
 import type { Session } from './session.js';
@@ -97,7 +97,7 @@ export async function runHeadless(
   // infra/report.ts's status lines, untimestamped, printed in order with the log's lines; infra's
   // output lines are in the log.
   const reporter = createInfraReporter({
-    mode: currentMode(),
+    profile: currentProfile(),
     write: (line) => printer.write(line),
   });
   const unsubscribe = session.subscribeInfra((progress) => {

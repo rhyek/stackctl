@@ -55,7 +55,7 @@ import {
   type UrlEntry,
   type WorkspaceUrlsContext,
 } from './config.js';
-import type { EnvAdditionalFile, EnvFileOrder, Envs, Mode } from './env.js';
+import type { EnvAdditionalFile, EnvFileOrder, Envs, Profile } from './env.js';
 import {
   resolveEnv,
   type ControlClient,
@@ -1033,7 +1033,7 @@ describe('publicOrigin', () => {
 });
 
 describe('deps as a callback', () => {
-  test('receives the mode and the service context, typed from its tokens', () => {
+  test('receives the profile and the service context, typed from its tokens', () => {
     defineConfig({
       serviceRootDir: 'packages',
       tokens: { domain: 'example.test' },
@@ -1043,10 +1043,10 @@ describe('deps as a callback', () => {
           deps: (ctx) => {
             expectTypeOf(ctx).toExtend<DepsContext<{ domain: string; region: string }>>();
             expectTypeOf(ctx.tokens.domain).toEqualTypeOf<'example.test'>();
-            expectTypeOf(ctx.mode).toEqualTypeOf<Mode>();
+            expectTypeOf(ctx.profile).toEqualTypeOf<Profile>();
             expectTypeOf(ctx.envs).toEqualTypeOf<Envs>();
             expectTypeOf(ctx.tokens.region).toEqualTypeOf<string>();
-            return ctx.mode === 'test' ? ['gateway'] : ['codegen', { service: 'gateway' }];
+            return ctx.profile === 'test' ? ['gateway'] : ['codegen', { service: 'gateway' }];
           },
         },
         codegen: {},
@@ -1136,17 +1136,17 @@ describe('infra callbacks', () => {
               },
               // a synchronous callback is fine too
               beforeStart: (ctx) => {
-                expectTypeOf(ctx.mode).toEqualTypeOf<Mode>();
+                expectTypeOf(ctx.profile).toEqualTypeOf<Profile>();
                 // only afterReady knows: before the start there is nothing to be fresh yet
                 expectTypeOf(ctx).not.toHaveProperty('fresh');
               },
               enabled: (ctx) => {
-                expectTypeOf(ctx.mode).toEqualTypeOf<Mode>();
+                expectTypeOf(ctx.profile).toEqualTypeOf<Profile>();
                 expectTypeOf(ctx.envs).toEqualTypeOf<Envs>();
                 expectTypeOf(ctx.tokens.domain).toEqualTypeOf<'example.test'>();
                 // decided when the config loads: no service to act on, nothing to run
                 expectTypeOf(ctx).not.toHaveProperty('compose');
-                return ctx.mode !== 'test';
+                return ctx.profile !== 'test';
               },
             },
           },
@@ -1158,15 +1158,15 @@ describe('infra callbacks', () => {
   });
 });
 
-describe('Mode', () => {
-  test('suggests the usual names without closing the set: any string is a mode', () => {
-    expectTypeOf<'development'>().toExtend<Mode>();
-    expectTypeOf<'test'>().toExtend<Mode>();
-    expectTypeOf<'staging'>().toExtend<Mode>();
-    expectTypeOf<string>().toExtend<Mode>();
-    expectTypeOf<Mode>().toExtend<string>();
+describe('Profile', () => {
+  test('suggests the usual names without closing the set: any string is a profile', () => {
+    expectTypeOf<'development'>().toExtend<Profile>();
+    expectTypeOf<'test'>().toExtend<Profile>();
+    expectTypeOf<'staging'>().toExtend<Profile>();
+    expectTypeOf<string>().toExtend<Profile>();
+    expectTypeOf<Profile>().toExtend<string>();
     // …and it has not collapsed into plain `string`, which is what would drop the suggestions.
-    expectTypeOf<Mode>().not.toEqualTypeOf<string>();
+    expectTypeOf<Profile>().not.toEqualTypeOf<string>();
   });
 });
 
@@ -1191,7 +1191,7 @@ describe('env', () => {
       env: (ctx) => {
         expectTypeOf(ctx.envs).toEqualTypeOf<Envs>();
         // the variables stackctl sets are known by name, so an editor offers them
-        expectTypeOf(ctx.envs.STACKCTL_MODE).toEqualTypeOf<Mode>();
+        expectTypeOf(ctx.envs.STACKCTL_PROFILE).toEqualTypeOf<Profile>();
         expectTypeOf(ctx.envs.STACKCTL_CWD).toEqualTypeOf<string>();
         expectTypeOf(ctx.envs.STACKCTL_WORKSPACE_DIR).toEqualTypeOf<string>();
         // any other name is still there to read, and may be unset
@@ -1245,14 +1245,14 @@ describe('env', () => {
     expectTypeOf(config.envVars).toEqualTypeOf<Record<string, string> | undefined>();
   });
 
-  test('hands an env.additionalFiles callback the mode, and gives back the file order', () => {
+  test('hands an env.additionalFiles callback the profile, and gives back the file order', () => {
     const config = defineConfig({
       serviceRootDir: 'packages',
       env: {
         additionalFiles: (ctx) => {
-          expectTypeOf(ctx.mode).toEqualTypeOf<Mode>();
+          expectTypeOf(ctx.profile).toEqualTypeOf<Profile>();
           expectTypeOf(ctx).not.toHaveProperty('envs');
-          return [{ file: `.env.${ctx.mode}.pre`, before: 'mode' }];
+          return [{ file: `.env.${ctx.profile}.pre`, before: 'profile' }];
         },
       },
       services: { api: {} },
@@ -1261,19 +1261,19 @@ describe('env', () => {
   });
 
   test('takes an additional file before or after one of the named anchors, never both', () => {
-    expectTypeOf<{ file: string; before: 'mode' }>().toExtend<EnvAdditionalFile>();
-    expectTypeOf<{ file: string; after: 'modeLocal'; scope: 'service' }>().toExtend<EnvAdditionalFile>(); // oxfmt-ignore
-    expectTypeOf<{ file: string; before: 'mode'; after: 'local' }>().not.toExtend<EnvAdditionalFile>(); // oxfmt-ignore
+    expectTypeOf<{ file: string; before: 'profile' }>().toExtend<EnvAdditionalFile>();
+    expectTypeOf<{ file: string; after: 'profileLocal'; scope: 'service' }>().toExtend<EnvAdditionalFile>(); // oxfmt-ignore
+    expectTypeOf<{ file: string; before: 'profile'; after: 'local' }>().not.toExtend<EnvAdditionalFile>(); // oxfmt-ignore
     expectTypeOf<{ file: string }>().not.toExtend<EnvAdditionalFile>();
     expectTypeOf<{ file: string; before: '.env.local' }>().not.toExtend<EnvAdditionalFile>();
-    expectTypeOf<{ file: string; before: 'mode'; scope: 'root' }>().not.toExtend<EnvAdditionalFile>(); // oxfmt-ignore
+    expectTypeOf<{ file: string; before: 'profile'; scope: 'root' }>().not.toExtend<EnvAdditionalFile>(); // oxfmt-ignore
     type Opts = Parameters<typeof defineConfig<Record<never, never>, { api: unknown }>>[0];
     type Files = Exclude<
       NonNullable<Opts['env']>,
       (...args: never[]) => unknown
     >['additionalFiles'];
     expectTypeOf<EnvAdditionalFile[]>().toExtend<Files>();
-    expectTypeOf<(ctx: { mode: Mode }) => EnvAdditionalFile[]>().toExtend<Files>();
+    expectTypeOf<(ctx: { profile: Profile }) => EnvAdditionalFile[]>().toExtend<Files>();
     expectTypeOf<{ file: string; before: 'nope' }[]>().not.toExtend<Files>();
   });
 });
@@ -1385,15 +1385,15 @@ describe('infra hook context', () => {
     expectTypeOf<InfraReadyContext>().not.toHaveProperty('run');
   });
 
-  test("every hook gets the session's mode and the resolved config", () => {
-    expectTypeOf<InfraCallbackContext['mode']>().toEqualTypeOf<Mode>();
+  test("every hook gets the session's profile and the resolved config", () => {
+    expectTypeOf<InfraCallbackContext['profile']>().toEqualTypeOf<Profile>();
     expectTypeOf<InfraCallbackContext['config']>().toEqualTypeOf<Config<string>>();
-    expectTypeOf<InfraReadyContext['mode']>().toEqualTypeOf<Mode>();
+    expectTypeOf<InfraReadyContext['profile']>().toEqualTypeOf<Profile>();
     expectTypeOf<InfraReadyContext['config']>().toEqualTypeOf<Config<string>>();
     void ({
-      beforeStart: ({ config, mode }) => {
-        expectTypeOf(config.envMode).toEqualTypeOf<Mode>();
-        expectTypeOf(mode).toEqualTypeOf<Mode>();
+      beforeStart: ({ config, profile }) => {
+        expectTypeOf(config.profile).toEqualTypeOf<Profile>();
+        expectTypeOf(profile).toEqualTypeOf<Profile>();
       },
       afterReady: ({ config }) => {
         expectTypeOf(config.services).toHaveProperty('anything');
@@ -1401,8 +1401,8 @@ describe('infra hook context', () => {
     } satisfies InfraServiceInput);
   });
 
-  test('enabled gets the mode but no config: it runs while the config is still resolving', () => {
-    expectTypeOf<InfraEnabledContext['mode']>().toEqualTypeOf<Mode>();
+  test('enabled gets the profile but no config: it runs while the config is still resolving', () => {
+    expectTypeOf<InfraEnabledContext['profile']>().toEqualTypeOf<Profile>();
     expectTypeOf<InfraEnabledContext>().not.toHaveProperty('config');
   });
 });
@@ -1520,9 +1520,9 @@ describe('the infra callbacks’ trigger', () => {
 });
 
 describe('resolveEnv', () => {
-  test('takes only mode, target and workspaceDir', () => {
+  test('takes only profile, target and workspaceDir', () => {
     expectTypeOf<NonNullable<Parameters<typeof resolveEnv>[0]>>().toEqualTypeOf<{
-      mode?: string;
+      profile?: string;
       target?: string;
       workspaceDir?: string;
     }>();
@@ -1540,7 +1540,7 @@ describe('resolveEnv', () => {
 
 describe('the SDK one-off types', () => {
   type OneOffOptions = {
-    mode?: string;
+    profile?: string;
     target?: string;
     workspaceDir?: string;
     stdio?: 'inherit' | 'pipe';
@@ -1604,8 +1604,8 @@ describe('config split across files', () => {
     queue,
     cache: {
       enabled: (ctx) => {
-        expectTypeOf(ctx.mode).toEqualTypeOf<Mode>();
-        return ctx.mode !== 'test';
+        expectTypeOf(ctx.profile).toEqualTypeOf<Profile>();
+        return ctx.profile !== 'test';
       },
     },
   } satisfies DockerComposeServicesInput<typeof tokens>;

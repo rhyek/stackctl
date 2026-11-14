@@ -16,7 +16,7 @@ import { readRunning, runningFilePath } from './running.js';
 export const START_TIME_SLACK_MS = 1000;
 
 /**
- * Whether `pid`, alive and silent, is the session that wrote `mode`'s record in the workspace at
+ * Whether `pid`, alive and silent, is the session that wrote `profile`'s record in the workspace at
  * `root`: `yes` when it is in the workspace and started no later than the record says the session
  * did; `no` when it started after that (the system gave the number to another process once the
  * session ended) or is outside the workspace; `unknown` when the record has no start time, or the
@@ -24,10 +24,10 @@ export const START_TIME_SLACK_MS = 1000;
  */
 export async function isRecordedSession(
   root: string,
-  mode: string,
+  profile: string,
   pid: number,
 ): Promise<'yes' | 'no' | 'unknown'> {
-  const record = readRunning(root, mode);
+  const record = readRunning(root, profile);
   const startedAt =
     record?.pid === pid && typeof record.startedAt === 'number' ? record.startedAt : null;
   const [started, cwd] = await Promise.all([processStartTime(pid), processCwd(pid)]);
@@ -41,9 +41,9 @@ export async function isRecordedSession(
 }
 
 /**
- * How to clear a record whose session can't be confirmed, for the end of a message: `If no <mode>
- * session of this workspace is running, delete <file>`.
+ * How to clear a record whose session can't be confirmed, for the end of a message:
+ * `If no <profile> session of this workspace is running, delete <file>`.
  */
-export function clearRecordAdvice(root: string, mode: string): string {
-  return `If no ${mode} session of this workspace is running, delete ${runningFilePath(root, mode)}`;
+export function clearRecordAdvice(root: string, profile: string): string {
+  return `If no ${profile} session of this workspace is running, delete ${runningFilePath(root, profile)}`;
 }

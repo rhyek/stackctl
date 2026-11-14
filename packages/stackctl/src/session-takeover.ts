@@ -3,7 +3,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { getRegisteredPackages, getWorkspaceDir } from './config.js';
 import { createControlClient, probeInstance } from './control-client.js';
-import { currentMode } from './env-base.js';
+import { currentProfile } from './env-base.js';
 import {
   canSignal,
   isInsideWorkspace,
@@ -17,7 +17,7 @@ import {
   type RunningState,
   decideControlPort,
   isPortListening,
-  readOtherModesRunning,
+  readOtherProfilesRunning,
   readRunning,
   sessionId,
 } from './running.js';
@@ -26,13 +26,13 @@ import { START_TIME_SLACK_MS } from './session-identity.js';
 import { HANDOFF_FORCE_KILL_MS } from './shutdown-timing.js';
 import { bounded } from './util.js';
 
-// Taking over from this mode's previous session: the control port and the record, the orphans a
+// Taking over from this profile's previous session: the control port and the record, the orphans a
 // killed session left, and whatever in the workspace still holds a dev port. Also how a running
 // session is ended: asked to quit (or sent SIGTERM), waited for, and its process tree killed if
 // it outlives the deadline.
 //
 // What each part guarantees itself: no kill ever signals this process or walks into its
-// descendants. The sweep and the port freeing never touch a live other-mode session's process,
+// descendants. The sweep and the port freeing never touch a live other-profile session's process,
 // its group or a group it recorded, neither as a process they pick nor in the trees they kill;
 // the port freeing never picks a process outside the workspace or in this process's group. The
 // tree kill and the two ways of ending a session do no workspace check of their own: they act on
@@ -166,27 +166,30 @@ export function devPorts(ports: ReadonlyArray<number | undefined>): number[] {
   return [...new Set(ports.filter((p): p is number => typeof p === 'number' && !Number.isNaN(p)))];
 }
 
-/** What live sessions of this workspace's other modes hold, by mode: their own pids, and groups. */
-export interface OtherModes {
+/**
+ * What live sessions of this workspace's other profiles hold, by profile: their own pids, and
+ * groups.
+ */
+export interface OtherProfiles {
   /** Each session's own pid. */
   pids: ReadonlyMap<number, string>;
   /** The groups each recorded as its children, and each session's own group. */
   groups: ReadonlyMap<number, string>;
 }
 
-const NO_OTHER_MODES: OtherModes = { pids: new Map(), groups: new Map() };
+const NO_OTHER_PROFILES: OtherProfiles = { pids: new Map(), groups: new Map() };
 
 /**
  * The recorded groups the sweep may take, with their live members: a positive pid that isn't
  * this process's, with a member still running, without this process among them, and not a group
- * (or holding a process) of a live other-mode session. Whether a member is still in the recorded
+ * (or holding a process) of a live other-profile session. Whether a member is still in the recorded
  * directory is checked after.
  */
 export function sweepableGroups(
   children: readonly ChildRecord[],
   groups: PidPair[],
   self: number = process.pid,
-  others: OtherModes = NO_OTHER_MODES,
+  others: OtherProfiles = NO_OTHER_PROFILES,
 ): Array<{ child: ChildRecord; members: number[] }> {
   const members = groupMembers(groups);
   return children.flatMap((child) => {
@@ -212,32 +215,32 @@ export interface PortHolder {
 
 /**
  * Which dev-port holders port freeing kills, and the line for each it leaves: one in the
- * workspace at `root` (a real path) is killed unless it, or its group, is a live other-mode
+ * workspace at `root` (a real path) is killed unless it, or its group, is a live other-profile
  * session's, or it is in `ownGroup`, which is left without a word. One outside the workspace, or
  * whose directory can't be read, is another program's.
  */
 export function sortHolders(
   holders: readonly PortHolder[],
-  ctx: { root: string; ownGroup: number; others: OtherModes },
+  ctx: { root: string; ownGroup: number; others: OtherProfiles },
 ): { kill: number[]; messages: string[] } {
   const kill: number[] = [];
-  const otherMode: string[] = [];
+  const otherProfile: string[] = [];
   const foreign: string[] = [];
   for (const { pid, cwd, group } of holders) {
     const inside = cwd !== null && isInsideWorkspace(ctx.root, cwd);
     // The session itself, wherever it runs; a group it holds, in the workspace.
-    const mode =
+    const profile =
       ctx.others.pids.get(pid) ??
       (inside && group !== undefined ? ctx.others.groups.get(group) : undefined);
-    if (mode !== undefined) {
-      otherMode.push(`dev port held by this project's ${mode} session (pid ${String(pid)}) — leaving it alone`); // oxfmt-ignore
+    if (profile !== undefined) {
+      otherProfile.push(`dev port held by this project's ${profile} session (pid ${String(pid)}) — leaving it alone`); // oxfmt-ignore
     } else if (!inside) {
       foreign.push(`dev port held by another program (pid ${String(pid)}) — leaving it alone`);
     } else if (group !== ctx.ownGroup) {
       kill.push(pid);
     }
   }
-  return { kill, messages: [...otherMode, ...foreign] };
+  return { kill, messages: [...otherProfile, ...foreign] };
 }
 
 // ---- Killing -----------------------------------------------------------------------------------
@@ -245,15 +248,18 @@ export function sortHolders(
 const processTable = async (column: 'ppid' | 'pgid') =>
   parsePidPairs(await stdoutOf('ps', ['-Ao', `pid=,${column}=`]));
 
-/** What the live sessions of the workspace's modes other than `mode` hold; see {@link OtherModes}. */
-function liveOtherModes(
+/**
+ * What the live sessions of the workspace's profiles other than `profile` hold; see {@link
+ * OtherProfiles}.
+ */
+function liveOtherProfiles(
   root: string,
-  mode: string,
+  profile: string,
   groupOf: ReadonlyMap<number, number>,
-): OtherModes {
+): OtherProfiles {
   const pids = new Map<number, string>();
   const groups = new Map<number, string>();
-  for (const [other, state] of readOtherModesRunning(root, mode)) {
+  for (const [other, state] of readOtherProfilesRunning(root, profile)) {
     if (!isProcessAlive(state.pid)) {
       continue;
     }
@@ -318,9 +324,9 @@ export function startedSince(started: number | null, now: number | null): boolea
   return started !== null && now !== null && now > started + START_TIME_SLACK_MS;
 }
 
-/** A tree walk's spare test for what live other-mode sessions hold, by `groupOf`. */
+/** A tree walk's spare test for what live other-profile sessions hold, by `groupOf`. */
 const othersSpared =
-  (others: OtherModes, groupOf: ReadonlyMap<number, number>) =>
+  (others: OtherProfiles, groupOf: ReadonlyMap<number, number>) =>
   (pid: number): boolean => {
     const group = groupOf.get(pid);
     return others.pids.has(pid) || (group !== undefined && others.groups.has(group));
@@ -389,15 +395,15 @@ export async function terminateSession(pid: number, opts: QuitOptions = {}): Pro
 // ---- Sweeping and freeing ----------------------------------------------------------------------
 
 /**
- * Kills what `record`, a previous session of `mode` in the workspace at `root`, names that is
+ * Kills what `record`, a previous session of `profile` in the workspace at `root`, names that is
  * still running: each recorded process group with a member in or below its recorded directory.
  * Nothing while the recording session is alive (its children are then a live session's); never a
- * group this process is in, nor one a live session of another mode recorded or holds. Resolves
+ * group this process is in, nor one a live session of another profile recorded or holds. Resolves
  * with the pids killed. On Windows there is no `ps`: the table is empty, and nothing is swept.
  */
 export async function sweepOrphans(
   root: string,
-  mode: string,
+  profile: string,
   record: RunningState | null,
   onStatus: (message: string) => void = () => {},
 ): Promise<number[]> {
@@ -407,7 +413,7 @@ export async function sweepOrphans(
   }
   const table = await processTable('pgid');
   const groupOf = new Map(table.map(({ pid, other }) => [pid, other]));
-  const others = liveOtherModes(root, mode, groupOf);
+  const others = liveOtherProfiles(root, profile, groupOf);
   const doomed = new Set<number>();
   for (const { child, members } of sweepableGroups(children, table, process.pid, others)) {
     const dir = resolveRealPath(child.cwd);
@@ -440,12 +446,12 @@ async function listeningPids(ports: number[]): Promise<number[]> {
 
 /**
  * Frees `ports`: kills the process tree of each listener whose working directory is in the
- * workspace at `root` (see {@link sortHolders}), saying which it leaves for another mode's session
- * or another program. When the process groups can't be read, it kills nothing and says so.
+ * workspace at `root` (see {@link sortHolders}), saying which it leaves for another profile's
+ * session or another program. When the process groups can't be read, it kills nothing and says so.
  */
 export async function freeDevPorts(opts: {
   root: string;
-  mode: string;
+  profile: string;
   ports: number[];
   onStatus: (message: string) => void;
 }): Promise<void> {
@@ -455,7 +461,7 @@ export async function freeDevPorts(opts: {
     return;
   }
   const groupOf = new Map((await processTable('pgid')).map(({ pid, other }) => [pid, other]));
-  // A table that read lists this process: without it, another mode's holders can't be told.
+  // A table that read lists this process: without it, another profile's holders can't be told.
   const ownGroup = groupOf.get(process.pid);
   if (ownGroup === undefined) {
     opts.onStatus("couldn't read process groups — leaving dev ports alone");
@@ -467,7 +473,7 @@ export async function freeDevPorts(opts: {
       return { pid, cwd: cwd === null ? null : resolveRealPath(cwd), group: groupOf.get(pid) };
     }),
   );
-  const others = liveOtherModes(opts.root, opts.mode, groupOf);
+  const others = liveOtherProfiles(opts.root, opts.profile, groupOf);
   const { kill, messages } = sortHolders(holders, { root: resolveRealPath(opts.root), ownGroup, others }); // oxfmt-ignore
   for (const message of messages) {
     opts.onStatus(message);
@@ -478,8 +484,8 @@ export async function freeDevPorts(opts: {
 // ---- Acquisition -------------------------------------------------------------------------------
 
 /**
- * Takes over as this mode's session of the loaded config's workspace: decides the control port
- * and writes the session record (quitting this mode's running session on it), sweeps the
+ * Takes over as this profile's session of the loaded config's workspace: decides the control port
+ * and writes the session record (quitting this profile's running session on it), sweeps the
  * previous session's orphans, and frees the services' dev ports (neither on Windows). Resolves
  * with the control port. `onStatus` hears each step worth telling.
  */
@@ -490,13 +496,13 @@ export async function acquireSession(opts: {
   onStatus: (message: string) => void;
 }): Promise<number> {
   const root = getWorkspaceDir();
-  const mode = currentMode();
+  const profile = currentProfile();
   // Read before the port decision rewrites the record, dropping its children.
-  const previous = readRunning(root, mode);
+  const previous = readRunning(root, profile);
   const port = await decideControlPort({
     cwd: root,
     configPath: opts.configPath,
-    mode,
+    profile,
     apiPortOverride: opts.apiPortOverride,
     sessionId: sessionId(),
     startedAt: Date.now(),
@@ -510,11 +516,11 @@ export async function acquireSession(opts: {
     onStatus: opts.onStatus,
   });
   // The session this one replaces has ended: nothing writes to an old folder any more.
-  pruneSessions(root, mode, sessionId());
+  pruneSessions(root, profile, sessionId());
   if (!isWindows()) {
-    await sweepOrphans(root, mode, previous, opts.onStatus);
+    await sweepOrphans(root, profile, previous, opts.onStatus);
     const ports = devPorts(getRegisteredPackages().map((pkg) => pkg.port));
-    await freeDevPorts({ root, mode, ports, onStatus: opts.onStatus });
+    await freeDevPorts({ root, profile, ports, onStatus: opts.onStatus });
   }
   return port;
 }

@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { currentMode } from './env-base.js';
-import { modeStateDir, stateDirOf } from './log-files.js';
+import { currentProfile } from './env-base.js';
+import { profileStateDir, stateDirOf } from './log-files.js';
 
 /**
  * Random control-API port range: `14000`–`14099` (100 ports). Kept below the OS ephemeral
@@ -29,9 +29,10 @@ export interface ChildRecord {
 }
 
 /**
- * Persisted at `node_modules/.stackctl/modes/<mode>/running.json`: the control-API port + owner pid of
- * this workspace's session in that mode. A workspace runs one session per mode, so each mode has
- * its own record — a `test` session never reads, overwrites, or takes over `development`'s.
+ * Persisted at `node_modules/.stackctl/profiles/<profile>/running.json`: the control-API port +
+ * owner pid of this workspace's session in that profile. A workspace runs one session per profile,
+ * so each profile has its own record — a `test` session never reads, overwrites, or takes over
+ * `development`'s.
  */
 export interface RunningState {
   port: number;
@@ -55,8 +56,8 @@ export interface RunningState {
    */
   children?: ChildRecord[];
   /**
-   * Absolute path to the session's folder, `modes/<mode>/sessions/<id>/`. Omitted by callers that
-   * don't run a session (e.g. tests).
+   * Absolute path to the session's folder, `profiles/<profile>/sessions/<id>/`. Omitted by callers
+   * that don't run a session (e.g. tests).
    */
   logDir?: string;
   /**
@@ -71,8 +72,8 @@ export interface InstanceInfo {
   pid: number;
   /** Absolute path to the `stackctl.config.*` that instance was started with. */
   configPath: string;
-  /** The mode that instance runs in. */
-  mode: string;
+  /** The profile that instance runs in. */
+  profile: string;
 }
 
 let ownSessionId: string | undefined;
@@ -104,9 +105,11 @@ export function sessionId(): string {
   return ownSessionId;
 }
 
-/** The session record of `mode` (the active one unless given): `modes/<mode>/running.json`. */
-export function runningFilePath(cwd: string, mode: string = currentMode()): string {
-  return path.join(modeStateDir(cwd, mode), 'running.json');
+/**
+ * The session record of `profile` (the active one unless given): `profiles/<profile>/running.json`.
+ */
+export function runningFilePath(cwd: string, profile: string = currentProfile()): string {
+  return path.join(profileStateDir(cwd, profile), 'running.json');
 }
 
 function parseRunning(file: string): RunningState | null {
@@ -121,11 +124,11 @@ function parseRunning(file: string): RunningState | null {
   }
 }
 
-/** The modes of the workspace at `cwd` that have a folder under `modes/`, sorted. */
-export function recordedModes(cwd: string): string[] {
+/** The profiles of the workspace at `cwd` that have a folder under `profiles/`, sorted. */
+export function recordedProfiles(cwd: string): string[] {
   try {
     return fs
-      .readdirSync(path.join(stateDirOf(cwd), 'modes'), { withFileTypes: true })
+      .readdirSync(path.join(stateDirOf(cwd), 'profiles'), { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort();
@@ -134,19 +137,23 @@ export function recordedModes(cwd: string): string[] {
   }
 }
 
-export function readRunning(cwd: string, mode: string = currentMode()): RunningState | null {
-  return parseRunning(runningFilePath(cwd, mode));
+export function readRunning(cwd: string, profile: string = currentProfile()): RunningState | null {
+  return parseRunning(runningFilePath(cwd, profile));
 }
 
-export function writeRunning(cwd: string, state: RunningState, mode: string = currentMode()): void {
-  const file = runningFilePath(cwd, mode);
+export function writeRunning(
+  cwd: string,
+  state: RunningState,
+  profile: string = currentProfile(),
+): void {
+  const file = runningFilePath(cwd, profile);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(state, null, 2));
 }
 
-/** Deletes this mode's session record when it is this process's own (its `pid` is ours). */
-export function removeOwnRunning(cwd: string, mode: string = currentMode()): void {
-  const file = runningFilePath(cwd, mode);
+/** Deletes this profile's session record when it is this process's own (its `pid` is ours). */
+export function removeOwnRunning(cwd: string, profile: string = currentProfile()): void {
+  const file = runningFilePath(cwd, profile);
   if (parseRunning(file)?.pid !== process.pid) {
     return;
   }
@@ -163,16 +170,16 @@ let removeOnExitInstalled = false;
  * Deletes this process's session record as it exits, by any path that runs exit handlers: a
  * record outliving its session would name a pid the system may give to something else.
  */
-function removeRunningOnExit(cwd: string, mode: string): void {
+function removeRunningOnExit(cwd: string, profile: string): void {
   if (removeOnExitInstalled) {
     return;
   }
   removeOnExitInstalled = true;
-  process.once('exit', () => removeOwnRunning(cwd, mode));
+  process.once('exit', () => removeOwnRunning(cwd, profile));
 }
 
 /**
- * Merges `patch` into this mode's session record — but only when the current process owns it
+ * Merges `patch` into this profile's session record — but only when the current process owns it
  * (its recorded `pid` is ours), so a session that's already been handed off to a newer one can't
  * clobber the newer session's record. No-op when there's no (owned) file. Best-effort.
  */
@@ -185,16 +192,16 @@ export function updateRunning(cwd: string, patch: Partial<RunningState>): void {
 }
 
 /**
- * The records of this workspace's *other* modes, by mode — what a starting session must keep its
- * hands off: their packages are another live session's, never this one's orphans.
+ * The records of this workspace's *other* profiles, by profile — what a starting session must keep
+ * its hands off: their packages are another live session's, never this one's orphans.
  */
-export function readOtherModesRunning(
+export function readOtherProfilesRunning(
   cwd: string,
-  mode: string = currentMode(),
+  profile: string = currentProfile(),
 ): Map<string, RunningState> {
   const out = new Map<string, RunningState>();
-  for (const other of recordedModes(cwd)) {
-    const state = other === mode ? null : readRunning(cwd, other);
+  for (const other of recordedProfiles(cwd)) {
+    const state = other === profile ? null : readRunning(cwd, other);
     if (state) {
       out.set(other, state);
     }
@@ -244,23 +251,23 @@ export interface PortEnv {
 }
 
 /**
- * Decides which port this session's control API should bind, and records it in this mode's
- * `modes/<mode>/running.json`. See the module for the full protocol; in short:
+ * Decides which port this session's control API should bind, and records it in this profile's
+ * `profiles/<profile>/running.json`. See the module for the full protocol; in short:
  *
  * - Explicit `apiPortOverride` → use that fixed port; hand off (shut down) only this
- *   workspace's session in the same mode already on it, never a foreign one — and fail when
- *   it's this workspace's session in another mode, which may not be quit.
+ *   workspace's session in the same profile already on it, never a foreign one — and fail when
+ *   it's this workspace's session in another profile, which may not be quit.
  * - Otherwise start from the recorded port (or a fresh random one) and, if it's occupied:
- *   hand off + reuse when it's this workspace's session in the same mode, or relocate to a new
- *   random port when it's anything else (another mode's session, a different workspace, a
+ *   hand off + reuse when it's this workspace's session in the same profile, or relocate to a new
+ *   random port when it's anything else (another profile's session, a different workspace, a
  *   non-stackctl listener). A free port is used as-is.
  */
 export async function decideControlPort(opts: {
   cwd: string;
   /** Absolute path to this session's own `stackctl.config.*`. */
   configPath: string;
-  /** This session's mode; only a session in the same one is handed off. */
-  mode?: string;
+  /** This session's profile; only a session in the same one is handed off. */
+  profile?: string;
   apiPortOverride?: number;
   pid?: number;
   /** This session's id, recorded beside its pid; see {@link RunningState.sessionId}. */
@@ -275,7 +282,7 @@ export async function decideControlPort(opts: {
   onStatus?: (message: string) => void;
 }): Promise<number> {
   const pid = opts.pid ?? process.pid;
-  const mode = opts.mode ?? currentMode();
+  const profile = opts.profile ?? currentProfile();
   const onStatus = opts.onStatus ?? (() => {});
   const sameProject = (info: InstanceInfo | null) => info?.configPath === opts.configPath;
   const finalize = (port: number): number => {
@@ -290,21 +297,21 @@ export async function decideControlPort(opts: {
         logDir: opts.logDir,
         logFile: opts.logFile,
       },
-      mode,
+      profile,
     );
     if (pid === process.pid) {
-      removeRunningOnExit(opts.cwd, mode);
+      removeRunningOnExit(opts.cwd, profile);
     }
     return port;
   };
 
   if (opts.apiPortOverride != null) {
     const info = await opts.env.probe(opts.apiPortOverride);
-    if (info && sameProject(info) && info.mode !== mode) {
+    if (info && sameProject(info) && info.profile !== profile) {
       throw new Error(
-        `apiPort ${String(opts.apiPortOverride)} is in use by this project's ${info.mode} session ` +
-          `(pid ${String(info.pid)}), which a ${mode} session runs alongside rather than replacing. ` +
-          'A fixed `apiPort` serves one mode at a time: stop that session, or drop `apiPort` so each ' +
+        `apiPort ${String(opts.apiPortOverride)} is in use by this project's ${info.profile} session ` +
+          `(pid ${String(info.pid)}), which a ${profile} session runs alongside rather than replacing. ` +
+          'A fixed `apiPort` serves one profile at a time: stop that session, or drop `apiPort` so each ' +
           'session picks its own.',
       );
     }
@@ -315,7 +322,7 @@ export async function decideControlPort(opts: {
     return finalize(opts.apiPortOverride);
   }
 
-  const state = readRunning(opts.cwd, mode);
+  const state = readRunning(opts.cwd, profile);
   let candidate = state?.port ?? pickRandomPort();
   const tried = new Set<number>();
   for (let i = 0; i < CONTROL_PORT_COUNT; i++) {
@@ -325,7 +332,7 @@ export async function decideControlPort(opts: {
     }
 
     const info = await opts.env.probe(candidate);
-    if (info && sameProject(info) && info.mode === mode) {
+    if (info && sameProject(info) && info.profile === profile) {
       // Authorized upstream by the takeover preflight (see `takeover.ts`), which reads the
       // same recorded port this loop starts from. The one case it can't have seen: a
       // deleted record while an instance still runs, where the random start has a
@@ -334,7 +341,7 @@ export async function decideControlPort(opts: {
       await opts.env.shutdown(candidate, info.pid);
       return finalize(candidate);
     }
-    // This project's session in another mode, a different workspace's instance, or a
+    // This project's session in another profile, a different workspace's instance, or a
     // non-stackctl listener — leave it alone and relocate.
     candidate = pickRandomPort([...tried]);
   }

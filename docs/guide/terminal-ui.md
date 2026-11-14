@@ -44,13 +44,13 @@ selection.
 
 The log fills the screen, above a footer:
 
-<llm-exclude><TerminalPlayer src="/casts/run-screen-1794683907.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/run-screen-1794688469.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
 <llm-only>
 
 ```text
 ── example ⎇ main ────────────────────────────────────────────────────────
-❯ ● backend 62M  ● frontend 236M  ● worker 26M
-infra: ● db 31M  ● mail 19M
+❯ ● backend 63M  ● frontend 235M  ● worker 26M
+infra: ● db 25M  ● mail 13M
 ← → select  r restart  s stop  m commands
 logs: / filter  c clear  │  ^c quit
 Home page ↗

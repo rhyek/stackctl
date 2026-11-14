@@ -19,9 +19,9 @@ const app = (name: string, over: Partial<AnyServiceConfig> = {}) =>
 
 const client = {} as ControlClient;
 
-/** The mode's session as `findSession` reports it, with `services` its status's. */
+/** The profile's session as `findSession` reports it, with `services` its status's. */
 function running(services: SessionStatus['services']): FoundSession {
-  const status = { pid: 4242, mode: 'development', services, logFile: '/s/logs.txt' } as SessionStatus; // oxfmt-ignore
+  const status = { pid: 4242, profile: 'development', services, logFile: '/s/logs.txt' } as SessionStatus; // oxfmt-ignore
   return { kind: 'running', client, status, record: { port: 14001, pid: 4242 } };
 }
 
@@ -36,7 +36,7 @@ function context(answers: FoundSession[], over: Partial<WaitContext> = {}) {
   let asked = 0;
   const ctx: WaitContext = {
     root: dir,
-    target: { mode: 'development', source: 'default' },
+    target: { profile: 'development', source: 'default' },
     services: [app('api'), app('web'), app('later', { autostart: false }), app('docs', { command: null })], // oxfmt-ignore
     find: async () => answers[Math.min(asked++, answers.length - 1)]!,
     wait: async (_client, services, opts) => {

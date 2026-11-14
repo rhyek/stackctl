@@ -58,9 +58,9 @@ function ppidOf(pid: number): number {
   );
 }
 
-/** The development mode's session folders, oldest first. */
+/** The development profile's session folders, oldest first. */
 const sessionDirs = () => {
-  const dir = path.join(ws(), 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+  const dir = path.join(ws(), 'node_modules', '.stackctl', 'profiles', 'development', 'sessions');
   return fs.existsSync(dir)
     ? fs
         .readdirSync(dir)
@@ -103,7 +103,14 @@ const probe = (tag: string) => [
 
 /** The lines of the one-off log whose first line names `tag`, without their timestamps. */
 function logOf(tag: string): string[] {
-  const sessions = path.join(ws(), 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+  const sessions = path.join(
+    ws(),
+    'node_modules',
+    '.stackctl',
+    'profiles',
+    'development',
+    'sessions',
+  );
   for (const session of fs.readdirSync(sessions)) {
     const dir = path.join(sessions, session, 'commands');
     for (const name of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
@@ -140,8 +147,8 @@ test('without a terminal, the output is piped and logged', async () => {
 test('a coding agent on a terminal still gets pipes, and its log holds the output', async () => {
   const pty = await Pty.start({
     cwd: ws(),
-    // An agent names the mode.
-    args: ['--mode', 'development', ...probe('agent-tty')],
+    // An agent names the profile.
+    args: ['--profile', 'development', ...probe('agent-tty')],
     env: { STACKCTL_STARTED_BY_AGENT: '1' },
   });
   expect(await pty.waitForExit()).toEqual({ code: 0, signal: null });

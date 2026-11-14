@@ -7,8 +7,8 @@ import { preflightTakeover, resolveTakeover, type PreflightDeps } from './takeov
 
 const CONFIG = '/ws/stackctl.config.ts';
 
-// Pinned, so a run from inside a stackctl session of another mode can't change the answers.
-beforeEach(() => vi.stubEnv('STACKCTL_MODE', 'development'));
+// Pinned, so a run from inside a stackctl session of another profile can't change the answers.
+beforeEach(() => vi.stubEnv('STACKCTL_PROFILE', 'development'));
 afterEach(() => vi.unstubAllEnvs());
 
 function status(over: Partial<SessionStatus> = {}): SessionStatus {
@@ -16,8 +16,8 @@ function status(over: Partial<SessionStatus> = {}): SessionStatus {
     pid: 4242,
     sessionId: null,
     configPath: CONFIG,
-    mode: 'development',
-    modeSource: 'default',
+    profile: 'development',
+    profileSource: 'default',
     startedByAgent: false,
     logFile: null,
     services: null,
@@ -174,7 +174,7 @@ describe('preflightTakeover', () => {
               },
             }),
           });
-          const record = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'running.json'); // oxfmt-ignore
+          const record = path.join(ws, 'node_modules', '.stackctl', 'profiles', 'development', 'running.json'); // oxfmt-ignore
           expect(result).toEqual({
             ok: false,
             message:
@@ -301,14 +301,14 @@ describe('preflightTakeover', () => {
     expect(result.ok).toBe(false);
   });
 
-  test("starts alongside this project's session in another mode, asking and quitting nothing", async () => {
+  test("starts alongside this project's session in another profile, asking and quitting nothing", async () => {
     // The hardest case to be let through: a person's session, and no terminal to ask.
     const result = await preflightTakeover({
       configPath: CONFIG,
-      mode: 'test',
+      profile: 'test',
       killOthers: false,
       deps: deps({
-        queryRunning: async () => status({ mode: 'development', startedByAgent: false }),
+        queryRunning: async () => status({ profile: 'development', startedByAgent: false }),
         isInteractive: () => false,
         selfStartedByAgent: () => true,
         askToQuit: async () => {
@@ -319,13 +319,13 @@ describe('preflightTakeover', () => {
     expect(result).toEqual({ ok: true });
   });
 
-  test('names the mode of the session it would quit', async () => {
+  test('names the profile of the session it would quit', async () => {
     const result = await preflightTakeover({
       configPath: CONFIG,
-      mode: 'test',
+      profile: 'test',
       killOthers: false,
       deps: deps({
-        queryRunning: async () => status({ mode: 'test' }),
+        queryRunning: async () => status({ profile: 'test' }),
         isInteractive: () => false,
       }),
     });

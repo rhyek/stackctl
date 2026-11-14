@@ -17,7 +17,7 @@ import {
 } from './types.js';
 
 /** A stand-in for the resolved config: callbacks only pass it on. */
-const CONFIG = { envMode: 'test' } as Config<string>;
+const CONFIG = { profile: 'test' } as Config<string>;
 
 const READY: Readiness = { state: 'ready', detail: 'running' };
 const WAITING: Readiness = { state: 'pending', detail: 'waiting for healthy' };
@@ -50,7 +50,7 @@ class FakeProvider extends InfraProvider {
   constructor(private readonly o: FakeOptions = {}) {
     const runtime: ProviderRuntime = {
       workspaceDir: '/ws',
-      mode: 'test',
+      profile: 'test',
       config: o.config ?? CONFIG,
       // Only what the test reads: the variables stackctl sets come from the manager.
       envs: { FROM_ENV: 'yes' } as Record<string, string> as Envs,
@@ -433,7 +433,7 @@ describe('InfraProvider callback context: buildAddress', () => {
 });
 
 describe('InfraProvider callback context', () => {
-  test('carries the service, mode, workspace, tokens and the provider-extended env', async () => {
+  test('carries the service, profile, workspace, tokens and the provider-extended env', async () => {
     let seen: InfraCallbackContext | undefined;
     await new FakeProvider({
       callbacks: {
@@ -447,7 +447,7 @@ describe('InfraProvider callback context', () => {
     expect(seen).toMatchObject({
       // A service the config resolved nothing for (the fake's callbacks alone): its name, unrouted.
       service: { name: 'db', kind: 'infra', route: null },
-      mode: 'test',
+      profile: 'test',
       config: CONFIG,
       trigger: 'start',
       workspaceDir: '/ws',
@@ -692,7 +692,7 @@ describe('a disabled service', () => {
     expect(summary).toEqual({ ok: true, services: [{ service: 'db', ok: true }] });
   });
 
-  test('cannot be brought up by name: the error says it is disabled, and for which mode', async () => {
+  test('cannot be brought up by name: the error says it is disabled, and for which profile', async () => {
     const provider = withDisabledRedis();
     await expect(provider.up({ services: ['redis'] })).rejects.toThrow(InfraError);
     await expect(provider.up({ services: ['redis'] })).rejects.toThrow(
@@ -701,7 +701,7 @@ describe('a disabled service', () => {
     expect(provider.calls).toEqual([]);
   });
 
-  test('can still be destroyed by name, to clean up after a mode where it ran', async () => {
+  test('can still be destroyed by name, to clean up after a profile where it ran', async () => {
     const provider = withDisabledRedis();
     expect((await provider.destroy({ services: ['redis'] })).ok).toBe(true);
     expect(provider.calls).toEqual(['destroyServices:redis']);

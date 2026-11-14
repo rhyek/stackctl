@@ -122,7 +122,7 @@ describe('runPostinstall', () => {
     expect(fs.existsSync(skillInstallPath(root))).toBe(false);
   });
 
-  test('counts CI=false as no CI, as the mode does', async () => {
+  test('counts CI=false as no CI, as the profile does', async () => {
     fs.writeFileSync(path.join(root, 'stackctl.config.ts'), '');
     installSkill({ cwd: root, version: '1.0.0' });
     await run({ INIT_CWD: root, CI: 'true' });

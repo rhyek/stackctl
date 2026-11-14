@@ -116,6 +116,6 @@ only approximate; the frame numbers are exact.
 
 **Rehearsing.** `node maintenance/scripts/demo/record.ts <scene> /tmp/x.cast /tmp/x.txt` records
 one scene without placing it, and `agg /tmp/x.cast /tmp/x.gif` renders it (add `record.sh`'s flags for the
-real look). Reset the remembered selection first (`pnpm stackctl --mode development reset` in
+real look). Reset the remembered selection first (`pnpm stackctl --profile development reset` in
 `example/`), as `record.sh` does, or the picker starts pre-selected and every keystroke lands
 somewhere else.

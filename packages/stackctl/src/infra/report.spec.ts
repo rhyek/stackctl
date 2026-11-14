@@ -10,7 +10,7 @@ function render(
   const lines: string[] = [];
   let clock = 0;
   const reporter = createInfraReporter({
-    mode: 'development',
+    profile: 'development',
     write: (line) => lines.push(stripAnsi(line)),
     // Every reading is 400ms after the last, so durations are predictable.
     now: () => (clock += 400),

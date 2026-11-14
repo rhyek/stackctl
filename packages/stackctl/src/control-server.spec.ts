@@ -29,7 +29,7 @@ function startControlServer(opts: Omit<Parameters<typeof startServer>[0], 'event
     ...opts,
     events: new EventLog({
       file: sessionEventsPath(root, 'development', '1'),
-      mode: 'development',
+      profile: 'development',
       sessionId: () => sessionId(),
     }),
   });
@@ -64,7 +64,7 @@ function fakeManager(overrides: Partial<ControlManager> = {}): ControlManager {
 
 describe('control-server', () => {
   test('GET /query/status serves identity with null services/config before a session is bound', async () => {
-    vi.stubEnv('STACKCTL_MODE', 'test');
+    vi.stubEnv('STACKCTL_PROFILE', 'test');
     server = await startControlServer({
       quitHandler: () => {},
       port: 0,
@@ -77,8 +77,8 @@ describe('control-server', () => {
       pid: process.pid,
       sessionId: sessionId(),
       configPath: '/ws/stackctl.config.ts',
-      mode: 'test',
-      modeSource: 'env',
+      profile: 'test',
+      profileSource: 'env',
       startedByAgent: expect.any(Boolean),
       logFile: '/ws/logs/1.log',
       services: null,
@@ -124,7 +124,7 @@ describe('control-server', () => {
   });
 
   test('GET /query/status reflects the session once it is bound (rotation-aware logFile)', async () => {
-    vi.stubEnv('STACKCTL_MODE', '');
+    vi.stubEnv('STACKCTL_PROFILE', '');
     server = await startControlServer({
       quitHandler: () => {},
       port: 0,
@@ -145,8 +145,8 @@ describe('control-server', () => {
       pid: process.pid,
       sessionId: sessionId(),
       configPath: '/ws/stackctl.config.ts',
-      mode: 'development',
-      modeSource: 'default',
+      profile: 'development',
+      profileSource: 'default',
       startedByAgent: expect.any(Boolean),
       logFile: '/ws/logs/2-rotated.log',
       services: { web: 'running' },
@@ -517,7 +517,7 @@ describe('control-server', () => {
         { type: 'service-state', service: 'web', status: 'running', ready: false, previousStatus: null, previousReady: null }, // oxfmt-ignore
         { type: 'service-state', service: 'api', status: 'waiting', ready: false, previousStatus: null, previousReady: null }, // oxfmt-ignore
         { type: 'infra-state', service: 'db', status: 'starting', previousStatus: null },
-        { type: 'service-state', service: 'web', status: 'running', ready: true, previousStatus: 'running', previousReady: false, mode: 'development', sessionId: sessionId(), pid: process.pid }, // oxfmt-ignore
+        { type: 'service-state', service: 'web', status: 'running', ready: true, previousStatus: 'running', previousReady: false, profile: 'development', sessionId: sessionId(), pid: process.pid }, // oxfmt-ignore
       ]);
     });
 

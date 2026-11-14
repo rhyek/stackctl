@@ -1,5 +1,5 @@
 ---
-description: stackctl.config.ts - where it lives, every top-level defineConfig option, callbacks, typed tokens, splitting the config across files and typed service names.
+description: stackctl.config.ts - where it lives, every top-level defineConfig option, callbacks, typed tokens, splitting the config across files, typed service names and the type check before start and run.
 ---
 
 # The config file
@@ -35,7 +35,7 @@ repo.
 | `reverseProxy`   | A dev reverse proxy with a hostname per service. See [Reverse proxy](./reverse-proxy.md).           |
 | `urls`           | Workspace-wide footer links, not tied to a service. See [URLs and origins](./urls.md#links-in-the-footer). |
 | `tokens`         | Values of your own, handed to every callback. See [Tokens](#tokens).                                |
-| `apiPort`        | Pins the [control API](../reference/control-api.md)'s port. By default a free one is picked. A pinned port serves one mode's session at a time. |
+| `apiPort`        | Pins the [control API](../reference/control-api.md)'s port. By default a free one is picked. A pinned port serves one profile's session at a time. |
 | `workspaceDir`   | The root that service directories resolve against. Defaults to the config file's directory, and is rarely set. |
 
 ## Callbacks
@@ -109,7 +109,7 @@ filled in.
 
 ```bash
 stackctl show-config | jq '.services | map_values({ port, publicOrigin })'
-stackctl show-config --mode test
+stackctl show-config --profile test
 ```
 
 The config's default export is that same resolved object, so another script can import it:
@@ -206,6 +206,24 @@ declare module 'stackctl' {
 
 `ServiceName`, `InfraServiceName` and `ServiceConfig<'api'>`, imported from `stackctl`, are
 then your own names and types, and `startStack()`'s `origins` is keyed by them.
+
+## Type checking
+
+`stackctl start` and `stackctl run` type-check `stackctl.config.ts` before anything else, and
+exit with code `1`, printing tsc's errors, when it has one:
+
+```text
+stackctl: stackctl.config.ts has type errors:
+
+stackctl.config.ts(4,24): error TS2322: Type 'string' is not assignable to type 'number'.
+```
+
+- **The check runs the `tsc` of the `typescript` installed beside the config**, in the workspace
+  root's `node_modules`. Without one, there is no check.
+- **The `tsconfig.json` beside the config sets the compiler options.** Only the config and what
+  it imports are checked, and nothing is written. Without a `tsconfig.json`, the check runs with
+  `--strict`, `--module nodenext` and `--target esnext`.
+- **A JavaScript config (`.js`, `.mjs`) isn't checked**, and no other command checks.
 
 ## `--workspace-dir`
 

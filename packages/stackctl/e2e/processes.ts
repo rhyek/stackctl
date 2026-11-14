@@ -23,8 +23,8 @@ export interface Exit {
 
 /**
  * Variables a CI runner, a package manager, Vitest or an enclosing stackctl session sets, none of
- * which the CLI under test may see: `CI` (or any `CI_*`) makes Ink non-interactive and the mode
- * `test`, and a `STACKCTL_*` variable would point it at another session's mode or workspace.
+ * which the CLI under test may see: `CI` (or any `CI_*`) makes Ink non-interactive and the profile
+ * `test`, and a `STACKCTL_*` variable would point it at another session's profile or workspace.
  */
 const DROP = new Set([
   'CI',

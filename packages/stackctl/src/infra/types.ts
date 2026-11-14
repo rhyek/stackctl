@@ -12,7 +12,7 @@ import type {
   UrlsInput,
 } from '../config.js';
 import type { ControlClient } from '../control-client.js';
-import type { Envs, Mode } from '../env.js';
+import type { Envs, Profile } from '../env.js';
 import type { HookExecOptions, HookExecResult } from '../hook-exec.js';
 import type { InfraAction } from './control.js';
 
@@ -66,10 +66,12 @@ export interface InfraCallbackContext<T = TokenRecord, G extends InfraTrigger = 
    * {@link BuildAddressOptions}.
    */
   buildAddress: (opts?: BuildAddressOptions) => string;
-  /** The active mode: `development` unless `--mode` says otherwise, or any name you pass it. */
-  mode: Mode;
   /**
-   * The resolved config — what `stackctl show-config` prints, in this mode: every service, its
+   * The active profile: `development` unless `--profile` says otherwise, or any name you pass it.
+   */
+  profile: Profile;
+  /**
+   * The resolved config — what `stackctl show-config` prints, in this profile: every service, its
    * port and public origin, the reverse proxy, the infra. Read it, don't change it: it is
    * stackctl's own object, not a copy.
    */
@@ -83,9 +85,9 @@ export interface InfraCallbackContext<T = TokenRecord, G extends InfraTrigger = 
   /** The workspace root, absolute. */
   workspaceDir: string;
   /**
-   * This mode's environment: the workspace-scope `.env` files and the ambient environment —
+   * This profile's environment: the workspace-scope `.env` files and the ambient environment —
    * the ambient environment wins over the files, except for the variables `env.override` names —
-   * plus whatever the provider adds (`COMPOSE_PROJECT_NAME`). It includes `STACKCTL_MODE`.
+   * plus whatever the provider adds (`COMPOSE_PROJECT_NAME`). It includes `STACKCTL_PROFILE`.
    *
    * It is the whole environment {@link exec} and the provider's tool give their commands. Workspace
    * scope only: a service's own `.env` files, and the `PORT`/`PUBLIC_ORIGIN` stackctl injects
@@ -96,14 +98,14 @@ export interface InfraCallbackContext<T = TokenRecord, G extends InfraTrigger = 
   tokens: T;
   /**
    * Runs any other command with {@link envs} as its environment (an `env` option is merged on
-   * top) — so a migration or seed script gets the mode's variables and `STACKCTL_MODE` with
+   * top) — so a migration or seed script gets the profile's variables and `STACKCTL_PROFILE` with
    * nothing passed by hand. Output captured; a non-zero exit rejects unless `reject: false`.
    */
   exec: (command: string, args?: string[], opts?: InfraRunOptions) => Promise<InfraRunResult>;
   /** Writes a line to stackctl's infra output. */
   log: (message: string) => void;
   /**
-   * A client for the running dev session of this config in this mode, its methods named after
+   * A client for the running dev session of this config in this profile, its methods named after
    * the control API's paths: `query.status()`, `command.service.stop(name)` (and `start`,
    * `restart`), `command.infra.reset(service)` (and `start`, `stop`, `restart`),
    * `command.quit()`. `undefined` when no such session is running — `infra start` from a terminal
@@ -162,7 +164,7 @@ export interface DockerComposeCallbackContext<
   G extends InfraTrigger = InfraTrigger,
 > extends InfraCallbackContext<T, G> {
   /**
-   * Runs `docker compose <args>` against this project — the compose file and the mode's project
+   * Runs `docker compose <args>` against this project — the compose file and the profile's project
    * name already applied, and {@link envs} as its environment (an `env` option is merged on top,
    * but can't change the project). Its output goes to stackctl's infra output, and a non-zero
    * exit rejects unless `reject: false`.
@@ -185,7 +187,7 @@ export type DockerComposeStartContext<T = TokenRecord> = DockerComposeCallbackCo
 /** What a Docker Compose service's `afterReady` receives: the ready context, and `compose`. */
 export interface DockerComposeReadyContext<T = TokenRecord> extends InfraReadyContext<T> {
   /**
-   * Runs `docker compose <args>` against this project — the compose file and the mode's project
+   * Runs `docker compose <args>` against this project — the compose file and the profile's project
    * name already applied, and {@link envs} as its environment (an `env` option is merged on top,
    * but can't change the project). Its output goes to stackctl's infra output, and a non-zero
    * exit rejects unless `reject: false`.
@@ -238,10 +240,12 @@ export interface InfraServiceCallbacks<
 export interface InfraEnabledContext<T = TokenRecord> {
   /** The service the callback belongs to. Nothing else about it is resolved yet. */
   service: ServiceIdentity;
-  /** The active mode: `development` unless `--mode` says otherwise, or any name you pass it. */
-  mode: Mode;
   /**
-   * The workspace-scope `.env` files for the mode and the ambient environment; the ambient
+   * The active profile: `development` unless `--profile` says otherwise, or any name you pass it.
+   */
+  profile: Profile;
+  /**
+   * The workspace-scope `.env` files for the profile and the ambient environment; the ambient
    * environment wins over the files, except for the variables `env.override` names.
    */
   envs: Envs;
@@ -262,8 +266,8 @@ export interface InfraServiceInput<
   R = InfraReadyContext<T>,
 > extends InfraServiceCallbacks<T, D, S, R> {
   /**
-   * Whether stackctl runs this service (default `true`). A literal, or a callback over the mode
-   * and environment — `({ mode }) => mode !== 'test'`, `({ envs }) => Boolean(envs.API_KEY)`.
+   * Whether stackctl runs this service (default `true`). A literal, or a callback over the profile
+   * and environment — `({ profile }) => profile !== 'test'`, `({ envs }) => Boolean(envs.API_KEY)`.
    * A disabled service is left out of `infra start` and of a dev session, and its callbacks don't
    * run. (Compose still starts it if an enabled service `depends_on` it.)
    */
@@ -379,7 +383,7 @@ export interface InfraInput<T = TokenRecord> {
 export interface ResolvedDockerComposeInfra<I extends string = string> {
   /** Absolute path to the compose file, or `undefined` when Compose discovers it. */
   file?: string;
-  /** The Compose project name in force for the active mode. */
+  /** The Compose project name in force for the active profile. */
   projectName: string;
   readyTimeout: number;
   /**

@@ -178,7 +178,7 @@ Before forwarding, the proxy checks the service's state:
 | stopped, waiting or restarting          | A **503** at once, saying so and how to start it.                         |
 | not part of the session                 | Forwarded to its port anyway, so an app you run yourself is reachable.    |
 | an infra service still coming up        | A **503**, `starting`.                                                    |
-| an infra service disabled in this mode  | A **503**, `disabled`.                                                    |
+| an infra service disabled in this profile | A **503**, `disabled`.                                                  |
 
 A 503 is an HTML page that refreshes itself, or JSON when the request doesn't accept HTML,
 with `Retry-After`.

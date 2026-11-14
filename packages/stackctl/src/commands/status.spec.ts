@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import type { EventBy, EventLine } from '../event-log.js';
 import { describeBy, formatRows, recentRows, when } from './status.js';
 
-const envelope = { mode: 'development', sessionId: 's1', pid: 1 };
+const envelope = { profile: 'development', sessionId: 's1', pid: 1 };
 const cli: Extract<EventBy, { kind: 'cli' }> = { kind: 'cli', argv: ['infra', 'restart', '-s', 'db'], cwd: '.', agent: false }; // oxfmt-ignore
 
 const lines: EventLine[] = [

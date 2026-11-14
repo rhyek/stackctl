@@ -69,8 +69,8 @@ function provider(
       { projectName: project, readyTimeout: 60_000, services },
       {
         workspaceDir: ws,
-        mode: 'test',
-        config: { envMode: 'test' } as Config<string>,
+        profile: 'test',
+        config: { profile: 'test' } as Config<string>,
         envs: baseEnvs(ws),
         tokens: {},
         exec: execLines,
@@ -228,7 +228,7 @@ describe.skipIf(!dockerAvailable())(
       expect(await volumes(project)).toEqual([`${project}_checked-data`, `${project}_plain-data`]);
     });
 
-    test('two project names — two modes — run side by side from the same compose file', async () => {
+    test('two project names — two profiles — run side by side from the same compose file', async () => {
       const dev = provider({}, '-development');
       const testMode = provider({}, '-test');
       const [a, b] = await Promise.all([

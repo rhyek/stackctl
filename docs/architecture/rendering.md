@@ -70,8 +70,8 @@ it through `Session`.
 
 Beside them in `src/`: **`selection-plan.ts`** (what a selection runs, in what order and why —
 `planSelection`, `depsOf`, `dependentsOf`, `displayOrder`), **`session-takeover.ts`** (the
-handshake with this mode's previous session, the orphan sweep, freeing the dev ports, ending a
-session), and **`control-server.ts`** (the localhost HTTP API over `ControlManager`).
+handshake with this profile's previous session, the orphan sweep, freeing the dev ports, ending
+a session), and **`control-server.ts`** (the localhost HTTP API over `ControlManager`).
 
 **The screens, `src/tui/`.** Each screen is a pure state reducer and a pure layout, under a thin
 Ink component:

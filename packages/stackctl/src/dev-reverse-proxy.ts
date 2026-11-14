@@ -51,7 +51,7 @@ export type DevReverseProxyTarget = {
     }
 );
 
-/** A route to an infra service disabled in this mode: it has no port, and gets a 503 page. */
+/** A route to an infra service disabled in this profile: it has no port, and gets a 503 page. */
 export interface DevReverseProxyDisabledTarget {
   kind: 'disabled';
   /** The infra service, by name. */
@@ -85,7 +85,7 @@ export type DevReverseProxyRoute = DevReverseProxyTarget & {
 type PackageRoute = DevReverseProxyRoute & { kind: 'package' };
 
 /**
- * What a request resolves to: a route; an infra service this mode doesn't run; or nothing, with
+ * What a request resolves to: a route; an infra service this profile doesn't run; or nothing, with
  * the path and globs when an entry took the host but none of its globs matched.
  */
 type Resolution =
@@ -537,7 +537,7 @@ export async function startDevReverseProxy(opts: {
     });
   };
 
-  /** The 503 for an infra service a route names that this mode doesn't run. */
+  /** The 503 for an infra service a route names that this profile doesn't run. */
   const disabled = (req: ProxyRequest, res: ProxyResponse, host: string, service: string) => {
     sendProblem(req, res, {
       status: 503,
@@ -546,10 +546,10 @@ export async function startDevReverseProxy(opts: {
         infraService: service,
         status: 'disabled',
         host,
-        hint: 'its `enabled` turns it off in this mode',
+        hint: 'its `enabled` turns it off in this profile',
       },
       paragraphs: [
-        `<code>${escapeHtml(host)}</code> routes to the infra service <code>${escapeHtml(service)}</code>, which its <code>enabled</code> turns off in this mode.`,
+        `<code>${escapeHtml(host)}</code> routes to the infra service <code>${escapeHtml(service)}</code>, which its <code>enabled</code> turns off in this profile.`,
       ],
       headers: {},
     });

@@ -8,16 +8,16 @@ describe('findPassthrough', () => {
     expect(findPassthrough(argv('infra', 'docker-compose', 'ps'))).toBe(3);
   });
 
-  test("skips infra's own mode flag, in every spelling", () => {
-    expect(findPassthrough(argv('infra', '-m', 'test', 'docker-compose', 'ps'))).toBe(5);
-    expect(findPassthrough(argv('infra', '--mode', 'test', 'docker-compose', 'ps'))).toBe(5);
-    expect(findPassthrough(argv('infra', '--mode=test', 'docker-compose', 'ps'))).toBe(4);
+  test("skips infra's own profile flag, in every spelling", () => {
+    expect(findPassthrough(argv('infra', '-p', 'test', 'docker-compose', 'ps'))).toBe(5);
+    expect(findPassthrough(argv('infra', '--profile', 'test', 'docker-compose', 'ps'))).toBe(5);
+    expect(findPassthrough(argv('infra', '--profile=test', 'docker-compose', 'ps'))).toBe(4);
     expect(findPassthrough(argv('infra', '--workspace-dir', 'x', 'docker-compose', 'ps'))).toBe(5);
     expect(findPassthrough(argv('infra', '--workspace-dir=x', 'docker-compose', 'ps'))).toBe(4);
   });
 
   test('allows root options before `infra`', () => {
-    expect(findPassthrough(argv('-m', 'test', 'infra', 'docker-compose', 'ps'))).toBe(5);
+    expect(findPassthrough(argv('-p', 'test', 'infra', 'docker-compose', 'ps'))).toBe(5);
   });
 
   test('is -1 for the other infra subcommands and for no infra at all', () => {
@@ -36,7 +36,7 @@ describe('passthroughArgs', () => {
   test('returns everything after the provider word, verbatim', () => {
     expect(
       passthroughArgs(
-        argv('-m', 'test', 'infra', 'docker-compose', 'build', '-m', '2g', '--', 'x'),
+        argv('-p', 'test', 'infra', 'docker-compose', 'build', '-m', '2g', '--', 'x'),
       ),
     ).toEqual({ provider: 'docker-compose', args: ['build', '-m', '2g', '--', 'x'] });
   });

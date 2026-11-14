@@ -4,7 +4,7 @@ import module from 'node:module';
 import path from 'node:path';
 import { Command, Option } from 'commander';
 import { startedByAgent } from './agent-detection.js';
-import { agentModeRefusal } from './agent-mode.js';
+import { agentProfileRefusal } from './agent-profile.js';
 import type { StartOptions } from './commands/default.js';
 import { rootOptionsRefusal } from './commands/root-options.js';
 import {
@@ -14,8 +14,8 @@ import {
   captureShellEnv,
   dropInjectedEnv,
   markCliProcess,
-  publishModeSource,
-  resolveMode,
+  publishProfileSource,
+  resolveProfile,
   takeNested,
 } from './env-base.js';
 import { exitOnFatalError } from './errors.js';
@@ -26,7 +26,12 @@ import { takeHandedSessionId } from './running.js';
 // changes before a session starts over from them (see relaunch.ts).
 import { relaunchWithCappedYoungGeneration } from './relaunch.js';
 import { readOwnVersion } from './skill.js';
-import { locateWorkspace, needsNoWorkspace, resolveWorkspaceDirArg } from './workspace-root.js';
+import {
+  findConfigPath,
+  locateWorkspace,
+  needsNoWorkspace,
+  resolveWorkspaceDirArg,
+} from './workspace-root.js';
 
 // The entry point: Commander wiring only. What a command runs lives under `commands/` and is
 // imported by its action, so a command loads its own code and nothing else's — `--help` and
@@ -75,19 +80,20 @@ if (process.channel) {
 
 // First of all: a stackctl started from a process another stackctl started inherits that one's
 // `.env` values and `PORT`. They are not this invocation's ambient environment (see
-// `INJECTED_ENV_VAR`), so drop them before the mode, or anything else, is read from it.
+// `INJECTED_ENV_VAR`), so drop them before the profile, or anything else, is read from it.
 dropInjectedEnv();
 
 // Resolved from raw argv and published to the environment before anything else runs: the config
 // (whose `port`/`urls` callbacks resolve `.env` files) is loaded by the command's action, which
-// Commander only reaches after parsing. Writing it back also hands every child process the mode
+// Commander only reaches after parsing. Writing it back also hands every child process the profile
 // for free, the way Vite exposes MODE.
 // Its source is kept for the rest of this process only (`/query/status`, the session's first
-// line); a stackctl this one starts resolves its own, `env`, from the `STACKCTL_MODE` it inherits.
+// line); a stackctl this one starts resolves its own, `env`, from the `STACKCTL_PROFILE` it
+// inherits.
 try {
-  const { mode, source } = resolveMode(process.argv);
-  // A coding agent never runs a command in a mode it didn't name (see agent-mode.ts).
-  const refusal = agentModeRefusal({
+  const { profile, source } = resolveProfile(process.argv);
+  // A coding agent never runs a command in a profile it didn't name (see agent-profile.ts).
+  const refusal = agentProfileRefusal({
     agent: startedByAgent(),
     source,
     forked: process.channel !== undefined,
@@ -97,8 +103,8 @@ try {
     console.error(refusal);
     process.exit(1);
   }
-  process.env.STACKCTL_MODE = mode;
-  publishModeSource(source);
+  process.env.STACKCTL_PROFILE = profile;
+  publishProfileSource(source);
 } catch (err) {
   // Runs before Commander, so there's no usage output to lean on — just say what's wrong.
   console.error(err instanceof Error ? err.message : String(err));
@@ -149,6 +155,20 @@ function anchorAtWorkspaceRoot(invocationCwd: string): void {
   captureShellEnv();
 }
 
+/**
+ * What `start` and `run` do before anything else: type-check the workspace's config with its own
+ * `tsc`, and exit 1 on a type error (see `config-typecheck.ts`).
+ */
+async function typecheckConfigOrExit(): Promise<void> {
+  const root = process.cwd();
+  const configPath = findConfigPath(root);
+  if (configPath === null) {
+    return;
+  }
+  const { assertConfigTypechecks } = await import('./config-typecheck.js');
+  await assertConfigTypechecks(configPath, root);
+}
+
 /** Commander option-parser for repeatable `-s/--service <name>` flags. */
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
@@ -192,13 +212,13 @@ function refuseServiceOption(command: 'exec' | 'run', flags: OneOffFlags): void 
 // Commander wiring
 // ---------------------------------------------------------------------------
 
-// `--mode`, declared on the root and again on each subcommand that takes it (see the note on
+// `--profile`, declared on the root and again on each subcommand that takes it (see the note on
 // `exec` for why both).
-const MODE_FLAGS = '-m, --mode <name>';
-const MODE_HELP =
-  'environment mode selecting the .env.<mode> files to load (default: $STACKCTL_MODE, else "test" in CI, else "development"); a coding agent must name it on every command, development included';
+const PROFILE_FLAGS = '-p, --profile <name>';
+const PROFILE_HELP =
+  'environment profile selecting the .env.<profile> files to load (default: $STACKCTL_PROFILE, else "test" in CI, else "development"); a coding agent must name it on every command, development included';
 
-// `--workspace-dir`, declared like `--mode`. Read from raw argv before Commander parses (the
+// `--workspace-dir`, declared like `--profile`. Read from raw argv before Commander parses (the
 // workspace is located first); the declaration is for --help and validation.
 const WORKSPACE_DIR_FLAGS = '--workspace-dir <dir>';
 const WORKSPACE_DIR_HELP =
@@ -213,7 +233,7 @@ const program = new Command()
   .description(
     "A terminal UI and CLI for a monorepo's services, infrastructure, tests and CI during development.",
   )
-  .option(MODE_FLAGS, MODE_HELP)
+  .option(PROFILE_FLAGS, PROFILE_HELP)
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .version(readOwnVersion(), '-V, --version', "print stackctl's version");
 
@@ -268,7 +288,7 @@ program
     collect,
     [],
   )
-  .option(MODE_FLAGS, MODE_HELP) // see `exec`
+  .option(PROFILE_FLAGS, PROFILE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .option('--ui', 'run the interactive TUI (default)')
   .option(
@@ -278,7 +298,7 @@ program
   .option('--last-answers', 'skip the selector and reuse the last saved selection', false)
   .option(
     '--kill-others',
-    "quit the stackctl session already running for this project in the same mode instead of asking (agents: don't pass this unprompted)",
+    "quit the stackctl session already running for this project in the same profile instead of asking (agents: don't pass this unprompted)",
     false,
   )
   .option(
@@ -309,10 +329,15 @@ program
         console.error(agentRefusal);
         process.exit(1);
       }
+      await typecheckConfigOrExit();
       await runDetach(opts);
     }
 
     relaunchWithCappedYoungGeneration();
+    // After starting over, so it runs once; the session `--detach` starts was checked by it.
+    if (!detachedSession) {
+      await typecheckConfigOrExit();
+    }
     const { runDefaultAction } = await import('./commands/default.js');
     await runDefaultAction(opts);
   });
@@ -346,8 +371,8 @@ program
 
 program
   .command('stop')
-  .description("stop this workspace's stackctl session of the mode (infra isn't touched)")
-  .option(MODE_FLAGS, MODE_HELP) // see `exec`
+  .description("stop this workspace's stackctl session of the profile (infra isn't touched)")
+  .option(PROFILE_FLAGS, PROFILE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .action(async () => {
     const { runStop } = await import('./commands/stop.js');
@@ -357,9 +382,9 @@ program
 program
   .command('wait')
   .description(
-    "wait until this workspace's session of the mode is ready, one started in the background: its services and infra up and healthy (read-only)",
+    "wait until this workspace's session of the profile is ready, one started in the background: its services and infra up and healthy (read-only)",
   )
-  .option(MODE_FLAGS, MODE_HELP) // see `exec`
+  .option(PROFILE_FLAGS, PROFILE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .option(
     '--timeout <seconds>',
@@ -371,13 +396,13 @@ program
     process.exit(await runWait({ timeout: opts.timeout }));
   });
 
-// `service`: application services of the mode's running session (see `commands/service.ts`).
+// `service`: application services of the profile's running session (see `commands/service.ts`).
 const service = program
   .command('service')
   .description(
-    "start, stop or restart application services in this workspace's running session of the mode",
+    "start, stop or restart application services in this workspace's running session of the profile",
   )
-  .option(MODE_FLAGS, MODE_HELP) // see `exec`
+  .option(PROFILE_FLAGS, PROFILE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP);
 
 const SERVICE_ACTIONS = [
@@ -394,7 +419,7 @@ for (const [action, description] of SERVICE_ACTIONS) {
     .command(action)
     .description(description)
     .option(SERVICE_FLAGS, 'application service to act on (repeatable, at least one)', collect, [])
-    .option(MODE_FLAGS, MODE_HELP)
+    .option(PROFILE_FLAGS, PROFILE_HELP)
     .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP);
   if (action !== 'stop') {
     command.option(
@@ -414,9 +439,9 @@ for (const [action, description] of SERVICE_ACTIONS) {
 program
   .command('reset')
   .description(
-    "stop the --mode session, then delete node_modules/.stackctl/modes/<mode>/: its record, saved selection, trust bundle, default logs and event log, which starts again with the reset's own lines (infra isn't touched)",
+    "stop the --profile session, then delete node_modules/.stackctl/profiles/<profile>/: its record, saved selection, trust bundle, default logs and event log, which starts again with the reset's own lines (infra isn't touched)",
   )
-  .option(MODE_FLAGS, 'the mode whose state to delete (required)') // see `exec`
+  .option(PROFILE_FLAGS, 'the profile whose state to delete (required)') // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .action(async () => {
     const { runReset } = await import('./commands/stop.js');
@@ -428,9 +453,9 @@ program
   .description(
     'print the fully resolved config as JSON (what a running session reports on GET /query/status) — no session needed',
   )
-  // Declared here too so `stackctl show-config --mode test` works (see `exec`); the config
-  // resolves against that mode's `.env` files, which is what a callback `port` reads.
-  .option(MODE_FLAGS, MODE_HELP)
+  // Declared here too so `stackctl show-config --profile test` works (see `exec`); the config
+  // resolves against that profile's `.env` files, which is what a callback `port` reads.
+  .option(PROFILE_FLAGS, PROFILE_HELP)
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .action(async () => {
     const { showConfig } = await import('./commands/inspect.js');
@@ -444,9 +469,10 @@ program
   )
   .usage('[options] [target] -- <command...>')
   // Also declared on the root, but Commander rejects a root-only option that appears after a
-  // subcommand — so both `stackctl --mode test exec …` and `stackctl exec --mode test …` work.
-  // resolveMode already read it off raw argv; this declaration is for --help and validation.
-  .option(MODE_FLAGS, MODE_HELP)
+  // subcommand — so both `stackctl --profile test exec …` and `stackctl exec --profile test …`
+  // work. resolveProfile already read it off raw argv; this declaration is for --help and
+  // validation.
+  .option(PROFILE_FLAGS, PROFILE_HELP)
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .addOption(new Option(SERVICE_FLAGS).hideHelp())
   .argument(
@@ -479,7 +505,7 @@ program
     "run one of a target's package.json scripts or make targets in its directory, with its environment; the target is a service (its name) or a directory (default: the current directory)",
   )
   .usage('[options] [target] <script> [-- <args...>]')
-  .option(MODE_FLAGS, MODE_HELP) // see `exec`
+  .option(PROFILE_FLAGS, PROFILE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .addOption(new Option(SERVICE_FLAGS).hideHelp())
   // Commander can't put an optional argument before a required one, so the operands before `--`
@@ -503,6 +529,7 @@ program
         code: 'commander.missingArgument',
       });
     }
+    await typecheckConfigOrExit();
     const { runOneOffCommand } = await import('./commands/one-off.js');
     await runOneOffCommand({ kind: 'run', target, script, args: after }, oneOffContext(flags));
   });
@@ -511,7 +538,7 @@ program
 // the resolved command and environment to a descriptor only they open.
 program
   .command(RESOLVE_ONE_OFF_COMMAND, { hidden: true })
-  .option(MODE_FLAGS, MODE_HELP)
+  .option(PROFILE_FLAGS, PROFILE_HELP)
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .option('--target <target>', 'the target, as exec and run take it')
   .option('--exec', 'resolve exec of the operands')
@@ -540,9 +567,9 @@ program
 program
   .command('logs')
   .description(
-    "print the log of the mode's session: the running one, else the latest (node_modules/.stackctl/modes/<mode>/sessions/<id>/logs.txt)",
+    "print the log of the profile's session: the running one, else the latest (node_modules/.stackctl/profiles/<profile>/sessions/<id>/logs.txt)",
   )
-  .option(MODE_FLAGS, MODE_HELP) // see `exec`
+  .option(PROFILE_FLAGS, PROFILE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .option(
     '-f, --follow',
@@ -557,9 +584,9 @@ program
 program
   .command('status')
   .description(
-    "the mode's session now (its services, infra and files) and the last commands that acted on it, from its event log — read-only, it never ends a session",
+    "the profile's session now (its services, infra and files) and the last commands that acted on it, from its event log — read-only, it never ends a session",
   )
-  .option(MODE_FLAGS, MODE_HELP) // see `exec`
+  .option(PROFILE_FLAGS, PROFILE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .option('--json', 'print it as JSON')
   .action(async (opts: { json?: boolean }) => {
@@ -570,9 +597,9 @@ program
 program
   .command('events')
   .description(
-    "print the event log of the mode's session, the running one else the latest (node_modules/.stackctl/modes/<mode>/sessions/<id>/events.jsonl): what acted on its stack, one JSON object per line",
+    "print the event log of the profile's session, the running one else the latest (node_modules/.stackctl/profiles/<profile>/sessions/<id>/events.jsonl): what acted on its stack, one JSON object per line",
   )
-  .option(MODE_FLAGS, MODE_HELP) // see `exec`
+  .option(PROFILE_FLAGS, PROFILE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .option('-n, --lines <count>', 'print only the last <count> lines')
   .option('-f, --follow', 'keep printing lines as they are written, until the next session starts')
@@ -588,7 +615,7 @@ const infra = program
   .description(
     "start, stop, restart, reset or destroy the infrastructure declared under `infra` (databases, caches, …), or run its provider's tool",
   )
-  .option(MODE_FLAGS, MODE_HELP)
+  .option(PROFILE_FLAGS, PROFILE_HELP)
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP);
 
 const INFRA_COMMANDS = [
@@ -615,7 +642,7 @@ for (const [command, description] of INFRA_COMMANDS) {
       collect,
       [],
     )
-    .option(MODE_FLAGS, MODE_HELP)
+    .option(PROFILE_FLAGS, PROFILE_HELP)
     .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
     .action(async (opts: { service: string[] }) => {
       const { runInfra } = await import('./commands/infra.js');
@@ -625,11 +652,11 @@ for (const [command, description] of INFRA_COMMANDS) {
 
 // Listed for --help. A real invocation never reaches this action: it's dispatched from raw argv
 // before Commander parses (see the bottom of this file), because nothing after the provider word
-// is stackctl's to interpret — not `-m`, not `-p`, not `--help`.
+// is stackctl's to interpret — not `-p`, not `--profile`, not `--help`.
 infra
   .command('docker-compose')
   .description(
-    'run `docker compose` itself against this project and mode — everything after it goes to Compose untouched (put --mode before it)',
+    'run `docker compose` itself against this project and profile — everything after it goes to Compose untouched (put --profile before it)',
   )
   .argument('[args...]', 'arguments for `docker compose`')
   .allowUnknownOption()
@@ -639,7 +666,7 @@ infra
     await runInfraPassthrough('docker-compose', args);
   });
 
-/** `infra <provider> …`: the provider's own tool, bound to this project and mode. */
+/** `infra <provider> …`: the provider's own tool, bound to this project and profile. */
 async function runInfraPassthrough(provider: string, args: string[]): Promise<never> {
   const infraCommands = await import('./commands/infra.js');
   return infraCommands.runInfraPassthrough(provider, args, INVOCATION_CWD);

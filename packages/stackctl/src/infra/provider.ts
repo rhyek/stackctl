@@ -5,7 +5,7 @@ import {
   infraServiceDetails,
 } from '../config.js';
 import type { ControlClient } from '../control-client.js';
-import type { Envs, Mode } from '../env.js';
+import type { Envs, Profile } from '../env.js';
 import { hookExec } from '../hook-exec.js';
 import type { Exec, LineStream, SpawnInherit, Stream } from '../spawn.js';
 import {
@@ -43,11 +43,11 @@ const DEFAULT_POLL_INTERVAL_MS = 500;
 export interface ProviderRuntime {
   /** The workspace root, absolute. */
   workspaceDir: string;
-  mode: Mode;
+  profile: Profile;
   /** The resolved config, handed to every callback as `config`. */
   config: Config<string>;
   /**
-   * The workspace-scope `.env` files for the mode and the ambient environment, the ambient
+   * The workspace-scope `.env` files for the profile and the ambient environment, the ambient
    * environment winning over the files except for the variables `env.override` names.
    */
   envs: Envs;
@@ -60,7 +60,7 @@ export interface ProviderRuntime {
   /** Starts a long-running command read line by line: {@link streamLines}, or a stand-in. */
   stream: Stream;
   /**
-   * Finds the running dev session of this config and mode, for a callback's `control`;
+   * Finds the running dev session of this config and profile, for a callback's `control`;
    * `undefined` when there is none. Absent, callbacks get no `control`.
    */
   connectControl?: () => Promise<ControlClient | undefined>;
@@ -318,7 +318,7 @@ export abstract class InfraProvider {
       }
       if (trigger === 'reset') {
         // Exactly the services about to be started, never the whole project: a reset must not
-        // take the data of a service it isn't bringing back — one disabled in this mode, say.
+        // take the data of a service it isn't bringing back — one disabled in this profile, say.
         run.setAll('destroying');
         if (!(await this.runPhase('beforeDestroy', run, trigger))) {
           return run.summary();
@@ -388,7 +388,7 @@ export abstract class InfraProvider {
    * config's `services` alike, before anything is touched.
    *
    * With none named, it is every **enabled** service. A disabled one can't be brought up by
-   * name either — but it can be destroyed by name, to clean up after a mode where it ran.
+   * name either — but it can be destroyed by name, to clean up after a profile where it ran.
    */
   private async resolveTargets(
     named: string[] | undefined,
@@ -415,7 +415,7 @@ export abstract class InfraProvider {
     if (action === 'up' && disabled.length > 0) {
       throw new InfraError(
         `infra service${disabled.length > 1 ? 's' : ''} ${disabled.map((s) => `"${s}"`).join(', ')} ` +
-          `${disabled.length > 1 ? 'are' : 'is'} disabled for mode "${this.runtime.mode}" ` +
+          `${disabled.length > 1 ? 'are' : 'is'} disabled for profile "${this.runtime.profile}" ` +
           '(`enabled` in the stackctl config), so there is nothing to bring up.',
       );
     }
@@ -565,7 +565,7 @@ export abstract class InfraProvider {
     run: Run,
     control: ControlClient | undefined,
   ): InfraCallbackContext<TokenRecord, G> {
-    const { workspaceDir, mode, config, tokens } = this.runtime;
+    const { workspaceDir, profile, config, tokens } = this.runtime;
     const { emit } = run;
     const envs = { ...this.runtime.envs, ...this.extraEnv() };
     const output = (line: string, isError: boolean) =>
@@ -574,7 +574,7 @@ export abstract class InfraProvider {
     return {
       service: infraServiceDetails(service, this.serviceConfig[service]),
       buildAddress: infraBuildAddress(service, this.serviceConfig[service], config),
-      mode,
+      profile,
       config,
       trigger,
       workspaceDir,

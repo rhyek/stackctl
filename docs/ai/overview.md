@@ -25,7 +25,7 @@ outputs folded as Claude Code folds them. The agent has the rules file and the s
 **The app is down.** Someone restarted Postgres from another terminal, and the backend crashed.
 The agent finds who in the [event log](../reference/events.md):
 
-<llm-exclude><TerminalPlayer src="/casts/agent-restart-1794524629.cast" label="Claude Code finds the crashed backend, restarts it through stackctl and explains the crash" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/agent-restart-1794688512.cast" label="Claude Code finds the crashed backend, restarts it through stackctl and explains the crash" /></llm-exclude>
 <llm-only>
 
 ```text
@@ -37,15 +37,15 @@ The agent finds who in the [event log](../reference/events.md):
 ● Read(node_modules/stackctl/docs/ai/playbook.md)
   ⎿  Read 245 lines
 
-● Bash(pnpm stackctl --mode development status)
+● Bash(pnpm stackctl --profile development status)
   ⎿  development session: running since today 11:14:34 (pid 68544, contro…
      services  backend   running, not ready
                frontend  running, not ready
                worker    running, ready
      … +9 lines (ctrl+o to expand)
 
-● Bash(pnpm stackctl --mode development logs | grep -iE
-  'error|exception|fail|refused' | tail -30; pnpm stackctl --mode
+● Bash(pnpm stackctl --profile development logs | grep -iE
+  'error|exception|fail|refused' | tail -30; pnpm stackctl --profile
   development events -n 30)
   ⎿  2026-11-12 11:14:41 [backend   ]     throw er; // Unhandled 'error' …
      2026-11-12 11:14:41 [backend   ] error: terminating connection due t…
@@ -53,8 +53,8 @@ The agent finds who in the [event log](../reference/events.md):
      2026-11-12 11:14:41 [backend   ] Emitted 'error' event on BoundPool …
      … +19 lines (ctrl+o to expand)
 
-● Bash(pnpm stackctl --mode development service restart -s backend && pnpm
-  stackctl --mode development status)
+● Bash(pnpm stackctl --profile development service restart -s backend &&
+  pnpm stackctl --profile development status)
   ⎿  restarting backend
      stackctl: waiting for backend to be healthy
      stackctl: everything is healthy
@@ -72,9 +72,9 @@ The agent finds who in the [event log](../reference/events.md):
   not ready`. The frontend went not-ready because it depends on the
   backend.
 
-  Fix: `stackctl --mode development service restart -s backend`. Backend,
-  frontend and worker are now `running, ready`, and the db and mail infra
-  are up.
+  Fix: `stackctl --profile development service restart -s backend`.
+  Backend, frontend and worker are now `running, ready`, and the db and
+  mail infra are up.
 
   Underlying bug: the backend has no error handler on its pg pool, so any
   future database restart will crash it the same way. Adding a
@@ -84,10 +84,10 @@ The agent finds who in the [event log](../reference/events.md):
 
 </llm-only>
 
-**Running the tests.** They call the backend, so the agent runs them against a test-mode session
-of their own:
+**Running the tests.** They call the backend, so the agent runs them against a test-profile
+session of their own:
 
-<llm-exclude><TerminalPlayer src="/casts/agent-tests-1794524604.cast" label="Claude Code starts a test-mode session, runs the backend's tests in it and stops it" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/agent-tests-1794688538.cast" label="Claude Code starts a test-profile session, runs the backend's tests in it and stops it" /></llm-exclude>
 <llm-only>
 
 ```text
@@ -99,22 +99,22 @@ of their own:
 ● Read(node_modules/stackctl/docs/ai/playbook.md)
   ⎿  Read 245 lines
 
-● Bash(ls; ls .env* ; npx stackctl --mode test status; npx stackctl --mode
-  development status; npx stackctl --mode test show-config | jq '.services
-  | keys')
+● Bash(ls; ls .env* ; npx stackctl --profile test status; npx stackctl
+  --profile development status; npx stackctl --profile test show-config |
+  jq '.services | keys')
   ⎿  apps
      docker-compose.yaml
      libs
      node_modules
      … +25 lines (ctrl+o to expand)
 
-● Test mode exists, no session running. Start a test session of the
+● Test profile exists, no session running. Start a test session of the
   backend in the background.
 
-● Bash(npx stackctl --mode test --headless -s backend)
+● Bash(npx stackctl --profile test --headless -s backend)
   ⎿  Running in the background (↓ to manage)
 
-● Bash(npx stackctl --mode test wait && npx stackctl --mode test run
+● Bash(npx stackctl --profile test wait && npx stackctl --profile test run
   backend test)
   ⎿  stackctl: waiting for backend to be healthy
      stackctl: everything is healthy
@@ -122,7 +122,7 @@ of their own:
      ✔ lists the todos (81.360709ms)
      … +10 lines (ctrl+o to expand)
 
-● Bash(npx stackctl --mode test stop)
+● Bash(npx stackctl --profile test stop)
   ⎿  stopped test session (pid 66053)
 
 ● All 3 backend tests passed:
@@ -131,9 +131,10 @@ of their own:
   - rejects a todo without a title
   - adds a todo, completes it and deletes it
 
-  I ran them in stackctl's `test` mode. I started a test session for the
-  backend, ran `stackctl --mode test run backend test`, then stopped the
-  session. The development session wasn't running, and I didn't touch it.
+  I ran them in stackctl's `test` profile. I started a test session for
+  the backend, ran `stackctl --profile test run backend test`, then
+  stopped the session. The development session wasn't running, and I
+  didn't touch it.
 ```
 
 </llm-only>
@@ -226,14 +227,14 @@ That copy matches the installed version, works offline, and is what the
 
 An agent shares the machine with you, so stackctl draws a few lines:
 
-- **An agent can't take over your session.** Starting a second session in a mode quits the
+- **An agent can't take over your session.** Starting a second session in a profile quits the
   first. stackctl allows that between two agent-started sessions, and refuses it when a person
   started the running one. See
   [Taking over a running session](../reference/cli.md#taking-over-a-running-session).
 - **An agent can't leave a session behind.** `--detach` is refused for an agent outside CI. A
   session an agent starts runs in its own background task and ends with it.
-- **An agent always names the mode.** A command an agent runs without `--mode` is refused, so
-  it never acts on your development session when it meant its own test one.
+- **An agent always names the profile.** A command an agent runs without `--profile` is refused,
+  so it never acts on your development session when it meant its own test one.
 - **Graceful stops only.** The playbook tells agents to stop and restart with stackctl
   (`stackctl stop`, `stackctl service restart`), never with `kill`.
 - **Data is deleted only on request.** `infra reset` and `infra destroy` are documented

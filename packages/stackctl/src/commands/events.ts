@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { currentMode } from '../env-base.js';
+import { currentProfile } from '../env-base.js';
 import { EventTail, currentEventsPath } from '../event-log.js';
 
-// `stackctl events`: the event log of the mode's current session (the running one, else the
+// `stackctl events`: the event log of the profile's current session (the running one, else the
 // latest), as it is in the file (JSON Lines, for `jq`). Read-only: it never asks the session
 // anything.
 
@@ -20,9 +20,9 @@ export async function runEvents(opts: {
   path?: boolean;
 }): Promise<void> {
   const root = process.cwd();
-  const file = currentEventsPath(root, currentMode());
+  const file = currentEventsPath(root, currentProfile());
   if (file === null) {
-    console.error(`stackctl events: no ${currentMode()} session has run here yet.`);
+    console.error(`stackctl events: no ${currentProfile()} session has run here yet.`);
     process.exit(opts.path ? 1 : 0);
   }
   if (opts.path) {
@@ -50,14 +50,14 @@ export async function runEvents(opts: {
   }
   const timer = setInterval(() => {
     // Checked before reading, so the lines the session got before the next one started are printed.
-    const followed = currentEventsPath(root, currentMode()) === file;
+    const followed = currentEventsPath(root, currentProfile()) === file;
     for (const line of tail.read()) {
       console.log(line);
     }
     if (!followed) {
       clearInterval(timer);
       console.error(
-        `stackctl events: the ${currentMode()} session exited; run stackctl events -f again to follow the next one.`,
+        `stackctl events: the ${currentProfile()} session exited; run stackctl events -f again to follow the next one.`,
       );
       // Once stdout has taken every line: a pipe on macOS writes asynchronously.
       process.stdout.write('', () => process.exit(0));

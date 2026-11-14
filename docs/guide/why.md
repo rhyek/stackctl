@@ -33,13 +33,13 @@ They all get the same services, in the same order, with the same environment.
   holds it until that service's healthcheck passes.
 - **Infrastructure.** The databases and brokers in your `docker-compose.yaml` come up first,
   wait until healthy and run your migrations. See [Infra](../config/infra.md).
-- **Environment.** Layered `.env` files per workspace, service and mode, injected into each
+- **Environment.** Layered `.env` files per workspace, service and profile, injected into each
   process, with the affected services restarted when a file changes. See
-  [Environment and modes](./env.md).
+  [Environment and profiles](./env.md).
 - **Logs.** Every service in one stream you can filter, with JSON logs formatted for reading
   and a log file per session. See [Logs](./logs.md).
-- **Isolation between modes.** `stackctl --mode test` is a second session with its own ports,
-  containers and state, next to the one you are working in.
+- **Isolation between profiles.** `stackctl --profile test` is a second session with its own
+  ports, containers and state, next to the one you are working in.
 - **Hostnames.** An optional [dev reverse proxy](../config/reverse-proxy.md) puts each service
   on its own host, with a status page while it is down.
 - **Clean exits.** Quitting stops every service it started, and a second `stackctl` in the same
@@ -52,5 +52,5 @@ They all get the same services, in the same order, with the same environment.
 - **Your build.** It builds nothing. How a service compiles, bundles or imports shared code is
   up to its own dev script.
 - **Your Compose file.** Images, ports, volumes and healthchecks stay in `docker-compose.yaml`.
-  stackctl runs Compose for you and adds per-mode projects and callbacks around it.
+  stackctl runs Compose for you and adds per-profile projects and callbacks around it.
 - **Production.** It is a development tool. Nothing in it deploys or serves real traffic.

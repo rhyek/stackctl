@@ -53,7 +53,7 @@ describe('InfraManager', () => {
     expect(await InfraManager.fromConfig(config)).toBeNull();
   });
 
-  test("runs Compose with the mode's workspace env and the mode's project name", async () => {
+  test("runs Compose with the profile's workspace env and the profile's project name", async () => {
     fs.writeFileSync(path.join(ws, '.env.development'), 'DB_PORT=21051\n');
     const { exec, calls } = scriptedDocker();
     const manager = (await InfraManager.fromConfig(configWith({ 'docker-compose': {} }), {
@@ -111,9 +111,9 @@ describe('InfraManager', () => {
       workspaceDir: ws,
       serviceRootDir: 'packages',
       env: {
-        additionalFiles: ({ mode }) => [
-          { file: `.env.${mode}.pre`, before: 'mode' },
-          { file: `.env.${mode}.pre.local`, before: 'mode' },
+        additionalFiles: ({ profile }) => [
+          { file: `.env.${profile}.pre`, before: 'profile' },
+          { file: `.env.${profile}.pre.local`, before: 'profile' },
         ],
       },
       infra: {
@@ -144,7 +144,7 @@ describe('InfraManager', () => {
     const exec: Exec = (command, args, opts) =>
       command === 'docker' ? docker.exec(command, args, opts) : execLines(command, args, opts);
     const printed: string[] = [];
-    const print = 'console.log([process.cwd(), process.env.DB_PORT, process.env.SHARED, process.env.COMPOSE_PROJECT_NAME, process.env.STACKCTL_MODE].join(" "))'; // oxfmt-ignore
+    const print = 'console.log([process.cwd(), process.env.DB_PORT, process.env.SHARED, process.env.COMPOSE_PROJECT_NAME, process.env.STACKCTL_PROFILE].join(" "))'; // oxfmt-ignore
     const config = configWith({
       'docker-compose': {
         services: {
@@ -176,8 +176,8 @@ describe('InfraManager', () => {
         'docker-compose': {
           services: {
             db: {
-              afterReady: ({ tokens, mode }) => {
-                seen = { tokens, mode };
+              afterReady: ({ tokens, profile }) => {
+                seen = { tokens, profile };
               },
             },
           },
@@ -187,27 +187,27 @@ describe('InfraManager', () => {
     ))!;
     const summary = await manager.up({ services: ['db'] });
     expect(summary).toEqual({ ok: true, services: [{ service: 'db', ok: true }] });
-    expect(seen).toEqual({ tokens: { region: 'eu' }, mode: 'development' });
+    expect(seen).toEqual({ tokens: { region: 'eu' }, profile: 'development' });
     expect(calls.map((c) => c.args.slice(3).join(' '))).toContain(
       'up --detach --remove-orphans --quiet-pull db',
     );
   });
 
-  test("hands every callback the session's mode and the resolved config", async () => {
-    // What `--mode test` sets before the config loads.
-    process.env.STACKCTL_MODE = 'test';
+  test("hands every callback the session's profile and the resolved config", async () => {
+    // What `--profile test` sets before the config loads.
+    process.env.STACKCTL_PROFILE = 'test';
     try {
       const { exec } = scriptedDocker();
-      const seen: Record<string, { mode: string; config: unknown }> = {};
+      const seen: Record<string, { profile: string; config: unknown }> = {};
       const config = configWith({
         'docker-compose': {
           services: {
             db: {
-              beforeStart: ({ mode, config }) => {
-                seen.beforeStart = { mode, config };
+              beforeStart: ({ profile, config }) => {
+                seen.beforeStart = { profile, config };
               },
-              afterReady: ({ mode, config }) => {
-                seen.afterReady = { mode, config };
+              afterReady: ({ profile, config }) => {
+                seen.afterReady = { profile, config };
               },
             },
           },
@@ -216,13 +216,13 @@ describe('InfraManager', () => {
       const manager = (await InfraManager.fromConfig(config, { exec }))!;
       expect((await manager.up({ services: ['db'] })).ok).toBe(true);
       for (const hook of ['beforeStart', 'afterReady']) {
-        expect(seen[hook]!.mode).toBe('test');
+        expect(seen[hook]!.profile).toBe('test');
         // The loaded config itself, not a copy — the one `show-config` prints.
         expect(seen[hook]!.config).toBe(config);
-        expect(config.envMode).toBe('test');
+        expect(config.profile).toBe('test');
       }
     } finally {
-      delete process.env.STACKCTL_MODE;
+      delete process.env.STACKCTL_PROFILE;
     }
   });
 

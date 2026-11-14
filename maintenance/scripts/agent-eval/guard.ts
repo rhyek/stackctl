@@ -153,9 +153,9 @@ function stackctlReads(args: string[]): boolean {
   const rest: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
-    if (a === '--mode' || a === '-m') {
+    if (a === '--profile' || a === '-p') {
       i++;
-    } else if (!a.startsWith('--mode=')) {
+    } else if (!a.startsWith('--profile=')) {
       rest.push(a);
     }
   }

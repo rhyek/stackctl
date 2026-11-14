@@ -1,5 +1,5 @@
 ---
-description: The infra option - run the databases, caches and brokers in docker-compose.yaml before your services, with readiness, per-mode Compose projects, enabled, and callbacks for migrations and seeds.
+description: The infra option - run the databases, caches and brokers in docker-compose.yaml before your services, with readiness, per-profile Compose projects, enabled, and callbacks for migrations and seeds.
 ---
 
 # Infra
@@ -30,8 +30,8 @@ That is a complete config for a project with a `docker-compose.yaml` at its root
 - **A failure stops the startup.** Services aren't started against a database that isn't
   there. The log has the infra service, the reason and the tail of its container's logs.
 - **Its output is in the session log**, under `[infra]` and `[infra:<service>]`.
-- **Each [mode](#modes) has its own containers**, so a test database never lands on the dev
-  port.
+- **Each [profile](#profiles) has its own containers**, so a test database never lands on the
+  dev port.
 
 In the terminal UI, infra services have their own footer row. Focus one with the arrow keys:
 
@@ -54,15 +54,15 @@ stackctl infra restart -s db          # recreate db's container, keep its data
 stackctl infra reset -s db            # delete db's data, then start it clean
 stackctl infra stop                   # stop and remove containers, keep the data
 stackctl infra destroy                # remove containers and their data
-stackctl infra docker-compose ps      # Compose itself, on this project and mode
-stackctl --mode test infra start      # the test mode's own containers
+stackctl infra docker-compose ps      # Compose itself, on this project and profile
+stackctl --profile test infra start   # the test profile's own containers
 ```
 
 See [`stackctl infra`](../reference/cli.md#stackctl-infra).
 
 > [!WARNING]
 > Use `stackctl infra docker-compose …`, not a bare `docker compose …`. stackctl names the
-> Compose project per mode, so a bare command looks at a different, empty project.
+> Compose project per profile, so a bare command looks at a different, empty project.
 
 ## Options
 
@@ -78,7 +78,7 @@ infra: {
         },
       },
       mail: { port: 21054, urls: [''] },
-      emulator: { enabled: ({ mode }) => mode !== 'test' },
+      emulator: { enabled: ({ profile }) => profile !== 'test' },
     },
   },
 },
@@ -97,7 +97,7 @@ Per-service options:
 
 | Option                        | What it does                                                             |
 | ----------------------------- | ------------------------------------------------------------------------ |
-| [`enabled`](#enabled)         | Turns the service off, by mode or by environment.                        |
+| [`enabled`](#enabled)         | Turns the service off, by profile or by environment.                     |
 | [`port`](#port-and-urls)      | Its host port, for the reverse proxy and footer links.                   |
 | [`urls`](#port-and-urls)      | Footer links.                                                            |
 | `publicOrigin`                | Overrides parts of its public origin. See [`publicOrigin`](./urls.md#publicorigin). |
@@ -105,7 +105,7 @@ Per-service options:
 
 ### The compose file
 
-stackctl hands Compose the mode's environment (the workspace's
+stackctl hands Compose the profile's environment (the workspace's
 [`.env` files](../guide/env.md) and `env.vars`), so the file can interpolate it:
 
 ```yaml
@@ -113,7 +113,7 @@ services:
   db:
     image: postgres:18.6
     ports:
-      # from .env.development, or .env.test under --mode test
+      # from .env.development, or .env.test under --profile test
       - '${DB_PORT}:5432'
     healthcheck:
       test: ['CMD', 'pg_isready', '-h', '127.0.0.1']
@@ -121,12 +121,12 @@ services:
 
 ## `enabled`
 
-- **Type:** `boolean | ({ mode, envs, tokens, service }) => boolean`
+- **Type:** `boolean | ({ profile, envs, tokens, service }) => boolean`
 - **Default:** `true`
 
 ```ts
 services: {
-  emulator: { enabled: ({ mode }) => mode !== 'test' },
+  emulator: { enabled: ({ profile }) => profile !== 'test' },
   tracing: { enabled: ({ envs }) => Boolean(envs.TRACING_API_KEY) },
 }
 ```
@@ -196,13 +196,13 @@ anything is removed, and a failing `beforeStart` before anything is started.
 
 | Field          | What it is                                                                                  |
 | -------------- | ------------------------------------------------------------------------------------------- |
-| `exec`         | `exec(command, args?, opts?)`: runs a command with the mode's environment.                  |
+| `exec`         | `exec(command, args?, opts?)`: runs a command with the profile's environment.               |
 | `compose`      | `compose(args, opts?)`: runs `docker compose <args>` on this project.                       |
 | `log`          | `log(message)`: writes a line to the infra output.                                          |
 | `fresh`        | `afterReady` only. `true` when this run created the service's data.                         |
 | `trigger`      | What started this run. See [What started the run](#what-started-the-run).                    |
-| `mode`         | The active mode.                                                                            |
-| `envs`         | The mode's workspace environment, which `exec` and `compose` give their commands.           |
+| `profile`      | The active profile.                                                                         |
+| `envs`         | The profile's workspace environment, which `exec` and `compose` give their commands.        |
 | `tokens`       | The config's top-level `tokens`.                                                            |
 | `config`       | The resolved config, read-only: every service's `port` and `publicOrigin`.                  |
 | `service`      | This infra service: `{ name, kind, port, route, publicOrigin }`.                            |
@@ -218,7 +218,7 @@ anything is removed, and a failing `beforeStart` before anything is started.
 - **A non-zero exit rejects**, failing the service, unless you pass `reject: false`.
 - **A command that can't start** (not installed, or a `cwd` that doesn't exist) exits 127, and
   the service's output says why.
-- **Their environment is `envs`**: the workspace-scope variables and `STACKCTL_MODE`. A
+- **Their environment is `envs`**: the workspace-scope variables and `STACKCTL_PROFILE`. A
   variable from one service's own `.env` file isn't there. Pass it with `env`.
 - **Use them for anything a callback runs or prints.** A child process you spawn yourself with
   inherited stdio draws over the terminal UI.
@@ -272,7 +272,7 @@ db: {
 ### Driving the session
 
 `control` is a [control API](../reference/control-api.md#the-client) client for the session
-running in this mode, or `undefined` when there is none. It is for a service that holds on to
+running in this profile, or `undefined` when there is none. It is for a service that holds on to
 an infra service's data. Stop it before a reset, start it again after:
 
 ```ts
@@ -297,14 +297,16 @@ db: {
   This acts on a reset made while the session runs.
 - **Leave the callback's own infra service alone**, and don't `quit()` from a callback.
 
-## Modes
+## Profiles
 
-stackctl sets the Compose project name to `<workspace directory>-<mode>`: `example-development`,
-`example-test`. Each mode is its own project, with its own containers, volumes and network, so
-`stackctl infra start` and `stackctl --mode test infra start` run side by side on the ports from
-their own `.env.<mode>` files.
+stackctl sets the Compose project name to `<workspace directory>-<profile>`:
+`example-development`, `example-test`. Each profile is its own project, with its own containers,
+volumes and network, so `stackctl infra start` and `stackctl --profile test infra start` run
+side by side on the ports from their own `.env.<profile>` files.
 
 To choose the name yourself, set `COMPOSE_PROJECT_NAME` in a `.env` file.
+
+A stackctl profile is not a Compose profile: stackctl passes no `--profile` to Compose.
 
 ## Readiness
 

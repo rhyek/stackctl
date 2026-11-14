@@ -119,21 +119,21 @@ pnpm stackctl   # or its short alias: pnpm sctl
 Pick the services to run, press `⏎`, and the [terminal UI](./terminal-ui.md) takes over: one
 combined log, with every service's state in the footer.
 
-<llm-exclude><TerminalPlayer src="/casts/getting-started-1794683925.cast" label="The run screen: the services' combined log, and the footer with each service's state, the keys and the links." still /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/getting-started-1794688487.cast" label="The run screen: the services' combined log, and the footer with each service's state, the keys and the links." still /></llm-exclude>
 <llm-only>
 
 ```text
              ↑ 15 older lines — press Home to jump to oldest
-13:18:31 [backend   ] todo api listening on http://localhost:3001
-13:18:31 [frontend  ] backend ready, starting...
-13:18:31 [frontend  ] started
-13:18:31 [frontend  ]   VITE v8.3.5  ready in 369 ms
-13:18:31 [frontend  ]   ➜  Local:   http://localhost:21060/
-13:18:31 [frontend  ]   ➜  Network: use --host to expose
-13:18:31 [frontend  ] 1:18:31 PM [vite] (ssr) connected.
+14:34:33 [backend   ] todo api listening on http://localhost:3001
+14:34:33 [frontend  ] backend ready, starting...
+14:34:33 [frontend  ] started
+14:34:33 [frontend  ]   VITE v8.3.5  ready in 367 ms
+14:34:33 [frontend  ]   ➜  Local:   http://localhost:21060/
+14:34:33 [frontend  ]   ➜  Network: use --host to expose
+14:34:33 [frontend  ] 2:34:33 PM [vite] (ssr) connected.
 ── example ⎇ main ────────────────────────────────────────────────────────
-❯ ● backend 63M  ● frontend 231M
-infra: ● db 24M  ● mail 16M
+❯ ● backend 63M  ● frontend 230M
+infra: ● db 23M  ● mail 14M
 ← → select  r restart  s stop  m commands
 logs: / filter  c clear  │  ^c quit
 Home page ↗
@@ -155,7 +155,7 @@ shows most options in use, with comments.
 ## Next steps
 
 - [Why stackctl](./why.md): what it replaces.
-- [Environment and modes](./env.md): `.env` files per service and per mode.
+- [Environment and profiles](./env.md): `.env` files per service and per profile.
 - [Infra](../config/infra.md): databases and other Compose services.
 - [Tests and CI](./testing.md): the same stack for an e2e suite.
 - [CLI reference](../reference/cli.md): every command and flag.

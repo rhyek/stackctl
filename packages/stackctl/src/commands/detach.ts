@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { startedByAgent } from '../agent-detection.js';
-import { RELEASE_MESSAGE, currentMode, currentModeSource, isCI } from '../env-base.js';
+import { RELEASE_MESSAGE, currentProfile, currentProfileSource, isCI } from '../env-base.js';
 import { findSession, unresponsiveMessage } from '../find-session.js';
 import { startState } from '../relaunch.js';
 import { SESSION_ID_ENV } from '../running.js';
@@ -49,30 +49,30 @@ function lastLines(file: string | null, count: number): string {
 /** Runs `start --detach`; ends by exiting the process. */
 export async function runDetach(opts: StartOptions): Promise<never> {
   const root = process.cwd();
-  const mode = currentMode();
-  const source = currentModeSource();
+  const profile = currentProfile();
+  const source = currentProfileSource();
 
   // Said here, where the caller sees it, rather than by the session, whose output is a file.
   if (!opts.killOthers) {
-    const found = await findSession({ workspaceDir: root, mode });
+    const found = await findSession({ workspaceDir: root, profile });
     if (found.kind === 'running') {
       console.error(
-        `stackctl: a ${mode} session of this workspace is already running (pid ${String(found.status.pid)}); ` +
-          `stop it (stackctl --mode ${mode} stop), or pass --kill-others to have it quit first`,
+        `stackctl: a ${profile} session of this workspace is already running (pid ${String(found.status.pid)}); ` +
+          `stop it (stackctl --profile ${profile} stop), or pass --kill-others to have it quit first`,
       );
       process.exit(1);
     }
     if (found.kind === 'unresponsive') {
-      console.error(`stackctl: ${unresponsiveMessage(found, mode)}; stop it, or pass --kill-others to have it killed`); // oxfmt-ignore
+      console.error(`stackctl: ${unresponsiveMessage(found, profile)}; stop it, or pass --kill-others to have it killed`); // oxfmt-ignore
       process.exit(1);
     }
   }
 
-  // The session resolves its mode as this invocation did: from the environment the command was
-  // started with, and `--mode` only when it was given.
+  // The session resolves its profile as this invocation did: from the environment the command was
+  // started with, and `--profile` only when it was given.
   const start = startState();
   const args = [
-    ...(source === 'flag' ? ['--mode', mode] : []),
+    ...(source === 'flag' ? ['--profile', profile] : []),
     '--workspace-dir',
     root,
     'start',
@@ -83,7 +83,7 @@ export async function runDetach(opts: StartOptions): Promise<never> {
   ];
   // The id the session takes, handed to it, so its log is known before it says where it is.
   const id = String(Date.now());
-  const sessionLog = sessionLogPath(root, mode, id);
+  const sessionLog = sessionLogPath(root, profile, id);
 
   // Ctrl+C, or a SIGTERM, while waiting fails the start: the session is ended like any failure.
   const controller = new AbortController();
@@ -103,7 +103,7 @@ export async function runDetach(opts: StartOptions): Promise<never> {
     const logFile = knownLog ?? (fs.existsSync(sessionLog) ? sessionLog : null);
     // Ended gracefully, the session removed its record; killed first, it couldn't.
     if (pid !== undefined) {
-      removeRecord(root, mode, pid);
+      removeRecord(root, profile, pid);
     }
     if (logFile !== null) {
       console.error(`log: ${logFile}`);
@@ -135,9 +135,9 @@ export async function runDetach(opts: StartOptions): Promise<never> {
       // As `stop` ends a session: the quit, then the kill of its process tree, with what that
       // leaves swept; then signals, should the session still not be gone.
       end: async ({ child, exited, gone, started }) => {
-        await stopSession(root, mode);
+        await stopSession(root, profile);
         await stopChild(child, exited, gone);
-        removeRecord(root, mode, started.pid);
+        removeRecord(root, profile, started.pid);
       },
     });
   } catch (error) {
@@ -165,7 +165,7 @@ export async function runDetach(opts: StartOptions): Promise<never> {
   // A session gone by now refuses the connection: that's a failure to report, not one to throw.
   const status = released ? await launched.control.query.status().catch(() => null) : null;
   if (!status || status.pid !== ready.pid) {
-    await stopSession(root, mode);
+    await stopSession(root, profile);
     failed('the session ended as it was let go of', {
       pid: ready.pid,
       logFile: ready.logFile,
@@ -173,7 +173,7 @@ export async function runDetach(opts: StartOptions): Promise<never> {
     });
   }
   console.log(
-    `${ready.mode} session ready: pid ${String(ready.pid)}, control API on ${String(ready.port)}, log ${String(ready.logFile)}`,
+    `${ready.profile} session ready: pid ${String(ready.pid)}, control API on ${String(ready.port)}, log ${String(ready.logFile)}`,
   );
   process.exit(0);
 }

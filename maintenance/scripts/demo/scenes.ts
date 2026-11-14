@@ -274,7 +274,7 @@ export const scenes: Record<string, Scene> = {
 
   'agent-tests': agentScene(
     'tests',
-    "The AI overview page's second agent conversation (docs/ai/overview.md, What it looks like), also on the home page (docs/index.md, agents.src): Claude Code, asked to run the backend's tests, starts a test-mode session, waits for it, runs them in its environment and stops it.",
+    "The AI overview page's second agent conversation (docs/ai/overview.md, What it looks like), also on the home page (docs/index.md, agents.src): Claude Code, asked to run the backend's tests, starts a test-profile session, waits for it, runs them in its environment and stops it.",
   ),
 };
 

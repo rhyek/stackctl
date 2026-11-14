@@ -78,7 +78,7 @@ describe('resolveWorkspaceDirArg', () => {
 describe('needsNoWorkspace', () => {
   test.each([
     [['init'], true],
-    [['--mode', 'test', 'init', '-y'], true],
+    [['--profile', 'test', 'init', '-y'], true],
     [['--help'], true],
     [['--version'], true],
     [['show-config'], false],

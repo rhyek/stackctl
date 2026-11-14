@@ -77,7 +77,7 @@ through stackctl or the project's test script. A `kill`, a service started by ha
 docker command that changes something stay refused, since they would reach past the session or
 leave a process stackctl doesn't own. It runs one agent at a time, puts the session in the
 task's state before each, and checks afterwards that every service is ready, or that the tests
-passed in the test mode with the development session untouched and the test session stopped.
+passed in the test profile with the development session untouched and the test session stopped.
 
 ## Extending it
 

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import type { ControlClient, SessionEvent, SessionServiceStatus } from './control-client.js';
 import {
   DETACHED_SESSION_VAR,
-  type ModeSource,
+  type ProfileSource,
   assertOutsideCli,
   rejectUnknownOptions,
 } from './env-base.js';
@@ -20,7 +20,7 @@ import type { ServiceName } from './register.js';
 /** The options of {@link StartStackOptions}, checked at runtime since a JavaScript caller bypasses the types. */
 const START_STACK_OPTIONS = [
   'services',
-  'mode',
+  'profile',
   'workspaceDir',
   'waitTimeout',
   'killOthers',
@@ -28,10 +28,10 @@ const START_STACK_OPTIONS = [
 ];
 
 export interface StartStackOptions<P extends string = ServiceName> {
-  /** The services to bring up, as `-s` names them. Their deps and the mode's infra come too. */
+  /** The services to bring up, as `-s` names them. Their deps and the profile's infra come too. */
   services: P[];
-  /** The mode, as `--mode` takes it. Unset, the CLI resolves it as it does from a shell. */
-  mode?: string;
+  /** The profile, as `--profile` takes it. Unset, the CLI resolves it as it does from a shell. */
+  profile?: string;
   /**
    * The workspace: the directory holding `stackctl.config.ts`, as `--workspace-dir` takes it. Not
    * searched upward from. Default: the nearest directory at or above `process.cwd()` that has one.
@@ -40,7 +40,7 @@ export interface StartStackOptions<P extends string = ServiceName> {
   /** How long to wait for everything to be healthy, in seconds. Default 300. */
   waitTimeout?: number;
   /**
-   * Quit a session of the mode already running in the workspace, and start this one in its
+   * Quit a session of the profile already running in the workspace, and start this one in its
    * place, as `--kill-others` does. Without it, a running one fails the call.
    */
   killOthers?: boolean;
@@ -59,9 +59,9 @@ export interface Stack<P extends string = ServiceName> {
   pid: number;
   /** The session's control-API port. */
   port: number;
-  mode: string;
-  /** Where the session's mode came from: `flag` when `mode` was given. */
-  modeSource: ModeSource | null;
+  profile: string;
+  /** Where the session's profile came from: `flag` when `profile` was given. */
+  profileSource: ProfileSource | null;
   /** The session's logfile. */
   logFile: string | null;
   /**
@@ -128,11 +128,11 @@ const note = (message: string) => console.error(`stackctl: ${message}`);
 
 /**
  * Brings up a headless session with `services`, as this process's child, and waits until every one
- * of them, and the mode's infra, is healthy; one with `autostart: false` stays `stopped` and isn't
- * waited on. The session ends with this process, however it ends. A session of the mode already
- * running fails the call, unless `killOthers` quits it. Throws stackctl's error, with the log's
- * path, after quitting the session. Can't be called inside stackctl's own process (a config or its
- * callbacks).
+ * of them, and the profile's infra, is healthy; one with `autostart: false` stays `stopped` and
+ * isn't waited on. The session ends with this process, however it ends. A session of the profile
+ * already running fails the call, unless `killOthers` quits it. Throws stackctl's error, with the
+ * log's path, after quitting the session. Can't be called inside stackctl's own process (a config
+ * or its callbacks).
  */
 export async function startStack<P extends string = ServiceName>(
   options: StartStackOptions<P>,
@@ -141,7 +141,7 @@ export async function startStack<P extends string = ServiceName>(
   assertOutsideCli('startStack');
   rejectUnknownOptions('startStack', options, START_STACK_OPTIONS);
   const args = [
-    ...(options.mode === undefined ? [] : ['--mode', options.mode]),
+    ...(options.profile === undefined ? [] : ['--profile', options.profile]),
     ...(options.workspaceDir === undefined ? [] : ['--workspace-dir', options.workspaceDir]),
     'start',
     '--headless',
@@ -171,8 +171,8 @@ export async function startStack<P extends string = ServiceName>(
 export interface ReadySession<P extends string = ServiceName> {
   pid: number;
   port: number;
-  mode: string;
-  modeSource: ModeSource | null;
+  profile: string;
+  profileSource: ProfileSource | null;
   logFile: string | null;
   services: P[];
   origins: Partial<Record<P, string>>;
@@ -219,7 +219,7 @@ export class SessionStartError extends Error {
 
 /**
  * Forks the CLI (`args`) as a headless session and waits until every service it runs, and the
- * mode's infra, is healthy: what `startStack()` and `start --detach` share. The session's output
+ * profile's infra, is healthy: what `startStack()` and `start --detach` share. The session's output
  * goes to an unlinked file, never this process's stdio. Either way the session ends when its IPC
  * channel closes, as this process does however it ends. `detached` starts it in a process group
  * of its own, and has it stop ending with its channel once it is sent a `release` message
@@ -364,8 +364,8 @@ export async function launchSession<P extends string = ServiceName>(opts: {
     ready: {
       pid: started.pid,
       port: started.port,
-      mode: status.mode,
-      modeSource: status.modeSource,
+      profile: status.profile,
+      profileSource: status.profileSource,
       logFile: status.logFile,
       services: wanted,
       origins,

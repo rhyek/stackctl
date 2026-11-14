@@ -100,6 +100,66 @@ describe('stackctl run', () => {
   });
 });
 
+describe('the config type check', () => {
+  let typed: string;
+  beforeAll(() => {
+    // A workspace of its own: a config with a type error, and beside it the repo's typescript,
+    // the build's stackctl (which has no declarations, hence `noImplicitAny` off) and a tsconfig.
+    typed = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-typed-')));
+    fs.writeFileSync(path.join(typed, 'package.json'), '{ "type": "module" }\n');
+    fs.writeFileSync(
+      path.join(typed, 'stackctl.config.ts'),
+      [
+        "import { defineConfig } from 'stackctl';",
+        // A type error only tsc sees: the config itself is valid.
+        "export const label: number = 'x';",
+        "export default defineConfig({ services: { api: { relativeDir: '.' } } });",
+        '',
+      ].join('\n'),
+    );
+    fs.writeFileSync(
+      path.join(typed, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { module: 'nodenext', strict: true, noImplicitAny: false, types: [] } }), // oxfmt-ignore
+    );
+    fs.mkdirSync(path.join(typed, 'node_modules'));
+    fs.symlinkSync(
+      path.join(packageDir, '..', '..', 'node_modules', 'typescript'),
+      path.join(typed, 'node_modules', 'typescript'),
+    );
+    fs.symlinkSync(
+      fs.realpathSync(path.join(ws, 'node_modules', 'stackctl')),
+      path.join(typed, 'node_modules', 'stackctl'),
+    );
+  });
+  afterAll(() => fs.rmSync(typed, { recursive: true, force: true }));
+
+  const refusal = [
+    'stackctl: stackctl.config.ts has type errors:',
+    '',
+    "stackctl.config.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.",
+  ].join('\n');
+
+  test('refuses `start` with type errors, before starting anything', async () => {
+    const result = await stackctl(['--profile', 'development', '--headless', '-s', 'api'], {
+      cwd: typed,
+    });
+    expect(result).toMatchObject({ exitCode: 1, stdout: '', stderr: refusal });
+    expect(fs.existsSync(path.join(typed, 'node_modules', '.stackctl', 'profiles'))).toBe(false);
+  });
+
+  test('refuses `run` with type errors', async () => {
+    const result = await stackctl(['run', 'build'], { cwd: typed });
+    expect(result).toMatchObject({ exitCode: 1, stdout: '', stderr: refusal });
+  });
+
+  test('leaves `exec` alone', async () => {
+    const result = await stackctl(['exec', '--', 'node', '-e', "console.log('ran')"], {
+      cwd: typed,
+    });
+    expect(result).toMatchObject({ exitCode: 0, stdout: 'ran', stderr: '' });
+  });
+});
+
 describe('stackctl exec', () => {
   const PRINT = ['sh', '-c', 'pwd; echo $APP_VAR'];
 
@@ -120,7 +180,14 @@ describe('stackctl exec', () => {
 
   test("writes its two lines to the latest session's event log: where, what (a URL's password masked), its exit", async () => {
     // With no session folder yet, the command makes one of its own, as a session would.
-    const sessions = path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions');
+    const sessions = path.join(
+      ws,
+      'node_modules',
+      '.stackctl',
+      'profiles',
+      'development',
+      'sessions',
+    );
     fs.rmSync(sessions, { recursive: true, force: true });
     const asked = ['sh', '-c', 'exit 3', 'postgres://app:s3cret@db/app'];
     await stackctl(['exec', 'app', '--', ...asked], { env: { STACKCTL_STARTED_BY_AGENT: '0' } });
@@ -185,8 +252,8 @@ describe('stackctl infra', () => {
 });
 
 describe('-f follows one session', () => {
-  const sessions = () => path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'sessions'); // oxfmt-ignore
-  // Later than any session another test makes, so these two are the mode's latest.
+  const sessions = () => path.join(ws, 'node_modules', '.stackctl', 'profiles', 'development', 'sessions'); // oxfmt-ignore
+  // Later than any session another test makes, so these two are the profile's latest.
   const followed = String(Date.now() + 1e9);
   const next = String(Number(followed) + 1);
   afterEach(() => {
@@ -226,35 +293,39 @@ describe('-f follows one session', () => {
   );
 });
 
-describe('a coding agent names the mode', () => {
+describe('a coding agent names the profile', () => {
   const agent = { STACKCTL_STARTED_BY_AGENT: '1' };
 
-  test('a command with no mode is refused, saying how to name it', async () => {
+  test('a command with no profile is refused, saying how to name it', async () => {
     const result = await stackctl(['status'], { env: agent });
     expect(result.stderr).toBe(
-      'stackctl: a coding agent names the mode on every command, development included: stackctl --mode development status. ' +
-        'STACKCTL_MODE=<mode> names it too. (Not an agent? Set STACKCTL_STARTED_BY_AGENT=0.)',
+      'stackctl: a coding agent names the profile on every command, development included: stackctl --profile development status. ' +
+        'STACKCTL_PROFILE=<profile> names it too. (Not an agent? Set STACKCTL_STARTED_BY_AGENT=0.)',
     );
     expect(result.stdout).toBe('');
     expect(result.exitCode).toBe(1);
   });
 
-  test('so is one in CI, whose default mode is test', async () => {
+  test('so is one in CI, whose default profile is test', async () => {
     const result = await stackctl(['show-config'], { env: { ...agent, CI: 'true' } });
-    expect(result.stderr).toContain('stackctl --mode development show-config');
+    expect(result.stderr).toContain('stackctl --profile development show-config');
     expect(result.exitCode).toBe(1);
   });
 
   test.each([
-    { how: '--mode', args: ['--mode', 'development', 'status'], env: agent },
-    { how: 'STACKCTL_MODE', args: ['status'], env: { ...agent, STACKCTL_MODE: 'development' } },
-  ])('a mode named by $how runs', async ({ args, env }) => {
+    { how: '--profile', args: ['--profile', 'development', 'status'], env: agent },
+    {
+      how: 'STACKCTL_PROFILE',
+      args: ['status'],
+      env: { ...agent, STACKCTL_PROFILE: 'development' },
+    },
+  ])('a profile named by $how runs', async ({ args, env }) => {
     const result = await stackctl(args, { env });
     expect(result.stderr).toBe('');
     expect(result.exitCode).toBe(0);
   });
 
-  test('--version and help need no mode', async () => {
+  test('--version and help need no profile', async () => {
     expect((await stackctl(['--version'], { env: agent })).exitCode).toBe(0);
     expect((await stackctl(['status', '--help'], { env: agent })).exitCode).toBe(0);
   });
@@ -262,7 +333,7 @@ describe('a coding agent names the mode', () => {
 
 describe('exec and run take a target', () => {
   const api = () => path.join(ws, 'packages', 'api');
-  /** What api's `build` printed: its directory, the mode, and its arguments. */
+  /** What api's `build` printed: its directory, the profile, and its arguments. */
   const built = (stdout: string) => JSON.parse(lastLine(stdout)) as [string, string, string[]];
 
   test("run build runs the current directory target's build", async () => {
@@ -288,8 +359,8 @@ describe('exec and run take a target', () => {
     expect(built(result.stdout)).toEqual([api(), 'development', ['--x']]);
   });
 
-  test("run api build --mode test: the mode is stackctl's", async () => {
-    const result = await stackctl(['run', 'api', 'build', '--mode', 'test']);
+  test("run api build --profile test: the profile is stackctl's", async () => {
+    const result = await stackctl(['run', 'api', 'build', '--profile', 'test']);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(built(result.stdout)).toEqual([api(), 'test', []]);
   });
@@ -457,8 +528,8 @@ describe('env.additionalFiles', () => {
     expect(lastLine(result.stdout)).toBe('x:21010');
   });
 
-  test("loads the files the callback names for the mode's", async () => {
-    const result = await stackctl(['exec', '--mode', 'test', '--', ...print('PRE_URL')]);
+  test("loads the files the callback names for the profile's", async () => {
+    const result = await stackctl(['exec', '--profile', 'test', '--', ...print('PRE_URL')]);
     expect(result.stdout).toBe('t:21100');
   });
 
@@ -493,7 +564,7 @@ describe('resolveEnv()', () => {
       ROOT_DIR: ws,
       PORT: '21051',
       PUBLIC_ORIGIN: 'http://localhost:21051',
-      STACKCTL_MODE: 'development',
+      STACKCTL_PROFILE: 'development',
       STACKCTL_WORKSPACE_DIR: ws,
     });
     expect(files).toContain(path.join(ws, '.env.development.pre.local'));
@@ -507,19 +578,26 @@ describe('resolveEnv()', () => {
     expect(Object.fromEntries(Object.keys(rest).map((name) => [name, real[name]]))).toEqual(rest);
   });
 
-  test("a command stackctl runs gets the mode, and not where stackctl's came from", async () => {
+  test("a command stackctl runs gets the profile, and not where stackctl's came from", async () => {
     const printEnv = ['node', '-e', 'process.stdout.write(JSON.stringify(process.env))'];
-    const result = await stackctl(['--mode', 'development', 'exec', 'portonly', '--', ...printEnv]);
+    const result = await stackctl([
+      '--profile',
+      'development',
+      'exec',
+      'portonly',
+      '--',
+      ...printEnv,
+    ]);
     const env = JSON.parse(result.stdout) as Record<string, string>;
-    expect(env.STACKCTL_MODE).toBe('development');
-    expect(Object.keys(env).filter((name) => name.startsWith('STACKCTL_MODE'))).toEqual(['STACKCTL_MODE']); // oxfmt-ignore
+    expect(env.STACKCTL_PROFILE).toBe('development');
+    expect(Object.keys(env).filter((name) => name.startsWith('STACKCTL_PROFILE'))).toEqual(['STACKCTL_PROFILE']); // oxfmt-ignore
   });
 
-  test("resolves for the mode asked for, whatever this process's", async () => {
+  test("resolves for the profile asked for, whatever this process's", async () => {
     const { resolveEnv } = await load();
-    const { env, files } = resolveEnv({ workspaceDir: ws, mode: 'test' });
+    const { env, files } = resolveEnv({ workspaceDir: ws, profile: 'test' });
     expect(env.PRE_URL).toBe('t:21100');
-    expect(env.STACKCTL_MODE).toBe('test');
+    expect(env.STACKCTL_PROFILE).toBe('test');
     expect(files).toEqual([path.join(ws, '.env.test.pre'), path.join(ws, '.env.test')]);
   });
 

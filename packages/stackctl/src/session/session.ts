@@ -19,7 +19,7 @@ import {
   startControlServer,
 } from '../control-server.js';
 import type { DevReverseProxyManager, DevReverseProxyServer } from '../dev-reverse-proxy.js';
-import { currentMode, modeLine } from '../env-base.js';
+import { currentProfile, profileLine } from '../env-base.js';
 import { errorMessage } from '../errors.js';
 import {
   EventLog,
@@ -144,7 +144,9 @@ export interface SessionSeams {
   randomPort?: () => number;
   /** A forked session's IPC channel to its parent; `process` unless given. */
   parentChannel?: ParentChannel;
-  /** The mode's event log; the one under the workspace's `node_modules/.stackctl/` unless given. */
+  /**
+   * The profile's event log; the one under the workspace's `node_modules/.stackctl/` unless given.
+   */
   events?: EventLog;
 }
 
@@ -259,7 +261,7 @@ export class Session implements ControlManager, DevReverseProxyManager {
   private notifying = false;
   private readonly listeners = new Set<() => void>();
   private readonly infraListeners = new Set<(progress: InfraProgress) => void>();
-  /** The mode's event log: what acts on the session, and what it does on its own. */
+  /** The profile's event log: what acts on the session, and what it does on its own. */
   private readonly events: EventLog;
   private startedAt = 0;
   /** The quit command under way, ended once the session has stopped. */
@@ -307,8 +309,8 @@ export class Session implements ControlManager, DevReverseProxyManager {
     this.events =
       this.seams.events ??
       new EventLog({
-        file: sessionEventsPath(process.cwd(), currentMode(), sessionId()),
-        mode: currentMode(),
+        file: sessionEventsPath(process.cwd(), currentProfile(), sessionId()),
+        profile: currentProfile(),
         sessionId: () => sessionId(),
       });
     this.supervisor.on('exit', (service, exitCode, signal) => {
@@ -362,7 +364,7 @@ export class Session implements ControlManager, DevReverseProxyManager {
     );
     process.on('exit', this.exitHook);
     const log = this.supervisor.log.system;
-    log.info(modeLine());
+    log.info(profileLine());
     try {
       if (this.interactive) {
         this.branch = (this.seams.watchBranch ?? followGitBranch)(() => this.changed());
@@ -381,7 +383,7 @@ export class Session implements ControlManager, DevReverseProxyManager {
       const readUsage = this.interactive
         ? (this.seams.usageReader ?? createUsageReader)().catch(() => null)
         : null;
-      // The mode's session before this one, if alive: gone after the takeover, it was replaced.
+      // The profile's session before this one, if alive: gone after the takeover, it was replaced.
       const before = readRunning(process.cwd());
       const prior = before && before.pid !== process.pid && isProcessAlive(before.pid) ? before : null; // oxfmt-ignore
       const acquired = acquire((message) => log.info(message));
@@ -842,7 +844,7 @@ export class Session implements ControlManager, DevReverseProxyManager {
         process.execPath,
         fileURLToPath(new URL('../cli.js', import.meta.url)),
       ],
-      mode: currentMode(),
+      profile: currentProfile(),
       cwd: this.plan.cwd ?? process.cwd(),
       log: (service, text, isError) => this.appendInfra(service, text, isError),
       track: (pid, cwd) => records.add(pid, cwd),

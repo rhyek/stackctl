@@ -1,16 +1,16 @@
 /**
  * Providers whose key is also an `infra` subcommand that runs the provider's own tool:
- * `stackctl infra docker-compose ps` is `docker compose ps`, bound to this project and mode.
+ * `stackctl infra docker-compose ps` is `docker compose ps`, bound to this project and profile.
  */
 export const PASSTHROUGH_PROVIDERS: readonly string[] = ['docker-compose'];
 
 /**
  * The index in `argv` of the provider word that starts a passthrough, or -1. Everything after
  * that word belongs to the provider's tool and must never be read as a stackctl flag —
- * `docker compose build -m 2g` is a memory limit, not a mode.
+ * `docker compose -p demo ps` names a Compose project, not a stackctl profile.
  *
  * Only words before the first bare `--` count (after it they belong to a wrapped command), and
- * between `infra` and the provider word only `infra`'s own mode and workspace flags may appear.
+ * between `infra` and the provider word only `infra`'s own profile and workspace flags may appear.
  */
 export function findPassthrough(argv: readonly string[]): number {
   const end = argv.indexOf('--');
@@ -22,11 +22,11 @@ export function findPassthrough(argv: readonly string[]): number {
   let i = infra + 1;
   while (i < args.length) {
     const arg = args[i]!;
-    if (arg === '-m' || arg === '--mode') {
+    if (arg === '-p' || arg === '--profile') {
       i += 2;
     } else if (arg === '--workspace-dir') {
       i += 2;
-    } else if (arg.startsWith('--mode=') || arg.startsWith('--workspace-dir=')) {
+    } else if (arg.startsWith('--profile=') || arg.startsWith('--workspace-dir=')) {
       i += 1;
     } else {
       return PASSTHROUGH_PROVIDERS.includes(arg) ? i : -1;

@@ -444,7 +444,7 @@ export class DockerComposeProvider extends InfraProvider {
       } else if (/no such volume/i.test(result.stderr)) {
         // Never created — the service was never started. Nothing to remove.
       } else if (/in use/i.test(result.stderr)) {
-        // Held by a container outside the file's active services (another profile, say).
+        // Held by a container outside the file's active services (another Compose profile, say).
         say(`kept volume ${name}: in use by another container`);
       } else {
         throw new InfraError(`couldn't remove volume ${name}:\n${result.stderr.trim()}`);

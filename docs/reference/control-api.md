@@ -30,10 +30,10 @@ From a shell, [`stackctl service`](./cli.md#stackctl-service) and
 
 ## Finding the port
 
-A free port is picked at startup and written to the mode's session record:
+A free port is picked at startup and written to the profile's session record:
 
 ```
-node_modules/.stackctl/modes/<mode>/running.json
+node_modules/.stackctl/profiles/<profile>/running.json
 ```
 
 ```json
@@ -42,8 +42,8 @@ node_modules/.stackctl/modes/<mode>/running.json
   "port": 14012,
   "sessionId": "1794164978752",
   "startedAt": 1794164978790,
-  "logDir": "/repo/node_modules/.stackctl/modes/development/sessions/1794164978752",
-  "logFile": "/repo/node_modules/.stackctl/modes/development/sessions/1794164978752/logs.txt",
+  "logDir": "/repo/node_modules/.stackctl/profiles/development/sessions/1794164978752",
+  "logFile": "/repo/node_modules/.stackctl/profiles/development/sessions/1794164978752/logs.txt",
   "children": [{ "pid": 12360, "cwd": "/repo/apps/api" }]
 }
 ```
@@ -59,7 +59,7 @@ record before trusting it:
    pid was reused.
 
 ```bash
-record=node_modules/.stackctl/modes/development/running.json
+record=node_modules/.stackctl/profiles/development/running.json
 field() { node --input-type=module -e "import r from './$record' with { type: 'json' }; console.log(r.$1)" 2>/dev/null; }
 pid=$(field pid); port=$(field port); id=$(field sessionId)
 
@@ -84,10 +84,10 @@ service runs.
   "pid": 12345,
   "sessionId": "1794164978752",
   "configPath": "/repo/stackctl.config.ts",
-  "mode": "development",
-  "modeSource": "default",
+  "profile": "development",
+  "profileSource": "default",
   "startedByAgent": false,
-  "logFile": "/repo/node_modules/.stackctl/modes/development/sessions/1794164978752/logs.txt",
+  "logFile": "/repo/node_modules/.stackctl/profiles/development/sessions/1794164978752/logs.txt",
   "services": { "web": "running", "api": "waiting" },
   "ready": { "web": true, "api": false },
   "infra": { "db": "running", "mail": "starting" },
@@ -107,8 +107,8 @@ service runs.
 | `pid`            | number            | The session's process.                                                       |
 | `sessionId`      | string            | When the session started, in ms. Names its folder, as in its record.         |
 | `configPath`     | string            | The config file it was started with.                                         |
-| `mode`           | string            | The mode it runs in.                                                         |
-| `modeSource`     | string            | Where the mode came from: `flag`, `env`, `ci` or `default`.                  |
+| `profile`        | string            | The profile it runs in.                                                      |
+| `profileSource`  | string            | Where the profile came from: `flag`, `env`, `ci` or `default`.               |
 | `startedByAgent` | boolean           | Whether a coding agent started it.                                           |
 | `logFile`        | string            | The log file being written.                                                  |
 | `services`       | object \| null    | Each service's status: `running`, `stopped`, `waiting` or `restarting`.      |
@@ -125,7 +125,7 @@ poll again, or follow [`/events`](#get-events). A configured service that isn't 
 ## `GET /events`
 
 A long-lived response of newline-delimited JSON (`application/x-ndjson`): one object per
-line, each with a `type`. The first line is the full snapshot, then each line of the mode's
+line, each with a `type`. The first line is the full snapshot, then each line of the profile's
 [event log](./events.md) as it is written: by the session, or by another stackctl command.
 
 ```bash
@@ -242,7 +242,7 @@ A second Ctrl+C, or a second quit, during a shutdown skips the wait and kills at
 > [!WARNING]
 > Stop a session through the API, `stackctl stop` or Ctrl+C, never by killing its process. A
 > session killed with `kill -9` can't clean up: its services keep running until the next
-> session in that mode finds and stops them.
+> session in that profile finds and stops them.
 
 ## The client
 

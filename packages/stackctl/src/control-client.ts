@@ -1,6 +1,6 @@
 import type { ResolvedReverseProxyRoute } from './config.js';
 import type { ServiceAction } from './control-server.js';
-import { DEFAULT_MODE, type ModeSource, isModeSource } from './env-base.js';
+import { DEFAULT_PROFILE, type ProfileSource, isProfileSource } from './env-base.js';
 import type { EventEnvelope, EventLine } from './event-log.js';
 import type { InfraAction, InfraStatus } from './infra/control.js';
 import type { ServiceName } from './register.js';
@@ -24,22 +24,19 @@ export interface SessionStatus<P extends string = ServiceName> {
   pid: number;
   /**
    * The session's id, when it started in ms (an older stackctl's was a UUID): the same one its
-   * `modes/<mode>/running.json` records, and the name of its folder.
+   * `profiles/<profile>/running.json` records, and the name of its folder.
    * Null from an instance older than 1.0.0.
    */
   sessionId: string | null;
   /** Absolute path to the `stackctl.config.*` the session was started with. */
   configPath: string;
+  /** The profile the session runs in. */
+  profile: string;
   /**
-   * The mode the session runs in. An instance that doesn't report one predates per-mode
-   * sessions, when there was one session per workspace, and reads as the default mode.
+   * Where the session's profile came from: `--profile` (`flag`), `STACKCTL_PROFILE` (`env`), the
+   * CI default (`ci`) or neither (`default`). Null from an instance that doesn't report one.
    */
-  mode: string;
-  /**
-   * Where the session's mode came from: `--mode` (`flag`), `STACKCTL_MODE` (`env`), the CI default
-   * (`ci`) or neither (`default`). Null from an instance that doesn't report one.
-   */
-  modeSource: ModeSource | null;
+  profileSource: ProfileSource | null;
   /**
    * Whether that session was started by a coding agent rather than by a person. Absent from
    * instances older than 0.7.0, which read as `false` — so a new session never auto-quits one
@@ -229,8 +226,8 @@ export function createControlClient<P extends string = string>(
       return {
         pid: body.pid,
         configPath: body.configPath,
-        mode: typeof body.mode === 'string' ? body.mode : DEFAULT_MODE,
-        modeSource: isModeSource(body.modeSource) ? body.modeSource : null,
+        profile: typeof body.profile === 'string' ? body.profile : DEFAULT_PROFILE,
+        profileSource: isProfileSource(body.profileSource) ? body.profileSource : null,
         sessionId: typeof body.sessionId === 'string' ? body.sessionId : null,
         startedByAgent: body.startedByAgent === true,
         logFile: typeof body.logFile === 'string' ? body.logFile : null,
@@ -329,5 +326,7 @@ export function createControlClient<P extends string = string>(
  */
 export async function probeInstance(port: number, timeoutMs = 500): Promise<InstanceInfo | null> {
   const status = await createControlClient(port, timeoutMs).query.status();
-  return status ? { pid: status.pid, configPath: status.configPath, mode: status.mode } : null;
+  return status
+    ? { pid: status.pid, configPath: status.configPath, profile: status.profile }
+    : null;
 }

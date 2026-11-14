@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { currentMode } from '../env-base.js';
+import { currentProfile } from '../env-base.js';
 import { connectControlClient } from '../find-session.js';
 import { resolveLogFile } from '../log-files.js';
 import { readRunning } from '../running.js';
@@ -8,11 +8,11 @@ import { currentSessionId, newestSessionId, sessionLogPath } from '../session-fi
 
 /**
  * `stackctl logs`: print the current session's logfile, follow it, or print its path — the
- * running session of the active mode (`--mode`, default `development`), else its latest one.
+ * running session of the active profile (`--profile`, default `development`), else its latest one.
  *
  * Strictly READ-ONLY: `stackctl logs` must NEVER terminate a running session. It only reads
- * the mode's session record and issues a read-only GET /query/status, then reads a file — it must never
- * go through acquireSession/decideControlPort, which hand off (shut down) an instance.
+ * the profile's session record and issues a read-only GET /query/status, then reads a file — it
+ * must never go through acquireSession/decideControlPort, which hand off (shut down) an instance.
  */
 export async function runLogs(opts: { follow?: boolean; path?: boolean }): Promise<never> {
   if (opts.path && opts.follow) {
@@ -21,8 +21,8 @@ export async function runLogs(opts: { follow?: boolean; path?: boolean }): Promi
   }
   const cwd = process.cwd();
   const running = readRunning(cwd);
-  const mode = currentMode();
-  const latest = newestSessionId(cwd, mode);
+  const profile = currentProfile();
+  const latest = newestSessionId(cwd, profile);
   const client = await connectControlClient(cwd);
   const logFile = await resolveLogFile({
     liveLogFile: async () => {
@@ -30,10 +30,10 @@ export async function runLogs(opts: { follow?: boolean; path?: boolean }): Promi
       return typeof status?.logFile === 'string' ? status.logFile : null;
     },
     recordedLogFile: running?.logFile ?? null,
-    latestLogFile: latest === null ? null : sessionLogPath(cwd, mode, latest),
+    latestLogFile: latest === null ? null : sessionLogPath(cwd, profile, latest),
   });
   if (!logFile) {
-    console.error(`stackctl logs: no ${mode} session has run here yet.`);
+    console.error(`stackctl logs: no ${profile} session has run here yet.`);
     process.exit(1);
   }
   if (opts.path) {
@@ -41,7 +41,7 @@ export async function runLogs(opts: { follow?: boolean; path?: boolean }): Promi
     process.exit(0);
   }
   if (opts.follow) {
-    return follow(logFile, () => currentSessionId(cwd, mode));
+    return follow(logFile, () => currentSessionId(cwd, profile));
   }
   // A native `cat`, stdio inherited. No SIGINT handler is installed, so Ctrl+C stops only this
   // `cat`; the (separate-process) stackctl session is untouched.
@@ -98,7 +98,7 @@ async function follow(file: string, session: () => string | null): Promise<never
     print();
     if (moved) {
       clearInterval(timer);
-      console.error(`stackctl logs: the ${currentMode()} session exited; run stackctl logs -f again to follow the next one.`); // oxfmt-ignore
+      console.error(`stackctl logs: the ${currentProfile()} session exited; run stackctl logs -f again to follow the next one.`); // oxfmt-ignore
       // Once stdout has taken every line: a pipe on macOS writes asynchronously.
       process.stdout.write('', () => process.exit(0));
     }

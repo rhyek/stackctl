@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SessionStatus } from '../control-client.js';
-import { currentMode } from '../env-base.js';
+import { currentProfile } from '../env-base.js';
 import { type EventBy, type EventLine, currentEventsPath, localTime } from '../event-log.js';
 import { findSession } from '../find-session.js';
 
-// `stackctl status`: the mode's session as it is now, and what last acted on it, from its event
+// `stackctl status`: the profile's session as it is now, and what last acted on it, from its event
 // log. Strictly read-only, like `logs`: it reads the session record and asks `GET /query/status`,
 // and never goes through session acquisition, which would hand off (end) a running session.
 
@@ -175,14 +175,14 @@ export function formatRows(rows: EventRow[], now = new Date()): string[] {
 
 /** The session part of `status`, from `GET /query/status`. */
 function sessionLines(
-  mode: string,
+  profile: string,
   status: SessionStatus,
   port: number,
   startedAt: number | undefined,
 ): string[] {
   const since = startedAt ? ` since ${when(localTime(new Date(startedAt)))}` : '';
   const lines = [
-    `${mode} session: running${since} (pid ${String(status.pid)}, control port ${String(port)}), started by ${status.startedByAgent ? 'an agent' : 'a person'}`, // oxfmt-ignore
+    `${profile} session: running${since} (pid ${String(status.pid)}, control port ${String(port)}), started by ${status.startedByAgent ? 'an agent' : 'a person'}`, // oxfmt-ignore
   ];
   const services = Object.entries(status.services ?? {});
   const name = Math.max(0, ...services.map(([s]) => s.length), ...Object.keys(status.infra ?? {}).map((s) => s.length)); // oxfmt-ignore
@@ -200,21 +200,21 @@ function sessionLines(
 }
 
 /**
- * `stackctl status [--json]`: whether the mode's session runs, its services and infra now, and the
- * last commands and lifecycle entries of its event log, dated. Exits 0 either way.
+ * `stackctl status [--json]`: whether the profile's session runs, its services and infra now, and
+ * the last commands and lifecycle entries of its event log, dated. Exits 0 either way.
  */
 export async function runStatus(opts: { json?: boolean }): Promise<never> {
   const root = process.cwd();
-  const mode = currentMode();
-  const found = await findSession({ workspaceDir: root, mode });
-  const file = currentEventsPath(root, mode);
+  const profile = currentProfile();
+  const found = await findSession({ workspaceDir: root, profile });
+  const file = currentEventsPath(root, profile);
   const lines = readEventLines(file);
   const status = found.kind === 'running' ? found.status : null;
   if (opts.json) {
     console.log(
       JSON.stringify(
         {
-          mode,
+          profile,
           running: found.kind === 'running',
           port: found.kind === 'running' ? found.client.port : null,
           unresponsive: found.kind === 'unresponsive' ? { pid: found.pid, reason: found.reason } : null, // oxfmt-ignore
@@ -230,11 +230,11 @@ export async function runStatus(opts: { json?: boolean }): Promise<never> {
   }
   const out: string[] = [];
   if (found.kind === 'running') {
-    out.push(...sessionLines(mode, found.status, found.client.port, found.record?.startedAt));
+    out.push(...sessionLines(profile, found.status, found.client.port, found.record?.startedAt));
   } else if (found.kind === 'unresponsive') {
-    out.push(`${mode} session: pid ${String(found.pid)} is recorded but doesn't answer (${found.reason})`); // oxfmt-ignore
+    out.push(`${profile} session: pid ${String(found.pid)} is recorded but doesn't answer (${found.reason})`); // oxfmt-ignore
   } else {
-    out.push(`No ${mode} session is running.`);
+    out.push(`No ${profile} session is running.`);
   }
   out.push(file === null ? 'events    none yet' : `events    ${path.relative(root, file)}${lines.length === 0 ? ' (empty)' : ''}`); // oxfmt-ignore
   const rows = recentRows(lines);

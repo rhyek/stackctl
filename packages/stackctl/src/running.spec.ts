@@ -10,7 +10,7 @@ import {
   updateRunning,
   pickRandomPort,
   decideControlPort,
-  readOtherModesRunning,
+  readOtherProfilesRunning,
   runningFilePath,
   removeOwnRunning,
   sessionId,
@@ -21,8 +21,8 @@ import {
 let cwd: string;
 beforeEach(() => {
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-running-'));
-  // Pinned, so a run from inside a stackctl session of another mode can't change the answers.
-  vi.stubEnv('STACKCTL_MODE', 'development');
+  // Pinned, so a run from inside a stackctl session of another profile can't change the answers.
+  vi.stubEnv('STACKCTL_PROFILE', 'development');
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -103,7 +103,7 @@ describe('updateRunning', () => {
 });
 
 describe('removeOwnRunning', () => {
-  test("deletes the mode's record when it is this process's own", () => {
+  test("deletes the profile's record when it is this process's own", () => {
     writeRunning(cwd, { port: 14050, pid: process.pid, sessionId: sessionId() });
     removeOwnRunning(cwd);
     expect(fs.existsSync(runningFilePath(cwd))).toBe(false);
@@ -213,7 +213,7 @@ describe('decideControlPort — random mode', () => {
     const shutdowns: [number, number][] = [];
     const env = fakeEnv({
       listening: [14050],
-      info: { 14050: { pid: 999, configPath, mode: 'development' } },
+      info: { 14050: { pid: 999, configPath, profile: 'development' } },
       onShutdown: (p, pid) => shutdowns.push([p, pid]),
     });
     const port = await decideControlPort({ cwd, configPath, pid: 4242, env });
@@ -227,7 +227,9 @@ describe('decideControlPort — random mode', () => {
     let shutdownCalled = false;
     const env = fakeEnv({
       listening: [14050],
-      info: { 14050: { pid: 999, configPath: '/other/stackctl.config.ts', mode: 'development' } },
+      info: {
+        14050: { pid: 999, configPath: '/other/stackctl.config.ts', profile: 'development' },
+      },
       onShutdown: () => (shutdownCalled = true),
     });
     const port = await decideControlPort({ cwd, configPath, pid: 4242, env });
@@ -253,7 +255,7 @@ describe('decideControlPort — explicit apiPort override', () => {
     const shutdowns: [number, number][] = [];
     const env = fakeEnv({
       listening: [5000],
-      info: { 5000: { pid: 999, configPath, mode: 'development' } },
+      info: { 5000: { pid: 999, configPath, profile: 'development' } },
       onShutdown: (p, pid) => shutdowns.push([p, pid]),
     });
     const port = await decideControlPort({
@@ -272,7 +274,7 @@ describe('decideControlPort — explicit apiPort override', () => {
     let shutdownCalled = false;
     const env = fakeEnv({
       listening: [5000],
-      info: { 5000: { pid: 999, configPath: '/other/stackctl.config.ts', mode: 'development' } },
+      info: { 5000: { pid: 999, configPath: '/other/stackctl.config.ts', profile: 'development' } },
       onShutdown: () => (shutdownCalled = true),
     });
     const port = await decideControlPort({
@@ -287,33 +289,33 @@ describe('decideControlPort — explicit apiPort override', () => {
   });
 });
 
-// A workspace runs one session per mode: each mode has its own record, and a session only ever
-// hands off one in its own mode.
-describe('per-mode session records', () => {
+// A workspace runs one session per profile: each profile has its own record, and a session only
+// ever hands off one in its own profile.
+describe('per-profile session records', () => {
   const configPath = '/repo/stackctl.config.ts';
   const statePath = (name: string) => path.join(cwd, 'node_modules', '.stackctl', name);
 
-  test("writes and reads the active mode's own modes/<mode>/running.json", () => {
+  test("writes and reads the active profile's own profiles/<profile>/running.json", () => {
     writeRunning(cwd, { port: 14001, pid: 1 });
-    vi.stubEnv('STACKCTL_MODE', 'test');
+    vi.stubEnv('STACKCTL_PROFILE', 'test');
     expect(readRunning(cwd)).toBeNull();
     writeRunning(cwd, { port: 14002, pid: 2 });
-    expect(runningFilePath(cwd)).toBe(statePath('modes/test/running.json'));
+    expect(runningFilePath(cwd)).toBe(statePath('profiles/test/running.json'));
     expect(readRunning(cwd)).toEqual({ port: 14002, pid: 2 });
     expect(readRunning(cwd, 'development')).toEqual({ port: 14001, pid: 1 });
-    expect(fs.existsSync(statePath('modes/development/running.json'))).toBe(true);
+    expect(fs.existsSync(statePath('profiles/development/running.json'))).toBe(true);
   });
 
-  test("updates only the active mode's record, and only when this process owns it", () => {
+  test("updates only the active profile's record, and only when this process owns it", () => {
     writeRunning(cwd, { port: 14001, pid: 1 }, 'development');
     writeRunning(cwd, { port: 14002, pid: process.pid }, 'test');
-    vi.stubEnv('STACKCTL_MODE', 'test');
+    vi.stubEnv('STACKCTL_PROFILE', 'test');
     updateRunning(cwd, { logFile: '/logs/test/2.log' });
     expect(readRunning(cwd, 'test')).toEqual({ port: 14002, pid: process.pid, logFile: '/logs/test/2.log' }); // oxfmt-ignore
     expect(readRunning(cwd, 'development')).toEqual({ port: 14001, pid: 1 });
   });
 
-  test('reads no record outside modes/<mode>/', () => {
+  test('reads no record outside profiles/<profile>/', () => {
     fs.mkdirSync(statePath(''), { recursive: true });
     fs.writeFileSync(statePath('running.json'), JSON.stringify({ port: 14009, pid: 9 }));
     fs.writeFileSync(
@@ -321,14 +323,14 @@ describe('per-mode session records', () => {
       JSON.stringify({ port: 14008, pid: 8 }),
     );
     expect(readRunning(cwd, 'development')).toBeNull();
-    expect(readOtherModesRunning(cwd, 'test')).toEqual(new Map());
+    expect(readOtherProfilesRunning(cwd, 'test')).toEqual(new Map());
   });
 
-  test("lists the other modes' records, never the active one's", () => {
+  test("lists the other profiles' records, never the active one's", () => {
     writeRunning(cwd, { port: 14001, pid: 1 }, 'development');
     writeRunning(cwd, { port: 14002, pid: 2 }, 'test');
     writeRunning(cwd, { port: 14003, pid: 3 }, 'e2e.ci');
-    expect(readOtherModesRunning(cwd, 'test')).toEqual(
+    expect(readOtherProfilesRunning(cwd, 'test')).toEqual(
       new Map([
         ['development', { port: 14001, pid: 1 }],
         ['e2e.ci', { port: 14003, pid: 3 }],
@@ -336,31 +338,38 @@ describe('per-mode session records', () => {
     );
   });
 
-  test("relocates around this project's session in another mode, never shutting it down", async () => {
+  test("relocates around this project's session in another profile, never shutting it down", async () => {
     writeRunning(cwd, { port: 14050, pid: 111 }, 'development');
     writeRunning(cwd, { port: 14050, pid: 222 }, 'test');
     let shutdownCalled = false;
     const env = fakeEnv({
       listening: [14050],
-      info: { 14050: { pid: 111, configPath, mode: 'development' } },
+      info: { 14050: { pid: 111, configPath, profile: 'development' } },
       onShutdown: () => (shutdownCalled = true),
     });
-    const port = await decideControlPort({ cwd, configPath, mode: 'test', pid: 4242, env });
+    const port = await decideControlPort({ cwd, configPath, profile: 'test', pid: 4242, env });
     expect(shutdownCalled).toBe(false);
     expect(port).not.toBe(14050);
     expect(readRunning(cwd, 'test')).toEqual({ port, pid: 4242 });
     expect(readRunning(cwd, 'development')).toEqual({ port: 14050, pid: 111 });
   });
 
-  test("refuses a fixed apiPort held by this project's session in another mode", async () => {
+  test("refuses a fixed apiPort held by this project's session in another profile", async () => {
     let shutdownCalled = false;
     const env = fakeEnv({
       listening: [5000],
-      info: { 5000: { pid: 111, configPath, mode: 'development' } },
+      info: { 5000: { pid: 111, configPath, profile: 'development' } },
       onShutdown: () => (shutdownCalled = true),
     });
     await expect(
-      decideControlPort({ cwd, configPath, mode: 'test', pid: 4242, apiPortOverride: 5000, env }),
+      decideControlPort({
+        cwd,
+        configPath,
+        profile: 'test',
+        pid: 4242,
+        apiPortOverride: 5000,
+        env,
+      }),
     ).rejects.toThrow(/apiPort 5000 is in use by this project's development session \(pid 111\)/);
     expect(shutdownCalled).toBe(false);
     expect(readRunning(cwd, 'test')).toBeNull();

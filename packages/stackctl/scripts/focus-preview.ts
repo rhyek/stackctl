@@ -67,7 +67,7 @@ function hexOf(hsl: HslColor): Color {
 // ---------------------------------------------------------------------------
 
 const WORKSPACE = { name: 'example', branch: 'main' };
-const LOG_PATH = 'node_modules/.stackctl/modes/development/logs/session.log';
+const LOG_PATH = 'node_modules/.stackctl/profiles/development/logs/session.log';
 const SCRIPTS = ['build', 'lint', 'test', 'db:migrate'];
 
 /** `web` picked, so `api` and `auth` show as needed; the cursor on `api`. */

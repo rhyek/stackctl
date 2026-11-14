@@ -227,7 +227,7 @@ function setup(opts: {
     installSignals: () => () => {},
     events: new EventLog({
       file: sessionEventsPath(root, 'development', '1'),
-      mode: 'development',
+      profile: 'development',
       sessionId: () => 'session-test',
     }),
     ...opts.seams,
@@ -285,7 +285,7 @@ describe('startup', () => {
     expect(t.proxy.attached).toBe(t.session);
     expect(t.session.getSnapshot().phase).toBe('running');
     expect(t.lines()).toEqual([
-      '[stackctl] [INFO] mode development (default)',
+      '[stackctl] [INFO] profile development (default)',
       '[stackctl] [INFO] freeing dev ports',
       '[api     ] started',
       '[web     ] started',

@@ -237,7 +237,7 @@ export const InfraSchema = v.pipe(
   ),
 );
 
-const EnvFileAnchorSchema = v.picklist(['base', 'local', 'mode', 'modeLocal']);
+const EnvFileAnchorSchema = v.picklist(['base', 'local', 'profile', 'profileLocal']);
 const EnvFileScopeSchema = v.picklist(['workspace', 'service']);
 
 // One `env.additionalFiles` entry, as written or as the callback returns it: `{ file, before }` or

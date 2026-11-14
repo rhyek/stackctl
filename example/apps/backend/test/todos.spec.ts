@@ -1,6 +1,6 @@
-// The todo API's tests. They call a running backend: start one in the test mode's session
-// (`stackctl --mode test --headless -s backend`), then run them in its environment with
-// `stackctl --mode test run backend test`, which hands the script the backend's PORT.
+// The todo API's tests. They call a running backend: start one in the test profile's session
+// (`stackctl --profile test --headless -s backend`), then run them in its environment with
+// `stackctl --profile test run backend test`, which hands the script the backend's PORT.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 

@@ -347,7 +347,7 @@ const INFRA = 'db';
 
 const WORKSPACE = { name: 'example', branch: 'main' };
 
-const LOG_PATH = 'node_modules/.stackctl/modes/development/logs/session.log';
+const LOG_PATH = 'node_modules/.stackctl/profiles/development/logs/session.log';
 
 /** The commands menu's scripts, the same for every service. */
 const SCRIPTS = ['build', 'lint', 'test', 'db:migrate'];

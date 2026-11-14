@@ -84,7 +84,7 @@ function context(found: FoundSession, wait = vi.fn<Wait>(async () => undefined))
   const out: string[] = [];
   const ctx: ServiceCommandContext = {
     root: dir,
-    target: { mode: 'development', source: 'default' },
+    target: { profile: 'development', source: 'default' },
     ...known(),
     find: async () => found,
     wait,
@@ -95,11 +95,11 @@ function context(found: FoundSession, wait = vi.fn<Wait>(async () => undefined))
 }
 
 describe('runServiceCommand', () => {
-  test('with no session of the mode, it fails and says which mode', async () => {
+  test('with no session of the profile, it fails and says which profile', async () => {
     const { ctx, out } = context({ kind: 'none' });
     expect(await runServiceCommand('restart', { services: ['api'] }, ctx)).toBe(1);
     expect(out).toEqual([
-      'error: No development stackctl session is running (development is the default mode; pass --mode to choose another).',
+      'error: No development stackctl session is running (development is the default profile; pass --profile to choose another).',
     ]);
   });
 

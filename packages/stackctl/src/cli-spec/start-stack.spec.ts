@@ -26,7 +26,7 @@ describe('startStack()', () => {
   type StackModule = typeof import('../stack.js');
   /** The compiled module, so the CLI it runs is the one compiled beside it. */
   const load = () => import(pathToFileURL(path.join(buildDir, 'stack.js')).href) as Promise<StackModule>; // oxfmt-ignore
-  const record = () => path.join(ws, 'node_modules', '.stackctl', 'modes', 'development', 'running.json'); // oxfmt-ignore
+  const record = () => path.join(ws, 'node_modules', '.stackctl', 'profiles', 'development', 'running.json'); // oxfmt-ignore
   const alive = (pid: number) => {
     try {
       process.kill(pid, 0);
@@ -100,15 +100,15 @@ describe('startStack()', () => {
     return stack;
   };
 
-  test("starts a coding agent's suite's stack in the mode its code chose, here none", async () => {
+  test("starts a coding agent's suite's stack in the profile its code chose, here none", async () => {
     const stack = await startStack(['wide'], { env: { STACKCTL_STARTED_BY_AGENT: '1' } });
-    expect(stack).toMatchObject({ session: 'started', mode: 'development', modeSource: 'default' }); // oxfmt-ignore
+    expect(stack).toMatchObject({ session: 'started', profile: 'development', profileSource: 'default' }); // oxfmt-ignore
     await stack.stop();
   }, 30_000);
 
   test('starts a stack, and stop() ends its session and deletes its record', async () => {
     const stack = await startStack(['wide']);
-    expect(stack).toMatchObject({ session: 'started', mode: 'development', modeSource: 'default', domain: null, services: ['wide'] }); // oxfmt-ignore
+    expect(stack).toMatchObject({ session: 'started', profile: 'development', profileSource: 'default', domain: null, services: ['wide'] }); // oxfmt-ignore
     // Every configured service's origin, selected or not.
     expect(stack.origins).toEqual({
       api: 'http://localhost:21053',
@@ -128,7 +128,7 @@ describe('startStack()', () => {
     expect(fs.existsSync(record())).toBe(false);
   }, 60_000);
 
-  test('refuses while a session of its mode runs, and quits it with killOthers', async () => {
+  test('refuses while a session of its profile runs, and quits it with killOthers', async () => {
     const first = await startStack(['idle']);
     await expect(startStack(['wide'])).rejects.toThrow(
       new RegExp(`already running \\(pid ${String(first.pid)}\\).*killOthers`),
@@ -292,9 +292,9 @@ setInterval(() => {}, 1e9);
       child.stdout!.on('data', (chunk: Buffer) => (output += chunk.toString()));
       child.stderr!.on('data', (chunk: Buffer) => (output += chunk.toString()));
       expect(await until(() => output.includes('handed=')), output).toBe(true);
-      const recorded = path.join(dir, 'node_modules', '.stackctl', 'modes', 'development', 'running.json'); // oxfmt-ignore
+      const recorded = path.join(dir, 'node_modules', '.stackctl', 'profiles', 'development', 'running.json'); // oxfmt-ignore
       expect(JSON.parse(fs.readFileSync(recorded, 'utf8'))).toMatchObject({ sessionId: id });
-      const folder = path.join(dir, 'node_modules', '.stackctl', 'modes', 'development', 'sessions', id); // oxfmt-ignore
+      const folder = path.join(dir, 'node_modules', '.stackctl', 'profiles', 'development', 'sessions', id); // oxfmt-ignore
       expect(fs.readFileSync(path.join(folder, 'logs.txt'), 'utf8')).toContain('handed=none');
       expect(output).toContain('handed=none');
       child.kill('SIGTERM');

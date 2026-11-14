@@ -1,14 +1,14 @@
 ---
-description: Give an e2e suite or a CI job a healthy stack with startStack(), stackctl start --detach or --headless, in a test mode that runs beside your dev session.
+description: Give an e2e suite or a CI job a healthy stack with startStack(), stackctl start --detach or --headless, in a test profile that runs beside your dev session.
 ---
 
 # Tests and CI
 
 An e2e suite needs the same stack you develop against: started, healthy, and gone when the
-suite ends. stackctl gives it one in a single call, in a mode of its own so it never touches
+suite ends. stackctl gives it one in a single call, in a profile of its own so it never touches
 the session you are working in.
 
-## A test mode
+## A test profile
 
 Create `.env.test` next to `.env.development`, with **different ports**:
 
@@ -18,9 +18,9 @@ API_PORT=21060
 DB_PORT=21061
 ```
 
-`--mode test` then runs a second, separate session: its own processes, its own
-[infra containers](../config/infra.md#modes) and database, its own state. See
-[Modes](./env.md#modes).
+`--profile test` then runs a second, separate session: its own processes, its own
+[infra containers](../config/infra.md#profiles) and database, its own state. See
+[Profiles](./env.md#profiles).
 
 ## In a test runner
 
@@ -31,7 +31,7 @@ once the infra and every service are healthy:
 import { startStack } from 'stackctl';
 
 // in the global setup
-const stack = await startStack({ mode: 'test', services: ['web'] });
+const stack = await startStack({ profile: 'test', services: ['web'] });
 // hand stack.origins.web to the specs
 
 // in the global teardown
@@ -61,7 +61,7 @@ exits, leaving the session running for the next steps:
   run: pnpm stackctl stop
 ```
 
-In CI the mode defaults to `test`, so both commands act on the test session. If the stack
+In CI the profile defaults to `test`, so both commands act on the test session. If the stack
 doesn't come up, `--detach` stops it, prints the error and the log's last 50 lines, and exits
 `1`. See [`stackctl start`](../reference/cli.md#stackctl-start).
 
@@ -73,11 +73,11 @@ A suite that calls `startStack()` itself needs neither step.
 for it with [`stackctl wait`](../reference/cli.md#stackctl-wait):
 
 ```sh
-stackctl --mode test --headless -s web &
+stackctl --profile test --headless -s web &
 session=$!
 trap 'kill $session 2>/dev/null' EXIT   # SIGTERM shuts it down gracefully
 
-stackctl --mode test wait || exit 1
+stackctl --profile test wait || exit 1
 pnpm test:e2e
 ```
 
@@ -87,5 +87,5 @@ For a suite that needs the environment but not the services, run it through
 [`sctl run`](./commands.md):
 
 ```bash
-sctl --mode test run api test
+sctl --profile test run api test
 ```

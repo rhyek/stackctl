@@ -8,14 +8,14 @@ import {
   REPLACED_ENV_VAR,
   RESOLVE_ENV_FD,
   assertOutsideCli,
-  assertValidMode,
-  currentMode,
+  assertValidProfile,
+  currentProfile,
   envFileNames,
   rejectUnknownOptions,
   shellEnvironment,
   type EnvFileOrder,
   type EnvOverride,
-  type Mode,
+  type Profile,
 } from './env-base.js';
 import { type EnvFilesReading, readEnvFiles, readEnvFilesSync } from './env-file-reader.js';
 import { resolverArgs } from './one-off/resolver-args.js';
@@ -53,13 +53,13 @@ interface ResolveEnvOptions {
    */
   relativeDir?: string;
   /**
-   * The mode whose {@link envFileNames} to look for at each scope. Defaults to the active mode
-   * ({@link currentMode}). Ignored when `files` is given.
+   * The profile whose {@link envFileNames} to look for at each scope. Defaults to the active
+   * profile ({@link currentProfile}). Ignored when `files` is given.
    */
-  mode?: Mode;
+  profile?: Profile;
   /**
    * Filenames to look for, ascending precedence: one list for both scopes, or one per scope (a
-   * config's `envFiles`). Takes precedence over `mode`.
+   * config's `envFiles`). Takes precedence over `profile`.
    */
   files?: string[] | EnvFileOrder;
   /** Variables the files may override the ambient environment for. */
@@ -226,10 +226,11 @@ export class EnvFileSnapshot {
 export function envCandidatePaths({
   cwd,
   relativeDir = '.',
-  mode,
+  profile,
   files,
-}: Pick<ResolveEnvOptions, 'cwd' | 'relativeDir' | 'mode' | 'files'>): string[] {
-  const order = files ?? envFileNames(mode === undefined ? currentMode() : assertValidMode(mode));
+}: Pick<ResolveEnvOptions, 'cwd' | 'relativeDir' | 'profile' | 'files'>): string[] {
+  const order =
+    files ?? envFileNames(profile === undefined ? currentProfile() : assertValidProfile(profile));
   const workspaceNames = Array.isArray(order) ? order : order.workspace;
   const serviceNames = Array.isArray(order) ? order : order.service;
   const workspaceDir = path.resolve(cwd);
@@ -253,7 +254,7 @@ function withInjectedList(layer: Record<string, string>): Record<string, string>
     (key) =>
       key !== INJECTED_ENV_VAR &&
       key !== REPLACED_ENV_VAR &&
-      key !== 'STACKCTL_MODE' &&
+      key !== 'STACKCTL_PROFILE' &&
       child[key] !== undefined &&
       child[key] !== shell[key],
   );
@@ -507,18 +508,18 @@ function decryptDefinitions(defs: Definition[], keys: Record<string, string>): v
 }
 
 /** The options {@link resolveEnv} takes, checked at runtime since a JavaScript caller bypasses the types. */
-const RESOLVE_ENV_OPTIONS = ['mode', 'target', 'workspaceDir'];
+const RESOLVE_ENV_OPTIONS = ['profile', 'target', 'workspaceDir'];
 
 /**
  * The environment stackctl starts a target's command with, as `exec()` runs it: the config's
- * `env.vars`, the `.env` files of the mode, `env.additionalFiles` and `env.override` applied, and
- * for a service its `PORT`, `PUBLIC_ORIGIN` and `NODE_EXTRA_CA_CERTS`, with `STACKCTL_MODE`,
+ * `env.vars`, the `.env` files of the profile, `env.additionalFiles` and `env.override` applied,
+ * and for a service its `PORT`, `PUBLIC_ORIGIN` and `NODE_EXTRA_CA_CERTS`, with `STACKCTL_PROFILE`,
  * `STACKCTL_CWD` and `STACKCTL_WORKSPACE_DIR`.
  *
- * Synchronous: stackctl's CLI runs in a child process, loads the config in the mode asked for and
- * writes what it resolved (see `RESOLVE_ONE_OFF_COMMAND`). A child, not the config imported
- * here: importing it would resolve it in this process's mode, once, into this process's module
- * state, where the CLI resolves it in the mode asked for and leaves the caller's alone.
+ * Synchronous: stackctl's CLI runs in a child process, loads the config in the profile asked for
+ * and writes what it resolved (see `RESOLVE_ONE_OFF_COMMAND`). A child, not the config imported
+ * here: importing it would resolve it in this process's profile, once, into this process's module
+ * state, where the CLI resolves it in the profile asked for and leaves the caller's alone.
  *
  * Throws what stackctl said when it can't resolve: no config, an unknown target. Throws inside
  * stackctl's own process — from the config, or a callback it runs — where it would load the
@@ -527,11 +528,11 @@ const RESOLVE_ENV_OPTIONS = ['mode', 'target', 'workspaceDir'];
 export function resolveEnv(
   opts: {
     /**
-     * The mode, selecting the `.env.<mode>` files to load. Default: this process's `STACKCTL_MODE`
-     * when set (a process a stackctl started keeps its mode), else `'test'` in CI, else
-     * `'development'`.
+     * The profile, selecting the `.env.<profile>` files to load. Default: this process's
+     * `STACKCTL_PROFILE` when set (a process a stackctl started keeps its profile), else `'test'`
+     * in CI, else `'development'`.
      */
-    mode?: string;
+    profile?: string;
     /**
      * The target: a service's name or a path, relative to the current directory (or to
      * `workspaceDir` when given). A path inside a service is that service. Omitted, the current
@@ -695,7 +696,7 @@ interface EnvLayerOptions {
   cwd: string;
   /**
    * Filenames to look for, one list for both scopes or one per scope (defaults to the active
-   * mode's {@link envFileNames}).
+   * profile's {@link envFileNames}).
    */
   files?: string[] | EnvFileOrder;
   /** Variables the files may override the ambient environment for. */

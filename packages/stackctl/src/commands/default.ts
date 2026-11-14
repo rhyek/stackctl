@@ -10,8 +10,8 @@ import { loadConfigOrExit, validatePackageNames } from './workspace.js';
 /** `start`'s options: the session's. */
 export interface StartOptions {
   service: string[];
-  /** Declared for --help/validation; the value in force is read from argv by resolveMode. */
-  mode?: string;
+  /** Declared for --help/validation; the value in force is read from argv by resolveProfile. */
+  profile?: string;
   ui?: boolean;
   headless?: boolean;
   lastAnswers: boolean;
