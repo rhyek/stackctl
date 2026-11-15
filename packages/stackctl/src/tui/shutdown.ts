@@ -5,10 +5,10 @@ import { MOUSE_DISABLE } from '../mouse.js';
 import type { Session } from '../session/session.js';
 
 /**
- * The screen's part of the one shutdown path (`docs/architecture/exiting.md`; run-screen §9). The
- * session owns the rest: stopping the children, closing the proxy, acknowledging a held quit,
- * closing the control server. Whatever started it (Ctrl+C, a signal, `/command/quit`, a branch
- * change), the screen follows the session's `stopping` phase.
+ * The screen's part of the one shutdown path (`maintenance/docs/architecture/exiting.md`;
+ * run-screen §9). The session owns the rest: stopping the children, closing the proxy,
+ * acknowledging a held quit, closing the control server. Whatever started it (Ctrl+C, a signal,
+ * `/command/quit`, a branch change), the screen follows the session's `stopping` phase.
  */
 
 /** Leaves the alternate screen and shows the cursor, with the mouse released first. */

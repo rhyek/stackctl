@@ -35,12 +35,7 @@ const { ignorePatterns: _ignored, overrides: _overrides, ...options } = config;
  * is kept shorter than that by hand.
  */
 function pages(): string[] {
-  const docs = fs
-    .globSync('docs/**/*.md', {
-      cwd: root,
-      exclude: ['docs/architecture/**', 'docs/superpowers/**'],
-    })
-    .toSorted();
+  const docs = fs.globSync('docs/**/*.md', { cwd: root }).toSorted();
   const all = ['README.md', 'docs/.vitepress/theme/HomeConfig.md', ...docs];
   return named.length === 0 ? all : all.filter((page) => named.includes(page));
 }

@@ -3,7 +3,7 @@
  * app-managed drag-to-select-and-copy. The terminal's own text selection can't
  * survive our in-place repaints (scrolling and new log lines rewrite the cells
  * under the highlight), so we replace it with a selection anchored to the log
- * content — see docs/architecture/rendering.md.
+ * content — see maintenance/docs/architecture/rendering.md.
  *
  * We enable button-event tracking (`?1002h` — reports press, drag-motion while a
  * button is held, and release) with SGR extended coordinates (`?1006h` — 1-based,

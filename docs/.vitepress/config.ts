@@ -30,8 +30,6 @@ export default defineConfig({
     "A terminal UI and CLI for a monorepo's services, infrastructure, tests and CI during development.",
   cleanUrls: true,
   lastUpdated: false,
-  // Contributor internals and working notes live in docs/ too, but aren't part of the site.
-  srcExclude: ['architecture/**', 'superpowers/**'],
   sitemap: { hostname: site },
   // The icon at its small size (logo/logo-small.svg, linked into docs/public/) in the browser
   // tab, with a PNG for browsers that don't take an SVG one, and the square one iOS rounds for a
