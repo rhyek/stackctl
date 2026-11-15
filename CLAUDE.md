@@ -60,8 +60,8 @@ The documentation is one set of Markdown pages in `docs/`, read three ways:
 | `docs/reference/` | The CLI, the control API (endpoints and payloads), the SDK.                        |
 | `docs/ai/`        | `overview.md`: how stackctl serves coding agents. `playbook.md`: recipes written for the agent, the page `llms.txt` sends one to first. |
 
-`docs/index.md` is the site's home page. `docs/architecture/` is contributor internals and
-`docs/superpowers/` working notes: neither is part of the site (`srcExclude`).
+`docs/index.md` is the site's home page. Contributor internals (how stackctl is built) are not
+part of the site: they live in `maintenance/docs/architecture/`.
 
 `README.md` (repo root) is a short landing page: what stackctl is, the demo, install, a quick
 start, and links to the site. Its links are absolute, so npm and GitHub render it alike;
@@ -105,7 +105,7 @@ reconcile every hit.
 - **Agents read the same pages.** There is no separate agent guide. Whatever an agent needs to
   get a call right goes in the page that owns the topic.
 - **Short and familiar.** Lead with an example, then a table of options, then one-line bullets
-  for the rules. Internals (how a feature is built) belong in `docs/architecture/`.
+  for the rules. Internals (how a feature is built) belong in `maintenance/docs/architecture/`.
 - **Links between pages are relative and end in `.md`** (`../config/infra.md#callbacks`), so
   they work on the site, on GitHub and in the packaged copies. Heading anchors are GitHub's
   (the site's `slugify` matches). `pnpm docs:build` fails on a dead link, and
@@ -120,6 +120,9 @@ reconcile every hit.
 - **Only the current surface, no history:** see
   [`.claude/rules/docs-no-history.md`](.claude/rules/docs-no-history.md), which loads whenever
   one of these files is read or edited.
+- **Written for the people who use stackctl**, any developer on any stack and their agent, never
+  for its maintainers; the changelog too: see
+  [`.claude/rules/public-docs-audience.md`](.claude/rules/public-docs-audience.md).
 - **Hand-formatted.** Never run a Markdown formatter on the docs or the README.
 - **A `ts` snippet stays within 75 columns**, which is what the site's code block shows without
   scrolling. `maintenance/scripts/format-docs-snippets.ts` keeps it there: `pnpm format` and
@@ -167,6 +170,8 @@ with neither the package nor the site.
 | Path                                          | What it is                                       |
 | --------------------------------------------- | ------------------------------------------------ |
 | `maintenance/docs/agent-guidance-experiment.md` | How stackctl tells coding agents about itself: the research, the eval and the decision. Read it before changing the skill, the rules file or the playbook. |
+| `maintenance/docs/architecture/`              | Contributor internals: the terminal UI's rendering, shutdown, the dev reverse proxy. |
+| `maintenance/docs/superpowers/`               | Superpowers' specs (`specs/`) and plans (`plans/`): working notes, gitignored. |
 | `maintenance/scripts/agent-eval/`             | The agent eval: Claude Code under each guidance setup, graded. Its README has the commands. |
 | `maintenance/scripts/demo/`                   | The docs' terminal recordings and the agent conversations they replay. See its `CLAUDE.md`. |
 | `maintenance/scripts/package-docs.ts`         | Copies the built site's `llms.txt` and pages into the package (`pnpm docs:package`). |
@@ -179,6 +184,9 @@ with neither the package nor the site.
   row here. A script runs from the repo root, as `node maintenance/scripts/<name>.ts`.
 - **What a run produces stays out of the repo**: transcripts and reports go in
   `.local/agent-runs/`, since they hold the machine's paths.
+- **Superpowers writes to `maintenance/docs/superpowers/`**, not its default `docs/superpowers/`:
+  brainstorming's specs go in `specs/YYYY-MM-DD-<topic>-design.md` and writing-plans' plans in
+  `plans/YYYY-MM-DD-<feature-name>.md`. The folder is gitignored, so they are never committed.
 
 ## Type-level tests — assert types, not "some error"
 
@@ -270,11 +278,11 @@ selection is **app-managed** (SGR mouse reporting + drag-to-copy) since native
 selection can't survive Ink's in-place repaints. Before changing anything about
 the log viewport, scrolling, the footer, the commands menu, the picker, clicks,
 selection, or how output reaches the screen, read
-[`docs/architecture/rendering.md`](docs/architecture/rendering.md) — it has the
+[`maintenance/docs/architecture/rendering.md`](maintenance/docs/architecture/rendering.md) — it has the
 module map, the layouts and hit-testing, the virtualization
 (`log-window.ts`/`scroll.ts`), the store subscription, and the
 mouse/selection/clipboard handling. Shutdown (the one path in
 `Session.shutdown`, the screen's part in `tui/shutdown.ts`, the exit line,
 releasing the mouse) is in
-[`docs/architecture/exiting.md`](docs/architecture/exiting.md). (Internal
+[`maintenance/docs/architecture/exiting.md`](maintenance/docs/architecture/exiting.md). (Internal
 contributor docs — not part of the site.)

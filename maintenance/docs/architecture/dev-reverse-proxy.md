@@ -1,7 +1,7 @@
 # The dev reverse proxy
 
 How the proxy carries requests to services, and why. This is a **contributor** document; the
-user-facing reference is [`../dev-reverse-proxy.md`](../dev-reverse-proxy.md).
+user-facing reference is [`docs/config/reverse-proxy.md`](../../../docs/config/reverse-proxy.md).
 
 **It is a development tool, not a production proxy.** It listens on loopback, trusts every client,
 does no auth, serves self-signed certificates, and sends each service to one local port with no

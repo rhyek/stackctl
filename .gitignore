@@ -8,7 +8,7 @@ dist/
 # A link to files this machine needs that git must never see, such as the agent recording's
 # API key. A symlink, so no trailing slash.
 /.local
-docs/superpowers/
+maintenance/docs/superpowers/
 .superpowers/
 
 # npm pack output
