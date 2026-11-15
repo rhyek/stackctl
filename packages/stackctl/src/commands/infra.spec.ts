@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import type { InfraRunRequest } from '../infra/provider.js';
-import type { InfraRunSummary } from '../infra/types.js';
-import { type InfraCommand, type InfraCommandManager, runInfraCommand } from './infra.js';
+import type { InfraRunRequest } from '../infra/provider';
+import type { InfraRunSummary } from '../infra/types';
+import { type InfraCommand, type InfraCommandManager, runInfraCommand } from './infra';
 
 /** A manager that records what it is asked to do; `stop` exits with `stopCode`, `start` with `ok`. */
 function recordingManager({ stopCode = 0, ok = true } = {}) {

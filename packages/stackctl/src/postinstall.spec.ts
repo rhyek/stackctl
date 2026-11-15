@@ -8,9 +8,9 @@ import {
   readInstalledRules,
   rulesInstallPath,
   writeAgentsBlock,
-} from './agent-rules.js';
-import { runPostinstall } from './postinstall.js';
-import { installSkill, readInstalledSkill, skillInstallPath } from './skill.js';
+} from './agent-rules';
+import { runPostinstall } from './postinstall';
+import { installSkill, readInstalledSkill, skillInstallPath } from './skill';
 
 // A fake consumer project (`root`) with stackctl installed under its node_modules as a symlink
 // to a fake package dir — the layout npm and pnpm both produce, once realpath'd.

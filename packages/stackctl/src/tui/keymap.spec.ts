@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import type { SessionInfraState } from '../session/session.js';
-import type { ServiceState } from '../session/supervisor.js';
+import type { SessionInfraState } from '../session/session';
+import type { ServiceState } from '../session/supervisor';
 import {
   type Action,
   type Entry,
@@ -12,7 +12,7 @@ import {
   KEY_TABLE,
   hintsFor,
   resolveKey,
-} from './keymap.js';
+} from './keymap';
 
 const APP_STATES: ServiceState[] = [
   'pending',

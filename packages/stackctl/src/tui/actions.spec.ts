@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
-import type { Session } from '../session/session.js';
-import { type ActionDeps, guard, logError, runEffects } from './actions.js';
+import type { Session } from '../session/session';
+import { type ActionDeps, guard, logError, runEffects } from './actions';
 
 /** A session double: what the effects call, recorded in order. */
 function fakeSession(over: Partial<Record<string, unknown>> = {}) {

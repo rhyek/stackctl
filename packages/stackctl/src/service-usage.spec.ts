@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { processStartTime } from './process-info.js';
+import { processStartTime } from './process-info';
 import {
   formatMemory,
   libprocReader,
@@ -17,7 +17,7 @@ import {
   type Libproc,
   type ServiceUsage,
   type UsageReader,
-} from './service-usage.js';
+} from './service-usage';
 
 const MiB = 2 ** 20;
 

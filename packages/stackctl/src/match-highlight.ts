@@ -1,10 +1,10 @@
 import chalk from 'chalk';
 import sliceAnsi from 'slice-ansi';
 import stringWidth from 'string-width';
-import { MATCH_COLOR, ON_MATCH_COLOR } from './colors.js';
-import { stripAnsi } from './format.js';
-import type { Span } from './selection.js';
-import { graphemes, normalize } from './tui/text-cells.js';
+import { MATCH_COLOR, ON_MATCH_COLOR } from './colors';
+import { stripAnsi } from './format';
+import type { Span } from './selection';
+import { graphemes, normalize } from './tui/text-cells';
 
 /** A rendered row, as far as finding the filter's matches in it goes. */
 type MatchRow = { text: string; contentStart: number; lineIndex: number; label?: Span };

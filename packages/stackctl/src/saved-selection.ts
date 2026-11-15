@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { getLoadedConfig, getRegisteredPackages } from './config.js';
-import { profileStateDir } from './log-files.js';
+import { getLoadedConfig, getRegisteredPackages } from './config';
+import { profileStateDir } from './log-files';
 
 // The selection the picker saves, and where a session starts from it: the picker, or the saved
 // services straight away (`--last-answers`).

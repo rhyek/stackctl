@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { currentProfile } from '../env-base.js';
-import { connectControlClient } from '../find-session.js';
-import { resolveLogFile } from '../log-files.js';
-import { readRunning } from '../running.js';
-import { currentSessionId, newestSessionId, sessionLogPath } from '../session-files.js';
+import { currentProfile } from '../env-base';
+import { connectControlClient } from '../find-session';
+import { resolveLogFile } from '../log-files';
+import { readRunning } from '../running';
+import { currentSessionId, newestSessionId, sessionLogPath } from '../session-files';
 
 /**
  * `stackctl logs`: print the current session's logfile, follow it, or print its path — the

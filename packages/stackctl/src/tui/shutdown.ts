@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import { useEffect } from 'react';
 import { useApp } from 'ink';
-import { MOUSE_DISABLE } from '../mouse.js';
-import type { Session } from '../session/session.js';
+import { MOUSE_DISABLE } from '../mouse';
+import type { Session } from '../session/session';
 
 /**
  * The screen's part of the one shutdown path (`maintenance/docs/architecture/exiting.md`;

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { checkConfigTypes } from './config-typecheck.js';
+import { checkConfigTypes } from './config-typecheck';
 
 // The repo's own typescript (7), linked into a workspace as the workspace's.
 const TYPESCRIPT = path.resolve(import.meta.dirname, '../../../node_modules/typescript');

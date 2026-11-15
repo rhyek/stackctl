@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pino, { type Logger } from 'pino';
-import { getStateDir } from './log-files.js';
-import { logging } from './log-formatter.js';
+import { getStateDir } from './log-files';
+import { logging } from './log-formatter';
 
 /** stackctl's two internal log channels, both children of one stackctl-wide pino logger. */
 export interface InternalLoggers {

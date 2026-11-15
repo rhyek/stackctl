@@ -5,12 +5,12 @@ import chalk from 'chalk';
 import { Box, type DOMElement, Text, measureElement, render } from 'ink';
 import stringWidth from 'string-width';
 import { describe, expect, test } from 'vitest';
-import { LINK_COLOR, SELECTED_COLOR } from '../colors.js';
-import type { SessionSnapshot } from '../session/session.js';
-import { CommandsMenu } from './CommandsMenu.js';
-import { Footer } from './Footer.js';
-import type { Target } from './hit-test.js';
-import { hitTest } from './hit-test.js';
+import { LINK_COLOR, SELECTED_COLOR } from '../colors';
+import type { SessionSnapshot } from '../session/session';
+import { CommandsMenu } from './CommandsMenu';
+import { Footer } from './Footer';
+import type { Target } from './hit-test';
+import { hitTest } from './hit-test';
 import {
   type FooterLayout,
   type FooterRow,
@@ -20,8 +20,8 @@ import {
   LINK_LABEL_MAX,
   hasBlinkingDot,
   menuLayout,
-} from './layout.js';
-import { type UiContext, type UiState, initialUiState, step } from './ui-state.js';
+} from './layout';
+import { type UiContext, type UiState, initialUiState, step } from './ui-state';
 
 const h = React.createElement;
 const MB = 2 ** 20;

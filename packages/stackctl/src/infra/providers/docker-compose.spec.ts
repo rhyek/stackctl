@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import type { Config } from '../../config.js';
-import type { Envs } from '../../env.js';
-import type { Exec, ExecResult, Stream } from '../../spawn.js';
-import { InfraError, type InfraEvent, type ResolvedDockerComposeInfra } from '../types.js';
+import type { Config } from '../../config';
+import type { Envs } from '../../env';
+import type { Exec, ExecResult, Stream } from '../../spawn';
+import { InfraError, type InfraEvent, type ResolvedDockerComposeInfra } from '../types';
 import {
   DockerComposeProvider,
   classify,
@@ -11,7 +11,7 @@ import {
   stateOf,
   type ComposeConfig,
   type PsRow,
-} from './docker-compose.js';
+} from './docker-compose';
 
 const WS = '/repos/example';
 const ok = (stdout = ''): ExecResult => ({ exitCode: 0, stdout, stderr: '' });

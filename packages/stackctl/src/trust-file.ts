@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { getLoadedConfig } from './config.js';
-import { currentProfile } from './env-base.js';
-import { profileStateDir } from './log-files.js';
+import { getLoadedConfig } from './config';
+import { currentProfile } from './env-base';
+import { profileStateDir } from './log-files';
 
 // Where a profile's trust file is, apart from `dev-tls.ts`, which makes it: what a service's
 // environment needs, without the TLS and proxy modules a command that only resolves one would load.

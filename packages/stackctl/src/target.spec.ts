@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import type { AnyServiceConfig } from './config.js';
-import { TargetNotFoundError, resolveTarget } from './target.js';
+import type { AnyServiceConfig } from './config';
+import { TargetNotFoundError, resolveTarget } from './target';
 
 let tmp: string;
 let root: string;

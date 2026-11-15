@@ -1,6 +1,6 @@
 import { format } from 'node:util';
 import { expect, test, vi } from 'vitest';
-import { exitOnFatalError } from './errors.js';
+import { exitOnFatalError } from './errors';
 
 /** Thrown by the `process.exit` mock, so the handler ends there as it would for real. */
 const EXITED = new Error('process.exit called');

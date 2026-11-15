@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { type AnyServiceConfig, defineConfig } from '../config.js';
-import { buildSessionPlan, waitsFor } from './plan.js';
+import { type AnyServiceConfig, defineConfig } from '../config';
+import { buildSessionPlan, waitsFor } from './plan';
 
 let root: string;
 

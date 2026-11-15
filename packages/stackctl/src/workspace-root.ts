@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { findPassthrough } from './infra/argv.js';
+import { findPassthrough } from './infra/argv';
 
 // Where the workspace is: wherever `stackctl.config.ts` is. Found from the working directory by
 // walking up to the nearest one, or named exactly with `--workspace-dir` (no walk-up).

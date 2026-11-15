@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, test, expect, afterEach } from 'vitest';
-import type { Running } from '../spawn.js';
+import type { Running } from '../spawn';
 import {
   packageDir,
   buildDir,
@@ -17,13 +17,13 @@ import {
   script,
   lastLine,
   setUpCliWorkspace,
-} from './harness.js';
+} from './harness';
 
 /** `startStack()`, the SDK's way to start a stack, and `stackctl wait`. See `harness.ts`. */
 setUpCliWorkspace('start-stack');
 
 describe('startStack()', () => {
-  type StackModule = typeof import('../stack.js');
+  type StackModule = typeof import('../stack');
   /** The compiled module, so the CLI it runs is the one compiled beside it. */
   const load = () => import(pathToFileURL(path.join(buildDir, 'stack.js')).href) as Promise<StackModule>; // oxfmt-ignore
   const record = () => path.join(ws, 'node_modules', '.stackctl', 'profiles', 'development', 'running.json'); // oxfmt-ignore

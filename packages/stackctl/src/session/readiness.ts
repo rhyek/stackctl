@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
-import type { ResolvedHealthcheck } from '../config.js';
-import { callEach } from '../util.js';
+import type { ResolvedHealthcheck } from '../config';
+import { callEach } from '../util';
 
 /** Time and timers, injectable so tests can drive them. */
 export interface Clock {

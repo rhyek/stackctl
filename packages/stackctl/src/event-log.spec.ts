@@ -11,8 +11,8 @@ import {
   localTime,
   maskSecrets,
   takeHandedBy,
-} from './event-log.js';
-import { sessionEventsPath } from './session-files.js';
+} from './event-log';
+import { sessionEventsPath } from './session-files';
 
 let root: string;
 beforeEach(() => {

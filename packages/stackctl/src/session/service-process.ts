@@ -2,12 +2,12 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import type { Readable } from 'node:stream';
-import { NESTED_ENV_VAR } from '../env-base.js';
-import { type ChildRecord, updateRunning } from '../running.js';
-import { exitCodeOf } from '../scripts.js';
-import { SHUTDOWN_GRACE_MS } from '../shutdown-timing.js';
-import { stripTitleSequences } from '../terminal-title.js';
-import { callEach } from '../util.js';
+import { NESTED_ENV_VAR } from '../env-base';
+import { type ChildRecord, updateRunning } from '../running';
+import { exitCodeOf } from '../scripts';
+import { SHUTDOWN_GRACE_MS } from '../shutdown-timing';
+import { stripTitleSequences } from '../terminal-title';
+import { callEach } from '../util';
 
 /** Where one OS process is in its life. It only ever moves forward. */
 export type ProcessState = 'idle' | 'starting' | 'running' | 'stopping' | 'exited';

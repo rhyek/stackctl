@@ -1,15 +1,15 @@
 import { spawn } from 'node:child_process';
-import { RESOLVE_ENV_FD, assertOutsideCli, isNested, rejectUnknownOptions } from '../env-base.js';
-import type { OneOffCommandEntry } from '../event-log.js';
-import type { OneOffResolution } from './resolve.js';
-import { resolverArgs } from './resolver-args.js';
-import type { OneOffResult } from './run.js';
+import { RESOLVE_ENV_FD, assertOutsideCli, isNested, rejectUnknownOptions } from '../env-base';
+import type { OneOffCommandEntry } from '../event-log';
+import type { OneOffResolution } from './resolve';
+import { resolverArgs } from './resolver-args';
+import type { OneOffResult } from './run';
 
 // The SDK's `exec()` and `run()`: what `stackctl exec` and `stackctl run` do, from a script. The
 // command is resolved by stackctl's CLI in a child process — so this process never imports the
 // config — and then run here, by the same runner the CLI uses.
 
-export type { OneOffResult } from './run.js';
+export type { OneOffResult } from './run';
 
 /** The options of {@link OneOffOptions}, checked at runtime since a JavaScript caller bypasses the types. */
 const ONE_OFF_OPTIONS = ['profile', 'target', 'workspaceDir', 'stdio'];
@@ -114,11 +114,7 @@ async function runResolved(
   }
   // Loaded only now: importing `stackctl` (a config does) mustn't load what runs a command.
   const [{ runOneOff }, { cliEventLog, maskSecrets, sdkBy }, { startedByAgent }] =
-    await Promise.all([
-      import('./run.js'),
-      import('../event-log.js'),
-      import('../agent-detection.js'),
-    ]);
+    await Promise.all([import('./run'), import('../event-log'), import('../agent-detection')]);
   // Inside a command stackctl runs, that command is the one recorded.
   const entry = isNested()
     ? { end: () => {} }

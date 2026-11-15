@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { type Target, hitTest, isClick } from './hit-test.js';
+import { type Target, hitTest, isClick } from './hit-test';
 
 // `  r restart   s stop` on row 10: `r restart` covers columns 3–11, `s stop` 15–20.
 const restart: Target = {

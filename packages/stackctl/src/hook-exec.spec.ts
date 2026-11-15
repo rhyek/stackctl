@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { hookExec } from './hook-exec.js';
-import { type Exec, type ExecOptions, execLines } from './spawn.js';
+import { hookExec } from './hook-exec';
+import { type Exec, type ExecOptions, execLines } from './spawn';
 
 /** A `hookExec` over a stand-in runner that records each call and answers with `exitCode`. */
 function recorded(exitCode = 0) {

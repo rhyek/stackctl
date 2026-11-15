@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { countWrappedRows, expandTabs, measureText, wrapRows } from './wrap-rows.js';
+import { countWrappedRows, expandTabs, measureText, wrapRows } from './wrap-rows';
 
 /** A small seeded generator, so a failure names a case that can be replayed. */
 function random(seed: number) {

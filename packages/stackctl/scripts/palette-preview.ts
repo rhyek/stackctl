@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { registerHooks } from 'node:module';
 import {
   createElement as h,
@@ -38,31 +39,39 @@ import {
   type DOMElement,
   type Key,
 } from 'ink';
-import {
-  STACKCTL_LABEL_COLOR,
-  LOG_LEVEL_COLORS,
-  LOG_PROPERTY_KEY_COLOR,
-  MUTED_COLOR,
-  PACKAGE_PALETTE,
-  WARN_COLOR,
-  type Color,
-} from '../src/colors.ts';
-import { MOUSE_DISABLE, MOUSE_ENABLE, createMouseDecoder, type MouseReport } from '../src/mouse.ts';
+import type { Color } from '../src/colors.ts';
+import type { MouseReport } from '../src/mouse.ts';
 import type { SessionSnapshot } from '../src/session/session.ts';
 import type { HintLike } from '../src/tui/layout.ts';
 import type { PickerInput, PickerService } from '../src/tui/picker-state.ts';
 import type { Segment } from '../src/tui/text-cells.ts';
 import type { UiState } from '../src/tui/ui-state.ts';
 
-/** This package's `src/`: a relative `./x.js` imported from inside it is the source `./x.ts`. */
+/** This package's `src/`: a relative `./x` imported from inside it is the source `./x.ts(x)`. */
 const SOURCES = new URL('../src/', import.meta.url).href;
 registerHooks({
-  resolve: (specifier, context, nextResolve) =>
-    specifier.startsWith('.') && specifier.endsWith('.js') && context.parentURL?.startsWith(SOURCES)
-      ? nextResolve(`${specifier.slice(0, -'.js'.length)}.ts`, context)
-      : nextResolve(specifier, context),
+  resolve: (specifier, context, nextResolve) => {
+    if (specifier.startsWith('.') && context.parentURL?.startsWith(SOURCES)) {
+      const file = ['.ts', '.tsx']
+        .map((ext) => specifier + ext)
+        .find((candidate) => fs.existsSync(new URL(candidate, context.parentURL)));
+      if (file) {
+        return nextResolve(file, context);
+      }
+    }
+    return nextResolve(specifier, context);
+  },
 });
 // Imported only once the hook is in place.
+const {
+  STACKCTL_LABEL_COLOR,
+  LOG_LEVEL_COLORS,
+  LOG_PROPERTY_KEY_COLOR,
+  MUTED_COLOR,
+  PACKAGE_PALETTE,
+  WARN_COLOR,
+} = await import('../src/colors.ts');
+const { MOUSE_DISABLE, MOUSE_ENABLE, createMouseDecoder } = await import('../src/mouse.ts');
 const { footerLayout, layoutHints, menuLayout } = await import('../src/tui/layout.ts');
 const { pickerLayout } = await import('../src/tui/picker-layout.ts');
 const { createPickerState } = await import('../src/tui/picker-state.ts');

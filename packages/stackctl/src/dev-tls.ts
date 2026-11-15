@@ -2,13 +2,13 @@ import { X509Certificate } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import tls from 'node:tls';
-import { type Config, proxyKeyAndCert } from './config.js';
-import { currentProfile } from './env-base.js';
-import { stateDirOf } from './log-files.js';
-import { routeHosts as hostsOf } from './route-hosts.js';
-import { trustFilePath } from './trust-file.js';
+import { type Config, proxyKeyAndCert } from './config';
+import { currentProfile } from './env-base';
+import { stateDirOf } from './log-files';
+import { routeHosts as hostsOf } from './route-hosts';
+import { trustFilePath } from './trust-file';
 
-export { sessionTrustFile, trustFilePath } from './trust-file.js';
+export { sessionTrustFile, trustFilePath } from './trust-file';
 
 // The dev reverse proxy's TLS: the key and certificate a config names, or a self-signed
 // certificate for each hostname the proxy serves, kept under `node_modules/.stackctl/tls/`, as

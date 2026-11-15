@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { type GitBranchWatch, readGitBranch, followGitBranch } from './git-branch.js';
+import { type GitBranchWatch, readGitBranch, followGitBranch } from './git-branch';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {

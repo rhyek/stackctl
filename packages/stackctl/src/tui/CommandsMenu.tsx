@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box } from 'ink';
-import { SegmentLine } from './KeysRow.js';
-import type { MenuLayout } from './layout.js';
+import { SegmentLine } from './KeysRow';
+import type { MenuLayout } from './layout';
 
 /**
  * The floating commands menu, as `menuLayout` laid it out. Render it as the `Footer`'s child:

@@ -3,7 +3,7 @@
 //
 //   node maintenance/scripts/check-source-maps.ts
 //
-// TypeScript writes each map's sources relative to the map, so `dist/tui/layout.js.map` names
+// The build writes each map's sources relative to the map, so `dist/tui/layout.js.map` names
 // `../../src/tui/layout.ts`. That holds only while the build writes into `dist/`, beside `src/`:
 // compiled anywhere else, the relative path climbs out of the package and through the build
 // machine's own directories, and the published maps carry them. The release runs this before it

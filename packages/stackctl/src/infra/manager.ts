@@ -1,15 +1,15 @@
 import path from 'node:path';
-import { getConfigTokens, getWorkspaceDir, type Config } from '../config.js';
-import type { ControlClient } from '../control-client.js';
+import { getConfigTokens, getWorkspaceDir, type Config } from '../config';
+import type { ControlClient } from '../control-client';
 import {
   baseEnvs,
   envCandidatePaths,
   EnvFileSnapshot,
   envKeysFile,
   workspaceEnvLayer,
-} from '../env.js';
-import { connectSessionControl } from '../find-session.js';
-import { findConfigPath } from '../load-config.js';
+} from '../env';
+import { connectSessionControl } from '../find-session';
+import { findConfigPath } from '../load-config';
 import {
   execLines,
   spawnInherit,
@@ -17,15 +17,15 @@ import {
   type Exec,
   type SpawnInherit,
   type Stream,
-} from '../spawn.js';
-import type { InfraProvider, InfraRunRequest, InfraWatch, ProviderRuntime } from './provider.js';
-import { DockerComposeProvider } from './providers/docker-compose.js';
+} from '../spawn';
+import type { InfraProvider, InfraRunRequest, InfraWatch, ProviderRuntime } from './provider';
+import { DockerComposeProvider } from './providers/docker-compose';
 import {
   InfraError,
   unknownServicesError,
   type InfraRunSummary,
   type InfraServiceState,
-} from './types.js';
+} from './types';
 
 /** The command runners a manager's providers use; a session passes none and gets the real ones. */
 export interface InfraManagerDeps {

@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
-import { HANDOFF_FORCE_KILL_MS } from '../shutdown-timing.js';
-import { type Running, runCommand } from '../spawn.js';
-import { resetProfile, runReset, runStop, stopSession, stoppedLine } from './stop.js';
+import { buildForTests } from '../cli-spec/build';
+import { HANDOFF_FORCE_KILL_MS } from '../shutdown-timing';
+import { type Running, runCommand } from '../spawn';
+import { resetProfile, runReset, runStop, stopSession, stoppedLine } from './stop';
 
 /**
  * Starts `command` as these specs run one: this process's environment under `env`, and its output
@@ -90,29 +91,7 @@ if (behavior === 'silent' || behavior === 'deaf') {
 const script = (js: string) => `node --input-type=module -e "${js}"`;
 
 beforeAll(async () => {
-  const tsPackage = fileURLToPath(import.meta.resolve('typescript/package.json'));
-  const tsc = path.join(path.dirname(tsPackage), 'bin', 'tsc');
-  fs.rmSync(buildDir, { recursive: true, force: true });
-  const build = await start(
-    'node',
-    [
-      tsc,
-      '-p',
-      path.join(packageDir, 'tsconfig.build.json'),
-      '--outDir',
-      buildDir,
-      // A build the tests only run: no source maps, which would name sources outside the
-      // build's folder, and no declarations.
-      '--sourceMap',
-      'false',
-      '--declaration',
-      'false',
-    ],
-    { cwd: packageDir },
-  ).done;
-  if (build.exitCode !== 0) {
-    throw new Error(`the build failed:\n${build.stdout}${build.stderr}`);
-  }
+  await buildForTests(buildDir);
 
   ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-stop-')));
   fs.writeFileSync(path.join(ws, 'package.json'), JSON.stringify({ name: 'stoproot', type: 'module' })); // oxfmt-ignore
@@ -684,7 +663,7 @@ describe('a takeover with --kill-others', () => {
     const record = recordOf('development');
     fs.writeFileSync(record, JSON.stringify({ port: await freePort(), pid, sessionId: 'gone', startedAt: Date.now() - 60_000 })); // oxfmt-ignore
 
-    type StackModule = typeof import('../stack.js');
+    type StackModule = typeof import('../stack');
     const { startStack, stackEnvironment } = (await import(
       pathToFileURL(path.join(buildDir, 'stack.js')).href
     )) as StackModule;

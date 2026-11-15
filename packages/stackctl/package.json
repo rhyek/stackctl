@@ -53,7 +53,7 @@
     "postinstall": "node ./postinstall.js",
     "focus": "node scripts/focus-preview.ts",
     "palette": "node scripts/palette-preview.ts",
-    "build": "rm -rf dist && tsc -p ./tsconfig.build.json && chmod +x dist/cli.js"
+    "build": "tsdown"
   },
   "exports": {
     ".": {
@@ -83,5 +83,8 @@
   },
   "peerDependencies": {
     "typescript": ">=5.4.0"
+  },
+  "devDependencies": {
+    "tsdown": "0.23.7"
   }
 }

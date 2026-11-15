@@ -1,16 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, test, expect, afterEach } from 'vitest';
-import {
-  cli,
-  start,
-  type Owned,
-  own,
-  killOwned,
-  ws,
-  stackctl,
-  setUpCliWorkspace,
-} from './harness.js';
+import { cli, start, type Owned, own, killOwned, ws, stackctl, setUpCliWorkspace } from './harness';
 
 /** `start --detach`: a session that outlives the command that started it. See `harness.ts`. */
 setUpCliWorkspace('start-detach');

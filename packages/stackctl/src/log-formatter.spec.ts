@@ -1,13 +1,13 @@
 import chalk from 'chalk';
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
-import { stripAnsi } from './format.js';
+import { stripAnsi } from './format';
 import {
   createFormatter,
   defaultFormatter,
   pinoLevels,
   winstonLevels,
   logging,
-} from './log-formatter.js';
+} from './log-formatter';
 
 // Semantic tests assert the text; strip color so they're independent of the env's chalk.level.
 const fmt = (config?: Parameters<typeof createFormatter>[0]) => {

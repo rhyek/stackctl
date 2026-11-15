@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
-import { createInternalLogger, formatInternalRecord } from './internal-logger.js';
+import { createInternalLogger, formatInternalRecord } from './internal-logger';
 
 // Deterministic, ANSI-free assertions on the rendered text.
 let prevLevel: typeof chalk.level;

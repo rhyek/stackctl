@@ -147,4 +147,4 @@ export const PACKAGE_PALETTE: readonly Color[] = [
 // ---------------------------------------------------------------------------
 
 // In a module of their own, which loads no colord: a config file loads them through `logging`.
-export { LOG_LEVEL_COLORS, LOG_PROPERTY_KEY_COLOR } from './log-colors.js';
+export { LOG_LEVEL_COLORS, LOG_PROPERTY_KEY_COLOR } from './log-colors';

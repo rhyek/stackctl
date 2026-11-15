@@ -3,15 +3,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ControlClient, SessionEvent, SessionServiceStatus } from './control-client.js';
+import type { ControlClient, SessionEvent, SessionServiceStatus } from './control-client';
 import {
   DETACHED_SESSION_VAR,
   type ProfileSource,
   assertOutsideCli,
   rejectUnknownOptions,
-} from './env-base.js';
-import type { InfraStatus } from './infra/control.js';
-import type { ServiceName } from './register.js';
+} from './env-base';
+import type { InfraStatus } from './infra/control';
+import type { ServiceName } from './register';
 
 // `startStack()`: a headless session forked as this process's child, for a test suite's setup. It
 // runs the CLI rather than stackctl in-process, so the config loads in a process of its own and
@@ -243,7 +243,7 @@ export async function launchSession<P extends string = ServiceName>(opts: {
   /** Ends a session that has said it is up; it may have exited by then. */
   end: (session: ForkedSession & { started: StackMessage }) => Promise<void>;
 }): Promise<LaunchedSession<P>> {
-  const { createControlClient } = await import('./control-client.js');
+  const { createControlClient } = await import('./control-client');
   const cli = fileURLToPath(new URL('./cli.js', import.meta.url));
   const timeoutMs = opts.waitTimeout * 1000;
   const deadline = Date.now() + timeoutMs;
@@ -390,7 +390,7 @@ async function endChild({
   // Kept running until the session has exited, which `startStack` may have stopped holding it for.
   child.ref();
   child.channel?.ref();
-  const { createControlClient } = await import('./control-client.js');
+  const { createControlClient } = await import('./control-client');
   // A session that exits before it acks has quit all the same.
   await createControlClient(started.port).command.quit();
   await stopChild(child, exited, gone);

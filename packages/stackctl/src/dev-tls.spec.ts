@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { defineConfig } from './config.js';
-import { configuredTls, proxyTlsFor, selfSignedTls, tlsDir, trustFilePath } from './dev-tls.js';
-import { packageEnvLayer } from './env.js';
+import { defineConfig } from './config';
+import { configuredTls, proxyTlsFor, selfSignedTls, tlsDir, trustFilePath } from './dev-tls';
+import { packageEnvLayer } from './env';
 
 const dirs: string[] = [];
 afterEach(() => {

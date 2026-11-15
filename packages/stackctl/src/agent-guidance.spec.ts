@@ -21,14 +21,9 @@ import {
   linkedSkill,
   offerGuidance,
   refreshGuidance,
-} from './agent-guidance.js';
-import {
-  installRules,
-  readAgentsBlock,
-  readInstalledRules,
-  rulesInstallPath,
-} from './agent-rules.js';
-import { installSkill, readInstalledSkill, skillInstallPath } from './skill.js';
+} from './agent-guidance';
+import { installRules, readAgentsBlock, readInstalledRules, rulesInstallPath } from './agent-rules';
+import { installSkill, readInstalledSkill, skillInstallPath } from './skill';
 
 let cwd: string;
 beforeEach(() => {

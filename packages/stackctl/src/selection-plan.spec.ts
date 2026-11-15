@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'vitest';
-import { defineConfig, getRegisteredPackages } from './config.js';
+import { defineConfig, getRegisteredPackages } from './config';
 import {
   dependentScores,
   dependentsOf,
   depsOf,
   displayOrder,
   planSelection,
-} from './selection-plan.js';
+} from './selection-plan';
 
 type Services = Record<string, Record<string, unknown>>;
 

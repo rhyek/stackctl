@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { createMouseDecoder, parseMouseEvents } from './mouse.js';
+import { createMouseDecoder, parseMouseEvents } from './mouse';
 
 const ESC = String.fromCharCode(27);
 /** Build an SGR mouse report: button byte `cb` at 1-based (col,row); `release` uses the `m` terminator. */

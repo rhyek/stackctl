@@ -8,10 +8,10 @@ import React, {
   useSyncExternalStore,
 } from 'react';
 import { Box, Text } from 'ink';
-import { copyToClipboard } from '../clipboard.js';
-import { computeWindow, convertOffset, windowRows } from '../log-window.js';
-import { paintMatchRows } from '../match-highlight.js';
-import type { MouseReport } from '../mouse.js';
+import { copyToClipboard } from '../clipboard';
+import { computeWindow, convertOffset, windowRows } from '../log-window';
+import { paintMatchRows } from '../match-highlight';
+import type { MouseReport } from '../mouse';
 import {
   FOLLOWING,
   isFollowing,
@@ -20,7 +20,7 @@ import {
   scrollToBottom,
   scrollToTop,
   type Scroll,
-} from '../scroll.js';
+} from '../scroll';
 import {
   classifyLine,
   highlightParts,
@@ -33,12 +33,12 @@ import {
   type RowMeta,
   type Selection,
   type Span,
-} from '../selection.js';
-import type { LogSource } from '../session/log-store.js';
-import { spansOneDay, type TsMode } from '../timestamp-mode.js';
-import { DEFAULT_TOAST_MS } from '../toasts.js';
-import { trackClick, wordSelectionAt, wordSpanAt, type ClickState } from '../word-select.js';
-import type { Toasts } from './ToastStack.js';
+} from '../selection';
+import type { LogSource } from '../session/log-store';
+import { spansOneDay, type TsMode } from '../timestamp-mode';
+import { DEFAULT_TOAST_MS } from '../toasts';
+import { trackClick, wordSelectionAt, wordSpanAt, type ClickState } from '../word-select';
+import type { Toasts } from './ToastStack';
 
 export type LogViewport = {
   /**

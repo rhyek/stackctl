@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, useInput, useStdin, useStdout, useWindowSize } from 'ink';
-import { BottomChrome } from '../components/BottomChrome.js';
-import { useToasts } from '../components/ToastStack.js';
-import { debugLog } from '../internal-logger.js';
-import { SegmentLine } from './KeysRow.js';
-import { pickerLayout } from './picker-layout.js';
+import { BottomChrome } from '../components/BottomChrome';
+import { useToasts } from '../components/ToastStack';
+import { debugLog } from '../internal-logger';
+import { SegmentLine } from './KeysRow';
+import { pickerLayout } from './picker-layout';
 import {
   type PickerEffect,
   type PickerEvent,
@@ -12,8 +12,8 @@ import {
   type SelectionRuns,
   createPickerState,
   pickerStep,
-} from './picker-state.js';
-import { type ClickTarget, elementRect, useMouse } from './use-mouse.js';
+} from './picker-state';
+import { type ClickTarget, elementRect, useMouse } from './use-mouse';
 
 /** One cell of slack on each side of a toast button, as on the run screen. */
 const TOAST_SLACK = 1;

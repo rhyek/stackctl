@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { profileStateDir } from './log-files.js';
-import { isProcessAlive } from './process-info.js';
-import { readRunning } from './running.js';
+import { profileStateDir } from './log-files';
+import { isProcessAlive } from './process-info';
+import { readRunning } from './running';
 
 // Each session's own folder, `node_modules/.stackctl/profiles/<profile>/sessions/<id>/`: its log
 // (`logs.txt`), its event log (`events.jsonl`) and the logs of the one-off commands run while it

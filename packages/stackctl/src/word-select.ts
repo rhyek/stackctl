@@ -9,8 +9,8 @@
  */
 import sliceAnsi from 'slice-ansi';
 import stringWidth from 'string-width';
-import { stripAnsi } from './format.js';
-import type { Point, Span } from './selection.js';
+import { stripAnsi } from './format';
+import type { Point, Span } from './selection';
 
 /** Characters that make up a word on their own: letters of any script, combining marks, digits, `_`. */
 const WORD = /[\p{L}\p{M}\p{N}_]/u;

@@ -3,8 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { INJECTED_ENV_VAR } from '../env-base.js';
-import { runCommand } from '../spawn.js';
+import { buildForTests } from '../cli-spec/build';
+import { INJECTED_ENV_VAR } from '../env-base';
+import { runCommand } from '../spawn';
 
 /**
  * The SDK's `exec()` and `run()`, against a workspace on disk. They resolve by running the CLI
@@ -15,7 +16,7 @@ const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const buildDir = path.join(packageDir, 'node_modules', '.cache', 'sdk-spec');
 const cli = path.join(buildDir, 'cli.js');
 
-type IndexModule = typeof import('../index.js');
+type IndexModule = typeof import('../index');
 let sdk: IndexModule;
 let ws: string;
 let apiDir: string;
@@ -61,30 +62,7 @@ function oneOffEvents(): OneOffEvent[] {
 }
 
 beforeAll(async () => {
-  // TypeScript 7 exports no `bin/tsc`, so it's found next to the package.json it does export.
-  const tsPackage = fileURLToPath(import.meta.resolve('typescript/package.json'));
-  const tsc = path.join(path.dirname(tsPackage), 'bin', 'tsc');
-  fs.rmSync(buildDir, { recursive: true, force: true });
-  const build = await runCommand(
-    'node',
-    [
-      tsc,
-      '-p',
-      path.join(packageDir, 'tsconfig.build.json'),
-      '--outDir',
-      buildDir,
-      // A build the tests only run: no source maps, which would name sources outside the
-      // build's folder, and no declarations.
-      '--sourceMap',
-      'false',
-      '--declaration',
-      'false',
-    ],
-    { cwd: packageDir },
-  ).done;
-  if (build.exitCode !== 0) {
-    throw new Error(`the build failed:\n${build.stdout}${build.stderr}`);
-  }
+  await buildForTests(buildDir);
   sdk = (await import(pathToFileURL(path.join(buildDir, 'index.js')).href)) as IndexModule;
 
   ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-sdk-')));

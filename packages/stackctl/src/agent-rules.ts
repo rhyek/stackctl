@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { contentHash, isOlder } from './skill.js';
+import { contentHash, isOlder } from './skill';
 
 /**
  * The always-on text: a few lines that say what stackctl runs in this repo and where its docs

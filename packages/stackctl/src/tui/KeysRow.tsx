@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { FooterRow, Segment } from './layout.js';
+import type { FooterRow, Segment } from './layout';
 
 /** `text` as an OSC 8 terminal hyperlink to `url`, which the terminal's own gesture opens. */
 export function osc8Link(url: string, text: string): string {

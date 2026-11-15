@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
-import { startedByAgent } from '../agent-detection.js';
-import { STACKCTL_LABEL_COLOR } from '../colors.js';
+import { startedByAgent } from '../agent-detection';
+import { STACKCTL_LABEL_COLOR } from '../colors';
 import {
   type UrlEntry,
   type UrlLine,
@@ -11,16 +11,16 @@ import {
   getRegisteredPackages,
   infraServicesOf,
   normalizeUrlEntry,
-} from '../config.js';
+} from '../config';
 import {
   type ControlManager,
   type ServiceAction,
   type ServiceRunOutcome,
   startControlServer,
-} from '../control-server.js';
-import type { DevReverseProxyManager, DevReverseProxyServer } from '../dev-reverse-proxy.js';
-import { currentProfile, profileLine } from '../env-base.js';
-import { errorMessage } from '../errors.js';
+} from '../control-server';
+import type { DevReverseProxyManager, DevReverseProxyServer } from '../dev-reverse-proxy';
+import { currentProfile, profileLine } from '../env-base';
+import { errorMessage } from '../errors';
 import {
   EventLog,
   type EventBy,
@@ -29,34 +29,34 @@ import {
   type ServiceCommandEntry,
   type SessionCommandEntry,
   maskSecrets,
-} from '../event-log.js';
-import { logTimestamp } from '../format.js';
+} from '../event-log';
+import { logTimestamp } from '../format';
 import {
   type InfraAction,
   InfraControl,
   type InfraRunOutcome,
   type InfraStatus,
-} from '../infra/control.js';
-import { InfraFailedError, runSessionInfra } from '../infra/session.js';
-import type { InfraEvent, InfraRunSummary } from '../infra/types.js';
-import type { InternalLoggers } from '../internal-logger.js';
-import { isProcessAlive } from '../process-info.js';
-import { pickRandomPort, readRunning, sessionId } from '../running.js';
-import { definesDevScript } from '../scripts.js';
-import { planSelection } from '../selection-plan.js';
-import { UsageSampler, type UsageReader, createUsageReader } from '../service-usage.js';
-import { sessionEventsPath } from '../session-files.js';
-import { acquireSession } from '../session-takeover.js';
-import { SHUTDOWN_GRACE_MS, SHUTDOWN_TIMEOUT_MS } from '../shutdown-timing.js';
-import { installShutdownSignals } from '../signals.js';
-import { readOwnVersion } from '../skill.js';
-import type { StackMessage } from '../stack.js';
-import { bounded } from '../util.js';
-import { type GitBranchWatch, readGitBranch, followGitBranch } from './git-branch.js';
-import { LogStore } from './log-store.js';
-import { Readiness, probeHealthcheck } from './readiness.js';
-import type { ServiceProcessOptions } from './service-process.js';
-import { startSessionDevReverseProxy } from './start-proxy.js';
+} from '../infra/control';
+import { InfraFailedError, runSessionInfra } from '../infra/session';
+import type { InfraEvent, InfraRunSummary } from '../infra/types';
+import type { InternalLoggers } from '../internal-logger';
+import { isProcessAlive } from '../process-info';
+import { pickRandomPort, readRunning, sessionId } from '../running';
+import { definesDevScript } from '../scripts';
+import { planSelection } from '../selection-plan';
+import { UsageSampler, type UsageReader, createUsageReader } from '../service-usage';
+import { sessionEventsPath } from '../session-files';
+import { acquireSession } from '../session-takeover';
+import { SHUTDOWN_GRACE_MS, SHUTDOWN_TIMEOUT_MS } from '../shutdown-timing';
+import { installShutdownSignals } from '../signals';
+import { readOwnVersion } from '../skill';
+import type { StackMessage } from '../stack';
+import { bounded } from '../util';
+import { type GitBranchWatch, readGitBranch, followGitBranch } from './git-branch';
+import { LogStore } from './log-store';
+import { Readiness, probeHealthcheck } from './readiness';
+import type { ServiceProcessOptions } from './service-process';
+import { startSessionDevReverseProxy } from './start-proxy';
 import {
   type OneOff,
   type OneOffResult,
@@ -64,8 +64,8 @@ import {
   type SupervisedProcess,
   Supervisor,
   publicStatus,
-} from './supervisor.js';
-import type { SessionInfra, SessionPlan } from './types.js';
+} from './supervisor';
+import type { SessionInfra, SessionPlan } from './types';
 
 /**
  * What ended a session: a signal, `/command/quit`, the person quitting the TUI (`user`, the run

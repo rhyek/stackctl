@@ -1,14 +1,8 @@
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import chalk from 'chalk';
-import { STACKCTL_LABEL_COLOR, PACKAGE_PALETTE } from '../colors.js';
-import {
-  type AnyServiceConfig,
-  findService,
-  getDevScript,
-  getRegisteredPackages,
-} from '../config.js';
-import { type EnvWatch, type WatchTarget, watchEnvFiles } from '../env-watch.js';
+import { STACKCTL_LABEL_COLOR, PACKAGE_PALETTE } from '../colors';
+import { type AnyServiceConfig, findService, getDevScript, getRegisteredPackages } from '../config';
 import {
   type EnvFileOrder,
   EnvFileSnapshot,
@@ -17,22 +11,23 @@ import {
   envFileOrder,
   envKeysFile,
   packageEnvLayer,
-} from '../env.js';
-import { commandLine, logTimestamp } from '../format.js';
+} from '../env';
+import { type EnvWatch, type WatchTarget, watchEnvFiles } from '../env-watch';
+import { commandLine, logTimestamp } from '../format';
 import {
   type InternalLoggers,
   createInternalLogger,
   formatInternalRecord,
-} from '../internal-logger.js';
-import { defaultFormatter } from '../log-formatter.js';
-import { type ExecSpec, scriptExec, menuCommandsOf, definesDevScript } from '../scripts.js';
-import { depsOf } from '../selection-plan.js';
-import type { ServiceGroups } from '../service-usage.js';
-import { sessionTrustFile } from '../trust-file.js';
-import { callEach } from '../util.js';
-import type { LogStore } from './log-store.js';
-import { waitsFor } from './plan.js';
-import { type Clock, type Readiness, systemClock } from './readiness.js';
+} from '../internal-logger';
+import { defaultFormatter } from '../log-formatter';
+import { type ExecSpec, scriptExec, menuCommandsOf, definesDevScript } from '../scripts';
+import { depsOf } from '../selection-plan';
+import type { ServiceGroups } from '../service-usage';
+import { sessionTrustFile } from '../trust-file';
+import { callEach } from '../util';
+import type { LogStore } from './log-store';
+import { waitsFor } from './plan';
+import { type Clock, type Readiness, systemClock } from './readiness';
 import {
   ChildRecords,
   type ProcessExit,
@@ -40,8 +35,8 @@ import {
   ServiceProcess,
   type ServiceProcessEvents,
   type ServiceProcessOptions,
-} from './service-process.js';
-import type { LogLabel, SessionPlan } from './types.js';
+} from './service-process';
+import type { LogLabel, SessionPlan } from './types';
 
 /** Where a service is in its life, as the session sees it. */
 export type ServiceState =

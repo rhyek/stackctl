@@ -1,13 +1,8 @@
-import {
-  type Config,
-  type TokenRecord,
-  infraBuildAddress,
-  infraServiceDetails,
-} from '../config.js';
-import type { ControlClient } from '../control-client.js';
-import type { Envs, Profile } from '../env.js';
-import { hookExec } from '../hook-exec.js';
-import type { Exec, LineStream, SpawnInherit, Stream } from '../spawn.js';
+import { type Config, type TokenRecord, infraBuildAddress, infraServiceDetails } from '../config';
+import type { ControlClient } from '../control-client';
+import type { Envs, Profile } from '../env';
+import { hookExec } from '../hook-exec';
+import type { Exec, LineStream, SpawnInherit, Stream } from '../spawn';
 import {
   InfraError,
   type InfraCallbackContext,
@@ -24,7 +19,7 @@ import {
   type InfraTrigger,
   type Readiness,
   unknownServicesError,
-} from './types.js';
+} from './types';
 
 /** How long a watch lets a burst of changes settle before it reads the states once for all of them. */
 const CHANGE_SETTLE_MS = 150;

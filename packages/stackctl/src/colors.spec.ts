@@ -1,6 +1,6 @@
 import { colord } from 'colord';
 import { expect, test } from 'vitest';
-import { FOCUS_COLOR, NEEDED_COLOR } from './colors.js';
+import { FOCUS_COLOR, NEEDED_COLOR } from './colors';
 
 test('NEEDED_COLOR is the focus color darkened, with the same hue', () => {
   expect(colord(NEEDED_COLOR).brightness()).toBeLessThan(colord(FOCUS_COLOR).brightness());

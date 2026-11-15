@@ -10,11 +10,11 @@ import type {
   TokenRecord,
   UrlEntry,
   UrlsInput,
-} from '../config.js';
-import type { ControlClient } from '../control-client.js';
-import type { Envs, Profile } from '../env.js';
-import type { HookExecOptions, HookExecResult } from '../hook-exec.js';
-import type { InfraAction } from './control.js';
+} from '../config';
+import type { ControlClient } from '../control-client';
+import type { Envs, Profile } from '../env';
+import type { HookExecOptions, HookExecResult } from '../hook-exec';
+import type { InfraAction } from './control';
 
 /** How long `infra start` waits for the services to become ready, when the config doesn't say. */
 export const DEFAULT_READY_TIMEOUT_MS = 300_000;

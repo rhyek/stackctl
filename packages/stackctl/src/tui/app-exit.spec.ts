@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { describe, expect, test, vi } from 'vitest';
-import { stripAnsi } from '../format.js';
-import type { SessionSnapshot } from '../session/session.js';
+import { stripAnsi } from '../format';
+import type { SessionSnapshot } from '../session/session';
 import {
   type ExitIo,
   type ExitSession,
@@ -9,7 +9,7 @@ import {
   failWith,
   finish,
   uncaughtIsHandled,
-} from './app-exit.js';
+} from './app-exit';
 
 /** A fake process: what was written where, in order, and the exit code. */
 function fakeIo(now = 65_000) {

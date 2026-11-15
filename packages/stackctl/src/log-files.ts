@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { currentProfile } from './env-base.js';
+import { currentProfile } from './env-base';
 
 // Where a workspace's stackctl state and session logs live, and which logfile is the current
 // one. Kept free of the config and of anything that spawns, so `stackctl logs` loads only this.

@@ -3,7 +3,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
-import { composeMemory, containerMemory, socketPath } from './docker-engine.js';
+import { composeMemory, containerMemory, socketPath } from './docker-engine';
 
 describe('containerMemory', () => {
   test("docker stats' figure: usage less the inactive page cache, cgroup v2 and v1", () => {

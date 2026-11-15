@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { defineConfig } from '../config.js';
-import { pickerInputOf, planRuns } from './picker-input.js';
+import { defineConfig } from '../config';
+import { pickerInputOf, planRuns } from './picker-input';
 
 let ws: string;
 

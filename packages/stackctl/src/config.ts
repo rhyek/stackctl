@@ -13,7 +13,7 @@ import {
   PublicOriginInputSchema,
   type ReverseProxyRouteSchema,
   ReverseProxyTlsSchema,
-} from './config-schema.js';
+} from './config-schema';
 import {
   ENV_NAME_RE,
   baseEnvs,
@@ -29,8 +29,8 @@ import {
   type Envs,
   type EnvOverride,
   type Profile,
-} from './env.js';
-import { composeProjectName } from './infra/project-name.js';
+} from './env';
+import { composeProjectName } from './infra/project-name';
 import {
   DEFAULT_READY_TIMEOUT_MS,
   type InfraEnabledContext,
@@ -38,9 +38,9 @@ import {
   type InfraServiceCallbacks,
   type ResolvedInfra,
   type ResolvedInfraService,
-} from './infra/types.js';
-import type { InfraServiceName, ServiceName } from './register.js';
-import { recordedConfigDir } from './workspace-root.js';
+} from './infra/types';
+import type { InfraServiceName, ServiceName } from './register';
+import { recordedConfigDir } from './workspace-root';
 
 /** A single link: a bare URL, or a labeled URL (the label is shown in place of the URL). */
 export type UrlLink = string | { label: string; url: string };

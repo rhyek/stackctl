@@ -3,32 +3,32 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { type AnyServiceConfig, defineConfig } from '../config.js';
-import type { ControlManager } from '../control-server.js';
-import type { DevReverseProxyManager, DevReverseProxyServer } from '../dev-reverse-proxy.js';
-import { EventLog, type EventBy } from '../event-log.js';
-import { stripAnsi } from '../format.js';
-import { InfraFailedError } from '../infra/session.js';
-import type { InfraEvent } from '../infra/types.js';
-import type { ServiceGroups, ServiceUsage, UsageReader } from '../service-usage.js';
-import { sessionEventsPath } from '../session-files.js';
-import { labelGutter } from './log-layout.js';
-import { buildSessionPlan } from './plan.js';
+import { type AnyServiceConfig, defineConfig } from '../config';
+import type { ControlManager } from '../control-server';
+import type { DevReverseProxyManager, DevReverseProxyServer } from '../dev-reverse-proxy';
+import { EventLog, type EventBy } from '../event-log';
+import { stripAnsi } from '../format';
+import { InfraFailedError } from '../infra/session';
+import type { InfraEvent } from '../infra/types';
+import type { ServiceGroups, ServiceUsage, UsageReader } from '../service-usage';
+import { sessionEventsPath } from '../session-files';
+import { labelGutter } from './log-layout';
+import { buildSessionPlan } from './plan';
 import type {
   ProcessExit,
   ProcessState,
   ServiceProcessEvents,
   ServiceProcessOptions,
-} from './service-process.js';
+} from './service-process';
 import {
   type InfraProgress,
   type ParentChannel,
   Session,
   type SessionSeams,
   tellParent,
-} from './session.js';
-import type { SupervisedProcess } from './supervisor.js';
-import type { SessionInfra, SessionPlan } from './types.js';
+} from './session';
+import type { SupervisedProcess } from './supervisor';
+import type { SessionInfra, SessionPlan } from './types';
 
 let nextPid = 910_000;
 

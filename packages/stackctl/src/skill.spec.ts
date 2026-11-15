@@ -10,7 +10,7 @@ import {
   isSkillInstalled,
   readInstalledSkill,
   skillInstallPath,
-} from './skill.js';
+} from './skill';
 
 describe('skill rendering', () => {
   test('embeds the managed banner with the version', () => {

@@ -1,7 +1,7 @@
 import stringWidth from 'string-width';
 import { describe, expect, test } from 'vitest';
-import { stripAnsi } from '../format.js';
-import { createInternalLogger, formatInternalRecord } from '../internal-logger.js';
+import { stripAnsi } from '../format';
+import { createInternalLogger, formatInternalRecord } from '../internal-logger';
 import {
   classifyLine,
   rowWidth,
@@ -9,14 +9,14 @@ import {
   valueRun,
   type RowMeta,
   type Selection,
-} from '../selection.js';
-import { expandTabs } from '../wrap-rows.js';
+} from '../selection';
+import { expandTabs } from '../wrap-rows';
 import {
   countRows as countRowsAt,
   labelGutter,
   wrapLineRows as wrapLineRowsAt,
-} from './log-layout.js';
-import type { LogLabel, LogLine, TimestampMode } from './types.js';
+} from './log-layout';
+import type { LogLabel, LogLine, TimestampMode } from './types';
 
 // The line records are built directly: the text of stackctl's own lines comes from the real
 // internal logger and formatter, so colors, the `[INFO]` header and the `  key: value` properties

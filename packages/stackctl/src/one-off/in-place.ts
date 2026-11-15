@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import module from 'node:module';
 import path from 'node:path';
-import type { OneOffSpec } from './run.js';
+import type { OneOffSpec } from './run';
 
 // `stackctl exec` and `run` inside a command stackctl runs (a dev script's
 // `sctl exec -- node --watch src/main.ts`): with no log to write and no event to record, nothing is

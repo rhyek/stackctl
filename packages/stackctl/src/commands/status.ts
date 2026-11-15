@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SessionStatus } from '../control-client.js';
-import { currentProfile } from '../env-base.js';
-import { type EventBy, type EventLine, currentEventsPath, localTime } from '../event-log.js';
-import { findSession } from '../find-session.js';
+import type { SessionStatus } from '../control-client';
+import { currentProfile } from '../env-base';
+import { type EventBy, type EventLine, currentEventsPath, localTime } from '../event-log';
+import { findSession } from '../find-session';
 
 // `stackctl status`: the profile's session as it is now, and what last acted on it, from its event
 // log. Strictly read-only, like `logs`: it reads the session record and asks `GET /query/status`,

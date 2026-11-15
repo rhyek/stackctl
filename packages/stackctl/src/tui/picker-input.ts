@@ -1,9 +1,9 @@
 import path from 'node:path';
-import { getLoadedConfig, getRegisteredPackages, infraServicesOf } from '../config.js';
-import { definesDevScript } from '../scripts.js';
-import { dependentsOf, depsOf, displayOrder, planSelection } from '../selection-plan.js';
-import { readGitBranch } from '../session/git-branch.js';
-import type { PickerInput, SelectionRuns } from './picker-state.js';
+import { getLoadedConfig, getRegisteredPackages, infraServicesOf } from '../config';
+import { definesDevScript } from '../scripts';
+import { dependentsOf, depsOf, displayOrder, planSelection } from '../selection-plan';
+import { readGitBranch } from '../session/git-branch';
+import type { PickerInput, SelectionRuns } from './picker-state';
 
 /**
  * The picker's view of the loaded config: every registered service in display order, the infra,

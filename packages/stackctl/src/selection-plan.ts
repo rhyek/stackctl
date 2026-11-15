@@ -1,4 +1,4 @@
-import { getLoadedConfig, getRegisteredPackages, infraServicesOf } from './config.js';
+import { getLoadedConfig, getRegisteredPackages, infraServicesOf } from './config';
 
 // What a selection starts, in what order, and why each service runs. Everything here reads the
 // loaded config and changes nothing in it.

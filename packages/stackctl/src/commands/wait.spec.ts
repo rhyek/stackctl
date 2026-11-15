@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import type { AnyServiceConfig } from '../config.js';
-import type { ControlClient, SessionStatus } from '../control-client.js';
-import type { FoundSession } from '../find-session.js';
-import { type WaitContext, runWaitCommand } from './wait.js';
+import type { AnyServiceConfig } from '../config';
+import type { ControlClient, SessionStatus } from '../control-client';
+import type { FoundSession } from '../find-session';
+import { type WaitContext, runWaitCommand } from './wait';
 
 let dir: string;
 beforeAll(() => {

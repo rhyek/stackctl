@@ -3,9 +3,9 @@ import { Writable } from 'node:stream';
 import React from 'react';
 import { Text, render } from 'ink';
 import { describe, expect, test, vi } from 'vitest';
-import { MOUSE_DISABLE } from '../mouse.js';
-import type { Session } from '../session/session.js';
-import { useShutdown } from './shutdown.js';
+import { MOUSE_DISABLE } from '../mouse';
+import type { Session } from '../session/session';
+import { useShutdown } from './shutdown';
 
 const h = React.createElement;
 

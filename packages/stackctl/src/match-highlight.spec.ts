@@ -1,9 +1,9 @@
 import chalk from 'chalk';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { MATCH_COLOR, ON_MATCH_COLOR } from './colors.js';
-import { stripAnsi } from './format.js';
-import { matchSpans, paintMatches, paintMatchRows } from './match-highlight.js';
-import { filterTerms } from './tui/text-cells.js';
+import { MATCH_COLOR, ON_MATCH_COLOR } from './colors';
+import { stripAnsi } from './format';
+import { matchSpans, paintMatches, paintMatchRows } from './match-highlight';
+import { filterTerms } from './tui/text-cells';
 
 let prevLevel: typeof chalk.level;
 beforeAll(() => {

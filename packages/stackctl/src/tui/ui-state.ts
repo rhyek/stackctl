@@ -1,4 +1,4 @@
-import { type ItemRect, verticalTarget } from '../components/footer-nav.js';
+import { type ItemRect, verticalTarget } from '../components/footer-nav';
 import {
   type Action,
   type Entry,
@@ -8,7 +8,7 @@ import {
   isActive,
   isInfraBusy,
   isInfraUp,
-} from './keymap.js';
+} from './keymap';
 
 /**
  * The run screen's UI state and its reducer: the mode, the focus, the filter, the commands menu

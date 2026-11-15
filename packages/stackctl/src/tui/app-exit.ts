@@ -1,8 +1,8 @@
 import chalk from 'chalk';
-import { errorMessage } from '../errors.js';
-import { formatDuration } from '../format.js';
-import { displayLogFile } from '../log-files.js';
-import type { Session } from '../session/session.js';
+import { errorMessage } from '../errors';
+import { formatDuration } from '../format';
+import { displayLogFile } from '../log-files';
+import type { Session } from '../session/session';
 
 // How the app shell ends the process once Ink has unmounted, and how it restores the terminal on
 // a fatal uncaught error. No Ink here: `App.tsx` wires these in.

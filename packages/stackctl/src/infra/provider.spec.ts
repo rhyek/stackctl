@@ -1,11 +1,11 @@
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { type BuildAddressOptions, type Config, defineConfig } from '../config.js';
-import { createControlClient } from '../control-client.js';
-import type { Envs } from '../env.js';
-import type { Exec } from '../spawn.js';
-import { InfraProvider, type ProviderRuntime } from './provider.js';
+import { type BuildAddressOptions, type Config, defineConfig } from '../config';
+import { createControlClient } from '../control-client';
+import type { Envs } from '../env';
+import type { Exec } from '../spawn';
+import { InfraProvider, type ProviderRuntime } from './provider';
 import {
   InfraError,
   type InfraCallbackContext,
@@ -14,7 +14,7 @@ import {
   type InfraServiceCallbacks,
   type Readiness,
   type ResolvedInfraService,
-} from './types.js';
+} from './types';
 
 /** A stand-in for the resolved config: callbacks only pass it on. */
 const CONFIG = { profile: 'test' } as Config<string>;

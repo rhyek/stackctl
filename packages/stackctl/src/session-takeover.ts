@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { getRegisteredPackages, getWorkspaceDir } from './config.js';
-import { createControlClient, probeInstance } from './control-client.js';
-import { currentProfile } from './env-base.js';
+import { getRegisteredPackages, getWorkspaceDir } from './config';
+import { createControlClient, probeInstance } from './control-client';
+import { currentProfile } from './env-base';
 import {
   canSignal,
   isInsideWorkspace,
@@ -11,7 +11,7 @@ import {
   processCwd,
   processStartTime,
   resolveRealPath,
-} from './process-info.js';
+} from './process-info';
 import {
   type ChildRecord,
   type RunningState,
@@ -20,11 +20,11 @@ import {
   readOtherProfilesRunning,
   readRunning,
   sessionId,
-} from './running.js';
-import { pruneSessions } from './session-files.js';
-import { START_TIME_SLACK_MS } from './session-identity.js';
-import { HANDOFF_FORCE_KILL_MS } from './shutdown-timing.js';
-import { bounded } from './util.js';
+} from './running';
+import { pruneSessions } from './session-files';
+import { START_TIME_SLACK_MS } from './session-identity';
+import { HANDOFF_FORCE_KILL_MS } from './shutdown-timing';
+import { bounded } from './util';
 
 // Taking over from this profile's previous session: the control port and the record, the orphans a
 // killed session left, and whatever in the workspace still holds a dev port. Also how a running

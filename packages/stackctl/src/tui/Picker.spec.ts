@@ -3,14 +3,14 @@ import { PassThrough } from 'node:stream';
 import React from 'react';
 import { render } from 'ink';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { stripAnsi } from '../format.js';
-import { MOUSE_DISABLE, MOUSE_ENABLE } from '../mouse.js';
-import type { PickerInput, PickerService, SelectionRuns } from './picker-state.js';
-import { Picker, type PickerProps } from './Picker.js';
+import { stripAnsi } from '../format';
+import { MOUSE_DISABLE, MOUSE_ENABLE } from '../mouse';
+import { Picker, type PickerProps } from './Picker';
+import type { PickerInput, PickerService, SelectionRuns } from './picker-state';
 
 // A handler fault goes to the internal debug log; keep it in memory.
 const debug = vi.hoisted(() => ({ lines: [] as string[] }));
-vi.mock(import('../internal-logger.js'), async (importOriginal) => ({
+vi.mock(import('../internal-logger'), async (importOriginal) => ({
   ...(await importOriginal()),
   debugLog: (...args: unknown[]) => debug.lines.push(args.map(String).join(' ')),
 }));

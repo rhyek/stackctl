@@ -1,12 +1,7 @@
-import {
-  type AnyServiceConfig,
-  findService,
-  getLoadedConfig,
-  normalizeUrlEntry,
-} from '../config.js';
-import { menuCommandsOf } from '../scripts.js';
-import { planSelection } from '../selection-plan.js';
-import type { SessionPlan } from './types.js';
+import { type AnyServiceConfig, findService, getLoadedConfig, normalizeUrlEntry } from '../config';
+import { menuCommandsOf } from '../scripts';
+import { planSelection } from '../selection-plan';
+import type { SessionPlan } from './types';
 
 /** The services `service` is held until ready: its `deps` entries with `wait`, in the config's order. */
 export function waitsFor(service: AnyServiceConfig): string[] {

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { AGENT_ENV_VARS, AGENT_OVERRIDE_ENV_VAR, detectAgent } from './agent-detection.js';
+import { AGENT_ENV_VARS, AGENT_OVERRIDE_ENV_VAR, detectAgent } from './agent-detection';
 
 describe('detectAgent', () => {
   test('is false for a plain human shell', () => {

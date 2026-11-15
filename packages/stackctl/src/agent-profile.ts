@@ -1,5 +1,5 @@
-import type { ProfileSource } from './env-base.js';
-import { needsNoWorkspace, readCommand } from './workspace-root.js';
+import type { ProfileSource } from './env-base';
+import { needsNoWorkspace, readCommand } from './workspace-root';
 
 // A coding agent names the profile of every command it runs, `development` included: a default
 // is how an agent ends up running the tests against the development database, or restarting a

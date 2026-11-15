@@ -1,15 +1,15 @@
-export { defineConfig, findService, proxyHostsFor } from './config.js';
+export { defineConfig, findService, proxyHostsFor } from './config';
 // stackctl's log utilities: `logging.formatter(config)` builds a structured-log formatter for a
 // service's `logs.formatter` (and is the default applied to every service); the ecosystem helpers
 // `logging.nodejs.{pino,winston}.formatter` are the same with adjusted defaults.
-export { logging } from './log-formatter.js';
+export { logging } from './log-formatter';
 export type {
   FormatterConfig,
   FormatterConfigInput,
   FormatterFields,
   CustomField,
   CustomFields,
-} from './log-formatter.js';
+} from './log-formatter';
 export type {
   ServiceConfigInput,
   ServiceInput,
@@ -47,8 +47,8 @@ export type {
   Command,
   EnvFilesContext,
   EnvAdditionalFilesResolver,
-} from './config.js';
-export type { InfraServiceName, Register, ServiceConfig, ServiceName } from './register.js';
+} from './config';
+export type { InfraServiceName, Register, ServiceConfig, ServiceName } from './register';
 export type {
   InfraInput,
   DockerComposeInfraInput,
@@ -75,23 +75,23 @@ export type {
   ResolvedInfra,
   ResolvedDockerComposeInfra,
   ResolvedInfraService,
-} from './infra/types.js';
+} from './infra/types';
 // A test suite's stack: a detached headless session, started or reused, waited on until healthy.
-export { startStack, stackEnvironment } from './stack.js';
-export type { StartStackOptions, Stack } from './stack.js';
+export { startStack, stackEnvironment } from './stack';
+export type { StartStackOptions, Stack } from './stack';
 // One command with a target's directory and environment, as `stackctl exec` and `stackctl run` run it.
-export { exec, run } from './one-off/sdk.js';
-export type { OneOffOptions, ExecOptions, RunOptions, OneOffResult } from './one-off/sdk.js';
+export { exec, run } from './one-off/sdk';
+export type { OneOffOptions, ExecOptions, RunOptions, OneOffResult } from './one-off/sdk';
 // What an infra callback's `control` is: a client for the running session's control API.
 export type {
   ControlClient,
   SessionEvent,
   SessionStatus,
   SessionServiceStatus,
-} from './control-client.js';
-export type { EventBy, EventEntry, EventEnvelope, EventLine } from './event-log.js';
-export type { ServiceAction } from './control-server.js';
-export type { InfraAction, InfraStatus } from './infra/control.js';
+} from './control-client';
+export type { EventBy, EventEntry, EventEnvelope, EventLine } from './event-log';
+export type { ServiceAction } from './control-server';
+export type { InfraAction, InfraStatus } from './infra/control';
 export {
   resolveEnv,
   envCandidatePaths,
@@ -110,5 +110,5 @@ export {
   type EnvFileAfter,
   type EnvFileOrder,
   type EnvFileScope,
-} from './env.js';
-export type { EnvResolution } from './env.js';
+} from './env';
+export type { EnvResolution } from './env';

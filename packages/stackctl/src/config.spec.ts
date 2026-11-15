@@ -19,8 +19,8 @@ import {
   getDevScript,
   infraServiceDetails,
   proxyHostsFor,
-} from './config.js';
-import { packageEnvLayer } from './env.js';
+} from './config';
+import { packageEnvLayer } from './env';
 
 /** `defineConfig`'s options as seen with `serviceRootDir` set (so `relativeDir` is optional). */
 type RootedOpts = Parameters<

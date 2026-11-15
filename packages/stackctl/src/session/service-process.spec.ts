@@ -3,14 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, test } from 'vitest';
-import { isProcessAlive } from '../process-info.js';
-import { readRunning, writeRunning } from '../running.js';
+import { isProcessAlive } from '../process-info';
+import { readRunning, writeRunning } from '../running';
 import {
   ChildRecords,
   type ProcessExit,
   type ProcessState,
   ServiceProcess,
-} from './service-process.js';
+} from './service-process';
 
 const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 

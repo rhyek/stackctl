@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { intro, outro, log } from '@clack/prompts';
-import { guidanceState, installGuidance, missesOwnFiles, offerGuidance } from './agent-guidance.js';
-import { findConfigPath } from './load-config.js';
-import { readOwnVersion } from './skill.js';
-import { reconcileTsconfig } from './tsconfig.js';
+import { guidanceState, installGuidance, missesOwnFiles, offerGuidance } from './agent-guidance';
+import { findConfigPath } from './load-config';
+import { readOwnVersion } from './skill';
+import { reconcileTsconfig } from './tsconfig';
 
 /** The scaffolded `stackctl.config.ts`. */
 function configTemplate(): string {

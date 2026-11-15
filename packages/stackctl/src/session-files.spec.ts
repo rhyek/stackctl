@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import { writeRunning } from './running.js';
+import { writeRunning } from './running';
 import {
   SESSION_RETENTION_MS,
   currentSessionId,
@@ -13,7 +13,7 @@ import {
   sessionEventsPath,
   sessionLogPath,
   writeTargetSessionId,
-} from './session-files.js';
+} from './session-files';
 
 let root: string;
 const PROFILE = 'development';

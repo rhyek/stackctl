@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import { watchEnvFiles } from './env-watch.js';
+import { watchEnvFiles } from './env-watch';
 
 let dir: string;
 let dispose: (() => void) | undefined;
@@ -174,7 +174,7 @@ describe('watchEnvFiles', () => {
     /** Starts the watcher on `ws` in a child, behind a small HTTP server; resolves its port. */
     async function startWatcher(ws: string): Promise<number> {
       const script = path.join(dir, 'watcher.ts');
-      // Node runs the source as it is, but finds `./x.js` only as `x.js`: point it at `x.ts`.
+      // Node runs the source as it is, but finds an extensionless `./x` nowhere: point it at `x.ts`.
       const hook = path.join(dir, 'ts-imports.mjs');
       fs.writeFileSync(
         hook,
@@ -183,8 +183,8 @@ import fs from 'node:fs';
 import { registerHooks } from 'node:module';
 registerHooks({
   resolve(specifier, context, next) {
-    if (specifier.startsWith('.') && specifier.endsWith('.js') && context.parentURL) {
-      const ts = new URL(specifier.slice(0, -3) + '.ts', context.parentURL);
+    if (specifier.startsWith('.') && context.parentURL) {
+      const ts = new URL(specifier + '.ts', context.parentURL);
       if (fs.existsSync(ts)) {
         return next(ts.href, context);
       }

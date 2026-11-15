@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, afterEach, test, vi } from 'vitest';
-import { createControlClient, type SessionEvent } from './control-client.js';
-import { startControlServer as startServer, type ControlManager } from './control-server.js';
-import { EventLog, type InfraCommandEntry, cliEventLog } from './event-log.js';
-import { sessionId } from './running.js';
-import { sessionEventsPath } from './session-files.js';
+import { createControlClient, type SessionEvent } from './control-client';
+import { startControlServer as startServer, type ControlManager } from './control-server';
+import { EventLog, type InfraCommandEntry, cliEventLog } from './event-log';
+import { sessionId } from './running';
+import { sessionEventsPath } from './session-files';
 
 let server: Awaited<ReturnType<typeof startServer>> | null = null;
 let root: string | null = null;

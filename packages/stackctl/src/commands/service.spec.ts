@@ -2,15 +2,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
-import type { AnyServiceConfig } from '../config.js';
-import type { ControlClient, SessionStatus } from '../control-client.js';
-import type { FoundSession } from '../find-session.js';
+import type { AnyServiceConfig } from '../config';
+import type { ControlClient, SessionStatus } from '../control-client';
+import type { FoundSession } from '../find-session';
 import {
   type ServiceCommand,
   type ServiceCommandContext,
   runServiceCommand,
   serviceRefusal,
-} from './service.js';
+} from './service';
 
 let dir: string;
 beforeAll(() => {

@@ -7,7 +7,7 @@ import {
   locateWorkspace,
   needsNoWorkspace,
   resolveWorkspaceDirArg,
-} from './workspace-root.js';
+} from './workspace-root';
 
 let tmp: string;
 beforeEach(() => {

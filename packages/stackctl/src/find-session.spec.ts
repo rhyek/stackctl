@@ -4,8 +4,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import { connectControlClient, connectSessionControl, findSession } from './find-session.js';
-import { writeRunning } from './running.js';
+import { connectControlClient, connectSessionControl, findSession } from './find-session';
+import { writeRunning } from './running';
 
 const servers: http.Server[] = [];
 const tmpDirs: string[] = [];

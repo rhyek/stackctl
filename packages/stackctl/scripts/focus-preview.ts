@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { registerHooks } from 'node:module';
 import { createElement as h, useState, type ReactElement } from 'react';
 // Internal tool for choosing `FOCUS_COLOR` (`src/colors.ts`): the service picker and the run
@@ -13,11 +14,12 @@ import { createElement as h, useState, type ReactElement } from 'react';
 //   q          quit, printing the color as a paste-ready `FOCUS_COLOR`
 //
 // Like `palette-preview.ts`, it runs on Node's TypeScript support with no build, so the resolve
-// hook below maps the `./x.js` specifiers the sources import each other by to their `.ts` files.
+// hook below maps the extensionless `./x` specifiers the sources import each other by to their
+// `.ts` and `.tsx` files.
 import chalk from 'chalk';
 import { type HslColor, colord } from 'colord';
 import { Box, Text, render, useApp, useInput, useWindowSize, type Key } from 'ink';
-import { FOCUS_COLOR, NEEDED_COLOR, type Color } from '../src/colors.ts';
+import type { Color } from '../src/colors.ts';
 import type { SessionSnapshot } from '../src/session/session.ts';
 import type { PickerEvent, PickerInput, PickerState } from '../src/tui/picker-state.ts';
 import type { Segment } from '../src/tui/text-cells.ts';
@@ -25,12 +27,20 @@ import type { UiState } from '../src/tui/ui-state.ts';
 
 const SOURCES = new URL('../src/', import.meta.url).href;
 registerHooks({
-  resolve: (specifier, context, nextResolve) =>
-    specifier.startsWith('.') && specifier.endsWith('.js') && context.parentURL?.startsWith(SOURCES)
-      ? nextResolve(`${specifier.slice(0, -'.js'.length)}.ts`, context)
-      : nextResolve(specifier, context),
+  resolve: (specifier, context, nextResolve) => {
+    if (specifier.startsWith('.') && context.parentURL?.startsWith(SOURCES)) {
+      const file = ['.ts', '.tsx']
+        .map((ext) => specifier + ext)
+        .find((candidate) => fs.existsSync(new URL(candidate, context.parentURL)));
+      if (file) {
+        return nextResolve(file, context);
+      }
+    }
+    return nextResolve(specifier, context);
+  },
 });
 // Imported only once the hook is in place.
+const { FOCUS_COLOR, NEEDED_COLOR } = await import('../src/colors.ts');
 const { footerLayout, menuLayout } = await import('../src/tui/layout.ts');
 const { pickerLayout } = await import('../src/tui/picker-layout.ts');
 const { createPickerState, pickerStep } = await import('../src/tui/picker-state.ts');

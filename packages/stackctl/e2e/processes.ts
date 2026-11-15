@@ -12,8 +12,8 @@ import {
   processCwd,
   processStartTime,
   resolveRealPath,
-} from '../src/process-info.js';
-import { cliPath } from './cli.js';
+} from '../src/process-info';
+import { cliPath } from './cli';
 
 /** How a process ended: its exit code, or the signal that ended it. */
 export interface Exit {

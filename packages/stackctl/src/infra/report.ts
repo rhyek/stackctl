@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { InfraEvent, InfraRunSummary } from './types.js';
+import type { InfraEvent, InfraRunSummary } from './types';
 
 export interface InfraReporter {
   onEvent: (event: InfraEvent) => void;

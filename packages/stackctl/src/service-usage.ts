@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
-import { callEach } from './util.js';
+import { callEach } from './util';
 
 // How much memory and CPU each service uses — the memory shown in the footer. On macOS the memory is
 // what Activity Monitor shows; on Linux its nearest equivalent. Each is summed over everything a

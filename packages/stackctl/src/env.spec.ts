@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import primitives from '@dotenvx/primitives';
 import { describe, expect, beforeEach, afterEach, test, vi } from 'vitest';
-import type { AnyServiceConfig } from './config.js';
+import type { AnyServiceConfig } from './config';
 import {
   ambientEnv,
   assignedNames,
@@ -24,8 +24,8 @@ import {
   resolveProfile,
   targetEnvLayer,
   workspaceEnvLayer,
-} from './env.js';
-import type { ResolvedTarget } from './target.js';
+} from './env';
+import type { ResolvedTarget } from './target';
 
 /** A layer without its `STACKCTL_INJECTED_ENV` list, for the assertions about what it resolves. */
 function withoutList(layer: Record<string, string>): Record<string, string> {
@@ -867,7 +867,7 @@ describe('captureShellEnv', () => {
   // A module of its own, so the recorded environment doesn't outlive the test.
   test('makes the environment at that moment the ambient one for later resolutions', async () => {
     vi.resetModules();
-    const fresh = await import('./env.js');
+    const fresh = await import('./env');
     write('.env', 'STACKCTL_ENV_A=2\n');
     write('packages/api/.env', 'STACKCTL_ENV_A=3\n');
 
@@ -882,7 +882,7 @@ describe('captureShellEnv', () => {
 
   test('keeps a variable the shell set winning over the files', async () => {
     vi.resetModules();
-    const fresh = await import('./env.js');
+    const fresh = await import('./env');
     write('packages/api/.env', 'STACKCTL_ENV_A=3\n');
     withAmbient({ STACKCTL_ENV_A: '1' }, () => {
       fresh.captureShellEnv();

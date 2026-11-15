@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
-import { InfraControl, infraCliArgs } from './control.js';
-import type { InfraServiceState } from './types.js';
+import { InfraControl, infraCliArgs } from './control';
+import type { InfraServiceState } from './types';
 
 /**
  * A stand-in for the stackctl CLI: prints the arguments it got, and fails when they name the

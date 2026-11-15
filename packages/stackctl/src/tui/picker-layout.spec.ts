@@ -1,8 +1,8 @@
 import stringWidth from 'string-width';
 import { describe, expect, test } from 'vitest';
-import { BRANCH_COLOR, FOCUS_COLOR, NEEDED_COLOR, WARN_COLOR, WORKSPACE_COLOR } from '../colors.js';
-import type { FooterRow } from './layout.js';
-import { type PickerLayout, pickerLayout } from './picker-layout.js';
+import { BRANCH_COLOR, FOCUS_COLOR, NEEDED_COLOR, WARN_COLOR, WORKSPACE_COLOR } from '../colors';
+import type { FooterRow } from './layout';
+import { type PickerLayout, pickerLayout } from './picker-layout';
 import {
   type PickerEvent,
   type PickerInput,
@@ -10,7 +10,7 @@ import {
   type PickerState,
   createPickerState,
   pickerStep,
-} from './picker-state.js';
+} from './picker-state';
 
 const EXAMPLE: PickerService[] = [
   { name: 'backend', deps: [], dependents: ['frontend'], hasRow: true },

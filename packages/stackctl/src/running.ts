@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { currentProfile } from './env-base.js';
-import { profileStateDir, stateDirOf } from './log-files.js';
+import { currentProfile } from './env-base';
+import { profileStateDir, stateDirOf } from './log-files';
 
 /**
  * Random control-API port range: `14000`–`14099` (100 ports). Kept below the OS ephemeral

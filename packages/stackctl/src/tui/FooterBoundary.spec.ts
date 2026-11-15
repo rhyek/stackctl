@@ -2,11 +2,11 @@ import { Writable } from 'node:stream';
 import React from 'react';
 import { Text, render } from 'ink';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { stripAnsi } from '../format.js';
-import type { Session, SessionSnapshot } from '../session/session.js';
-import { FooterBoundary, guardedFooterLayout, guardedMenuLayout } from './FooterBoundary.js';
-import type { FooterLayout } from './layout.js';
-import { initialUiState } from './ui-state.js';
+import { stripAnsi } from '../format';
+import type { Session, SessionSnapshot } from '../session/session';
+import { FooterBoundary, guardedFooterLayout, guardedMenuLayout } from './FooterBoundary';
+import type { FooterLayout } from './layout';
+import { initialUiState } from './ui-state';
 
 const h = React.createElement;
 

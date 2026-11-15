@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
-import type { AnyServiceConfig } from './config.js';
+import type { AnyServiceConfig } from './config';
 import {
   exitCodeOf,
   runnerOf,
@@ -11,8 +11,8 @@ import {
   definesDevScript,
   menuCommandsOf,
   makeTargetsOf,
-} from './scripts.js';
-import { runCommand } from './spawn.js';
+} from './scripts';
+import { runCommand } from './spawn';
 
 let dir: string;
 function pkg(over: Partial<AnyServiceConfig> & { absoluteDir: string }): AnyServiceConfig {

@@ -141,11 +141,20 @@ Build with:
 pnpm build
 ```
 
-The root `build` script runs `pnpm --filter stackctl build`, which cleans
-`dist/`, compiles with `tsc -p tsconfig.build.json`, and marks the compiled CLI
-(`dist/cli.js`) executable, then `pnpm docs:package`, which builds the docs site and copies
+The root `build` script runs `pnpm --filter stackctl build`, which is tsdown
+(`packages/stackctl/tsdown.config.ts`), then `pnpm docs:package`, which builds the docs site and copies
 its `llms.txt` and pages into `packages/stackctl/docs/`. CI (`.github/workflows/ci.yaml`) and `release.yaml` use this same
 command.
+
+- **tsdown in unbundle mode**: one `dist/*.js` (with its map and `.d.ts`) per source file, as
+  `tsc` would lay it out. It cleans `dist/`, marks `cli.js` executable, and type-checks while it
+  writes the declarations (`dts.typecheck`), so a type error fails the build.
+- **Relative imports carry no extension** (`from './config'`); the build writes them out as
+  `./config.js`, and the tsconfig resolves them as a bundler does. Node can't run the sources
+  as they are: a script that imports `src/` under Node's TypeScript support needs a resolve hook,
+  as `scripts/focus-preview.ts` has.
+- **Tests that run the compiled CLI** build it with `buildForTests` (`src/cli-spec/build.ts`),
+  the same config with no maps or declarations, into a folder of their own.
 
 ## Changelog and releases
 

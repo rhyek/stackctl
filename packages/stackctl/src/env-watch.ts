@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { type EnvFileRead, type EnvFilesReading, readEnvFiles } from './env-file-reader.js';
+import { type EnvFileRead, type EnvFilesReading, readEnvFiles } from './env-file-reader';
 
 export interface WatchTarget {
   /** Directory to watch (non-recursive). */

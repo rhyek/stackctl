@@ -1,7 +1,7 @@
 import sliceAnsi from 'slice-ansi';
 import stringWidth from 'string-width';
 import wrapAnsi from 'wrap-ansi';
-import { stripAnsi } from './format.js';
+import { stripAnsi } from './format';
 
 /**
  * Expand each tab in `text` to spaces, up to the next stop of 8 columns from the start of the text

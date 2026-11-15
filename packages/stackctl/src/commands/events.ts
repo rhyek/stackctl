@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { currentProfile } from '../env-base.js';
-import { EventTail, currentEventsPath } from '../event-log.js';
+import { currentProfile } from '../env-base';
+import { EventTail, currentEventsPath } from '../event-log';
 
 // `stackctl events`: the event log of the profile's current session (the running one, else the
 // latest), as it is in the file (JSON Lines, for `jq`). Read-only: it never asks the session

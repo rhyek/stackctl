@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { composeProjectName } from './project-name.js';
+import { composeProjectName } from './project-name';
 
 describe('composeProjectName', () => {
   test('defaults to the workspace directory name and the profile', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { verticalTarget, type ItemRect } from './footer-nav.js';
+import { verticalTarget, type ItemRect } from './footer-nav';
 
 /** A row of items laid out like the footer: `● name`, two columns apart, from `startCol`. */
 function row(row: number, names: string[], startCol = 1): ItemRect[] {

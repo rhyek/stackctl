@@ -8,7 +8,7 @@ import {
   formatConfigLoadFailure,
   MIN_NODE,
   NoProjectConfigError,
-} from './load-config.js';
+} from './load-config';
 
 let dir: string;
 beforeEach(() => {

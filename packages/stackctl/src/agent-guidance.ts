@@ -7,14 +7,9 @@ import {
   refreshRulesIfStale,
   rulesInstallPath,
   writeAgentsBlock,
-} from './agent-rules.js';
-import { stateDirOf } from './log-files.js';
-import {
-  installSkill,
-  readInstalledSkill,
-  refreshSkillIfStale,
-  skillInstallPath,
-} from './skill.js';
+} from './agent-rules';
+import { stateDirOf } from './log-files';
+import { installSkill, readInstalledSkill, refreshSkillIfStale, skillInstallPath } from './skill';
 
 /**
  * What tells a coding agent about stackctl in a repo, and how it gets there.

@@ -3,13 +3,8 @@ import { Writable } from 'node:stream';
 import React from 'react';
 import { Text, render } from 'ink';
 import { describe, expect, test } from 'vitest';
-import { MOUSE_DISABLE, MOUSE_ENABLE, type MouseReport } from '../mouse.js';
-import {
-  type ClickTarget,
-  type MouseHandlers,
-  createReportHandler,
-  useMouse,
-} from './use-mouse.js';
+import { MOUSE_DISABLE, MOUSE_ENABLE, type MouseReport } from '../mouse';
+import { type ClickTarget, type MouseHandlers, createReportHandler, useMouse } from './use-mouse';
 
 const QUIT: ClickTarget = {
   id: 'hint:quit',

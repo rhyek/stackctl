@@ -16,7 +16,7 @@ import {
   sessionId,
   type PortEnv,
   type InstanceInfo,
-} from './running.js';
+} from './running';
 
 let cwd: string;
 beforeEach(() => {
@@ -123,7 +123,7 @@ describe('removeOwnRunning', () => {
 describe('takeHandedSessionId', () => {
   test('takes the id `start --detach` handed over, and leaves none for the processes it starts', async () => {
     vi.resetModules();
-    const fresh = await import('./running.js');
+    const fresh = await import('./running');
     const env: NodeJS.ProcessEnv = { [fresh.SESSION_ID_ENV]: '1794447587632' };
     fresh.takeHandedSessionId(env);
     expect(env).toEqual({});
@@ -132,7 +132,7 @@ describe('takeHandedSessionId', () => {
 
   test('ignores a value that is no session id', async () => {
     vi.resetModules();
-    const fresh = await import('./running.js');
+    const fresh = await import('./running');
     const env: NodeJS.ProcessEnv = { [fresh.SESSION_ID_ENV]: '../elsewhere' };
     fresh.takeHandedSessionId(env);
     expect(env).toEqual({});

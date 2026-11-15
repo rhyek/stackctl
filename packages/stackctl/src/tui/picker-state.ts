@@ -1,6 +1,6 @@
-import type { ToastTone } from '../toasts.js';
-import { type KeyFlags, type KeySpec, matches, printableText } from './keymap.js';
-import { joinNames, normalize } from './text-cells.js';
+import type { ToastTone } from '../toasts';
+import { type KeyFlags, type KeySpec, matches, printableText } from './keymap';
+import { joinNames, normalize } from './text-cells';
 
 /**
  * The service picker's state and its reducer: the picks, the cursor, the filter and the scroll

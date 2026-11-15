@@ -1,9 +1,9 @@
 import chalk from 'chalk';
 import stringWidth from 'string-width';
-import { stripAnsi } from '../format.js';
-import { displayTimestamp, timestampGutterWidth } from '../timestamp-mode.js';
-import { countWrappedRows, measureText, wrapRows, type TextMeasure } from '../wrap-rows.js';
-import type { LogLabel, LogLine, TimestampMode, WrappedRow } from './types.js';
+import { stripAnsi } from '../format';
+import { displayTimestamp, timestampGutterWidth } from '../timestamp-mode';
+import { countWrappedRows, measureText, wrapRows, type TextMeasure } from '../wrap-rows';
+import type { LogLabel, LogLine, TimestampMode, WrappedRow } from './types';
 
 // How one log line becomes screen rows: the gutter (timestamp column, label, a space) repeated on
 // every row, the text wrapped to what is left, and continuation rows indented to line up under a

@@ -11,7 +11,7 @@ import {
   viewportRowIndex,
   type RowMeta,
   type Selection,
-} from './selection.js';
+} from './selection';
 
 const ESC = String.fromCharCode(27);
 const red = (s: string) => `${ESC}[31m${s}${ESC}[0m`;

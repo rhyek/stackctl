@@ -6,34 +6,29 @@ import path from 'node:path';
 import primitives from '@dotenvx/primitives';
 import chalk from 'chalk';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { STACKCTL_LABEL_COLOR, PACKAGE_PALETTE } from '../colors.js';
-import { type AnyServiceConfig, defineConfig } from '../config.js';
-import type { EnvWatch, WatchTarget } from '../env-watch.js';
-import { stripAnsi } from '../format.js';
-import { labelGutter } from './log-layout.js';
-import { LogStore } from './log-store.js';
-import { buildSessionPlan } from './plan.js';
-import { type Clock, Readiness } from './readiness.js';
+import { STACKCTL_LABEL_COLOR, PACKAGE_PALETTE } from '../colors';
+import { type AnyServiceConfig, defineConfig } from '../config';
+import type { EnvWatch, WatchTarget } from '../env-watch';
+import { stripAnsi } from '../format';
+import { labelGutter } from './log-layout';
+import { LogStore } from './log-store';
+import { buildSessionPlan } from './plan';
+import { type Clock, Readiness } from './readiness';
 import type {
   ProcessExit,
   ProcessState,
   ServiceProcessEvents,
   ServiceProcessOptions,
-} from './service-process.js';
-import {
-  type ServiceState,
-  type SupervisedProcess,
-  Supervisor,
-  publicStatus,
-} from './supervisor.js';
-import type { LogLine, SessionPlan } from './types.js';
+} from './service-process';
+import { type ServiceState, type SupervisedProcess, Supervisor, publicStatus } from './supervisor';
+import type { LogLine, SessionPlan } from './types';
 
 const HC = 'http://127.0.0.1:1/health';
 
 /** Every `.env` watch the Supervisor opens: the directories it covers, and whether it was closed. */
 const watches = vi.hoisted(() => [] as { dirs: string[]; disposed: boolean }[]);
 
-vi.mock('../env-watch.js', async (importOriginal) => {
+vi.mock('../env-watch', async (importOriginal) => {
   const actual = await importOriginal<{
     watchEnvFiles: (opts: { targets: WatchTarget[]; onError?: unknown }) => EnvWatch;
   }>();

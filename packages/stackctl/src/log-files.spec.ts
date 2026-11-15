@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
-import { getStateDir, getDefaultLogFile, resolveLogFile } from './log-files.js';
+import { getStateDir, getDefaultLogFile, resolveLogFile } from './log-files';
 
 describe('getStateDir', () => {
   test('getStateDir lives under node_modules/.stackctl', () => {

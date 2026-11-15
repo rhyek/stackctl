@@ -1,6 +1,6 @@
-import { SPAWN_FAILED, type ExecOptions, type ExecResult, type LineStream } from '../../spawn.js';
-import { composeMemory, socketPath } from '../docker-engine.js';
-import { InfraProvider, type Emit, type ProviderRuntime } from '../provider.js';
+import { SPAWN_FAILED, type ExecOptions, type ExecResult, type LineStream } from '../../spawn';
+import { composeMemory, socketPath } from '../docker-engine';
+import { InfraProvider, type Emit, type ProviderRuntime } from '../provider';
 import {
   type DockerComposeCallbackContext,
   InfraError,
@@ -8,7 +8,7 @@ import {
   type Readiness,
   type ResolvedDockerComposeInfra,
   type ResolvedInfraService,
-} from '../types.js';
+} from '../types';
 
 /** The fields of a `docker compose ps --format json` row that readiness is read from. */
 export interface PsRow {

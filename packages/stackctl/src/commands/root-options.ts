@@ -1,4 +1,4 @@
-import type { StartOptions } from './default.js';
+import type { StartOptions } from './default';
 
 // `start`'s options — given after `start`, or at the root, which hands them to it — checked by
 // the CLI before it loads anything a session needs, so a bad combination fails fast.

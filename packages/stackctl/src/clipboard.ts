@@ -13,7 +13,7 @@
  *    exists (precisely to avoid the permission prompt when we don't need it).
  */
 import { Buffer } from 'node:buffer';
-import { runCommand } from './spawn.js';
+import { runCommand } from './spawn';
 
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);

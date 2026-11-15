@@ -1,7 +1,7 @@
-import { getLoadedConfig, infraServicesOf } from '../config.js';
-import type { InfraLogLine, SessionInfra } from '../session/types.js';
-import { InfraManager, type InfraManagerDeps } from './manager.js';
-import type { InfraEvent, InfraRunSummary } from './types.js';
+import { getLoadedConfig, infraServicesOf } from '../config';
+import type { InfraLogLine, SessionInfra } from '../session/types';
+import { InfraManager, type InfraManagerDeps } from './manager';
+import type { InfraEvent, InfraRunSummary } from './types';
 
 /** How many lines of a failed service's output its failure report carries. */
 const FAILURE_OUTPUT_LINES = 15;

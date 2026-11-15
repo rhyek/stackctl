@@ -1,4 +1,4 @@
-import { loadedConfigOrExit } from './workspace.js';
+import { loadedConfigOrExit } from './workspace';
 
 // The read-only command that prints what the config resolves to.
 
