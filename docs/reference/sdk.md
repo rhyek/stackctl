@@ -64,7 +64,7 @@ try {
 | -------------- | ---------------------- | -------------------------------------------------------------------------- |
 | `services`     | **required**           | The services to bring up. Their deps and the profile's infra come too.     |
 | `profile`      | as the CLI resolves it | The profile.                                                               |
-| `workspaceDir` | nearest config         | The directory holding `stackctl.config.ts`.                                |
+| `workspaceDir` | nearest config         | The directory holding `stackctl.config.ts`, relative or absolute.          |
 | `waitTimeout`  | `300`                  | Seconds to wait for everything to be healthy.                              |
 | `killOthers`   | `false`                | Quit a session already running in the profile, as `--kill-others` does.    |
 | `env`          | `stackEnvironment()`   | The environment the session starts with.                                   |
@@ -136,9 +136,9 @@ const { exitCode, stdout } = await run({
 | `command`      | **required** (`exec`)  | The program and its arguments, run with no shell.                            |
 | `script`       | **required** (`run`)   | The script or Makefile target.                                               |
 | `args`         | none                   | `run` only: arguments forwarded to the script.                               |
-| `target`       | the current directory  | A service's name, or a directory.                                            |
+| `target`       | the current directory  | A service's name, or a directory, relative or absolute.                      |
 | `profile`      | as the CLI resolves it | The profile.                                                                 |
-| `workspaceDir` | nearest config         | The directory holding `stackctl.config.ts`.                                  |
+| `workspaceDir` | nearest config         | The directory holding `stackctl.config.ts`, relative or absolute.            |
 | `stdio`        | `'inherit'`            | `'inherit'` gives the command this process's stdout and stderr, [as the CLI does](../guide/commands.md#output-and-exit-code). `'pipe'` collects them into `stdout` and `stderr`. |
 
 - **A non-zero exit resolves**, with its `exitCode` or the `signal` that ended it. The caller
@@ -169,9 +169,9 @@ const databaseUrl = env.DATABASE_URL;
 
 | Option         | Default                | What it is                                      |
 | -------------- | ---------------------- | ----------------------------------------------- |
-| `target`       | the current directory  | A service's name, or a directory.               |
+| `target`       | the current directory  | A service's name, or a directory, relative or absolute. |
 | `profile`      | as the CLI resolves it | The profile whose files to read.                |
-| `workspaceDir` | nearest config         | The directory holding `stackctl.config.ts`.     |
+| `workspaceDir` | nearest config         | The directory holding `stackctl.config.ts`, relative or absolute. |
 
 | Field        | What it is                                                                               |
 | ------------ | ---------------------------------------------------------------------------------------- |

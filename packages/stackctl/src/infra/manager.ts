@@ -58,20 +58,20 @@ export class InfraManager {
     const workspaceDir = getWorkspaceDir();
     const envFiles = new EnvFileSnapshot();
     await envFiles.refresh([
-      ...envCandidatePaths({ cwd: workspaceDir, relativeDir: '.', files: config.envFiles }),
+      ...envCandidatePaths({ resolvedWorkspaceDir: workspaceDir, files: config.envFiles }),
       ...(config.envDecrypt ? [envKeysFile(workspaceDir)] : []),
     ]);
     const runtime: ProviderRuntime = {
       workspaceDir,
       profile: config.profile,
       config,
-      // The same environment a workspace-scope config callback sees: the config's own variables
+      // The same environment a config callback at the workspace root sees: the config's own variables
       // and the profile's `.env` files, and the ambient environment, which wins over both except
       // where `env.override` says.
       envs: Object.assign(
         baseEnvs(workspaceDir),
         workspaceEnvLayer({
-          cwd: workspaceDir,
+          resolvedWorkspaceDir: workspaceDir,
           files: config.envFiles,
           override: config.envOverride,
           decrypt: config.envDecrypt,

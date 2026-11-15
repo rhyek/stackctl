@@ -119,7 +119,7 @@ export const DepEntrySchema = v.union([
 // here; the rest describe how to run/select/link it. Strict, so a misspelled key fails at load
 // rather than being stripped.
 export const ServiceConfigSchema = v.strictObject({
-  relativeDir: v.optional(v.string()),
+  targetDir: v.optional(v.string()),
   selectable: v.optional(v.boolean()),
   color: v.optional(v.string()),
   // Must be parsed, not stripped — it's what a callback's `tokens` is built from.
@@ -237,8 +237,12 @@ export const InfraSchema = v.pipe(
   ),
 );
 
-const EnvFileAnchorSchema = v.picklist(['base', 'local', 'profile', 'profileLocal']);
-const EnvFileScopeSchema = v.picklist(['workspace', 'service']);
+const EnvFileAnchorSchema = v.picklist([
+  '.env',
+  '.env.local',
+  '.env.<profile>',
+  '.env.<profile>.local',
+]);
 
 // One `env.additionalFiles` entry, as written or as the callback returns it: `{ file, before }` or
 // `{ file, after }`. That `file` is a name, not a path, and that no two entries name one file, is
@@ -248,13 +252,11 @@ export const EnvAdditionalFileSchema = v.union([
     file: nonEmptyString(),
     before: EnvFileAnchorSchema,
     after: v.optional(v.never()),
-    scope: v.optional(EnvFileScopeSchema),
   }),
   v.strictObject({
     file: nonEmptyString(),
     after: EnvFileAnchorSchema,
     before: v.optional(v.never()),
-    scope: v.optional(EnvFileScopeSchema),
   }),
 ]);
 

@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { type AnyServiceConfig, type Config, getLoadedConfig } from '../config';
+import { type AnyServiceConfig, type Config, getLoadedConfig, getWorkspaceDir } from '../config';
 import {
   type SerializedEnvResolution,
   assignedNames,
   envCandidatePaths,
+  envDirs,
   envFileNames,
   targetEnvLayer,
 } from '../env';
@@ -60,7 +61,9 @@ export function resolveOneOffTarget(place: OneOffPlace): ResolvedTarget {
 export function oneOffEnvLayer(target: ResolvedTarget, root: string): Record<string, string> {
   const config = loadedConfig();
   return targetEnvLayer(target, {
-    cwd: root,
+    // The config's own root, which its services resolved against: not always `root`, the folder
+    // holding the config, when the config points `workspaceDir` elsewhere.
+    resolvedWorkspaceDir: getWorkspaceDir(),
     files: config.envFiles ?? envFileNames(),
     override: config.envOverride,
     decrypt: config.envDecrypt,
@@ -84,9 +87,9 @@ export function oneOffSpecFor(
     const [command, ...args] = request.command;
     return { cwd: target.dir, command, args, env };
   }
-  // scriptExec/definesScript key off `.absoluteDir` only, so a minimal view over the target's
+  // scriptExec/definesScript key off `.resolvedTargetDir` only, so a minimal view over the target's
   // directory suffices — a service's, or a directory that is none.
-  const atDir = { absoluteDir: target.dir } as AnyServiceConfig;
+  const atDir = { resolvedTargetDir: target.dir } as AnyServiceConfig;
   if (!definesScript(atDir, request.script)) {
     throw new ScriptNotFoundError(
       `No "${request.script}" script or make target found in ${target.dir}`,
@@ -112,6 +115,18 @@ export function resolveOneOff(request: OneOffRequest): OneOffSpec {
   );
 }
 
+/** The directory a target's `.env` files are walked up from: absolute, as {@link envDirs} takes it. */
+function targetDirOf(target: ResolvedTarget): string {
+  switch (target.kind) {
+    case 'service':
+      return target.service.resolvedTargetDir;
+    case 'directory':
+      return target.dir;
+    case 'root':
+      return getWorkspaceDir();
+  }
+}
+
 /**
  * A target's environment as `resolveEnv()` returns it: its layer with the
  * variables stackctl sets itself, and the files it was resolved from.
@@ -122,16 +137,17 @@ export function oneOffEnvResolution(
   layer: Record<string, string> = oneOffEnvLayer(target, root),
 ): SerializedEnvResolution {
   const config = loadedConfig();
-  const relativeDir =
-    target.kind === 'service'
-      ? target.service.relativeDir
-      : target.kind === 'directory'
-        ? target.relativeDir
-        : '.';
-  const candidates = envCandidatePaths({ cwd: root, relativeDir, files: config.envFiles });
+  const resolvedWorkspaceDir = getWorkspaceDir();
+  const resolvedTargetDir = targetDirOf(target);
+  const candidates = envCandidatePaths({
+    resolvedWorkspaceDir,
+    resolvedTargetDir,
+    files: config.envFiles,
+  });
   const files = candidates.filter((file) => fs.existsSync(file));
-  // A target at the root has one scope, which is its own.
-  const ownDir = path.resolve(root, relativeDir);
+  // The target's own files, as against those of the directories above it. A target at the root
+  // has one directory, which is its own.
+  const ownDir = envDirs(resolvedWorkspaceDir, resolvedTargetDir).at(-1);
   const own = files.filter((file) => path.dirname(file) === ownDir);
   const env = { ...layer };
   for (const name of ['STACKCTL_PROFILE', 'STACKCTL_CWD', 'STACKCTL_WORKSPACE_DIR'] as const) {

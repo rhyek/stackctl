@@ -15,7 +15,7 @@ beforeAll(() => {
 afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 const app = (name: string, over: Partial<AnyServiceConfig> = {}) =>
-  ({ name, relativeDir: name, absoluteDir: dir, ...over }) as AnyServiceConfig;
+  ({ name, targetDir: name, resolvedTargetDir: dir, ...over }) as AnyServiceConfig;
 
 const client = {} as ControlClient;
 

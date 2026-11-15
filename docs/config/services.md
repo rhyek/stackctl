@@ -40,7 +40,7 @@ Every option is optional. `{}` is a valid service: it runs the `dev` script in
 | [`urls`](#urls)                 | none                  | Links shown in the footer.                         |
 | [`autostart`](#autostart)       | `true`                | Whether it starts with the session.                |
 | [`selectable`](#selectable)     | `true`                | Whether the picker lists it.                       |
-| [`relativeDir`](#relativedir)   | `<serviceRootDir>/<name>` | The service's directory.                       |
+| [`targetDir`](#targetdir)       | `<serviceRootDir>/<name>` | The service's directory.                       |
 | [`tokens`](#tokens)             | none                  | Values for this service's callbacks.               |
 | [`logs`](#logs)                 | inherits              | Timestamps and log formatting for this service.    |
 | [`color`](#color)               | assigned              | The color of its log label.                        |
@@ -60,8 +60,8 @@ web: { port: ({ envs }) => Number(envs.WEB_PORT) },
 ```
 
 A callback that returns `NaN`, the usual sign of a missing variable, is an error naming the
-service and the env files that were read. Only a `PORT` in the service's own `.env` file
-overrides the injected one.
+service and the env files that were read. Only a `PORT` in a `.env` file in the service's own
+directory overrides the injected one.
 
 ## `healthcheck`
 
@@ -163,13 +163,17 @@ for it waits until you do.
 Set `false` to hide a service from the picker. It still runs as another service's dep, or with
 `-s`.
 
-## `relativeDir`
+## `targetDir`
 
 - **Type:** `string`
 - **Default:** `<serviceRootDir>/<name>`
 
-The service's directory, relative to the workspace. Set it for a service that lives somewhere
-else. It is required when the config has no `serviceRootDir`.
+The service's directory: relative to the workspace, or absolute. Set it for a service that
+lives somewhere else. It is required when the config has no `serviceRootDir`.
+
+- **It must be inside the workspace.** One outside fails when the config loads.
+- **It decides which `.env` files load**: those of every directory from the root down to it.
+  See [Which files load](../guide/env.md#which-files-load).
 
 ## `tokens`
 

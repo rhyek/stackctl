@@ -12,7 +12,7 @@ function configTemplate(): string {
 
 export default defineConfig({
   // Where the services live: each one's directory is \`<serviceRootDir>/<key>\` unless it sets
-  // \`relativeDir\` itself.
+  // \`targetDir\` itself.
   serviceRootDir: 'apps',
   // Keyed by service name — the key is the name, so there's no \`name\` field.
   services: {

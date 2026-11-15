@@ -425,7 +425,7 @@ describe('resolveEnv()', () => {
     'cwd',
     'useConfig',
     'service',
-    'relativeDir',
+    'targetDir',
     'files',
     'override',
     'vars',

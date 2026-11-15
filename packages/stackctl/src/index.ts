@@ -94,7 +94,6 @@ export type { ServiceAction } from './control-server';
 export type { InfraAction, InfraStatus } from './infra/control';
 export {
   resolveEnv,
-  envCandidatePaths,
   ambientEnv,
   envFileNames,
   currentProfile,
@@ -108,7 +107,5 @@ export {
   type EnvFileAnchor,
   type EnvFileBefore,
   type EnvFileAfter,
-  type EnvFileOrder,
-  type EnvFileScope,
 } from './env';
 export type { EnvResolution } from './env';

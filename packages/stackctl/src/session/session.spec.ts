@@ -144,7 +144,8 @@ function setup(opts: {
   const plan: SessionPlan = {
     ...buildSessionPlan(selected.map((s) => s.name)),
     cwd: root,
-    envFiles: { workspace: ['.env'], service: ['.env'] },
+    resolvedWorkspaceDir: root,
+    envFiles: ['.env'],
   };
 
   const order: string[] = [];

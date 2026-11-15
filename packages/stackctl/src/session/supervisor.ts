@@ -4,9 +4,9 @@ import chalk from 'chalk';
 import { STACKCTL_LABEL_COLOR, PACKAGE_PALETTE } from '../colors';
 import { type AnyServiceConfig, findService, getDevScript, getRegisteredPackages } from '../config';
 import {
-  type EnvFileOrder,
   EnvFileSnapshot,
   envCandidatePaths,
+  envDirs,
   ENV_KEYS_FILENAME,
   envFileOrder,
   envKeysFile,
@@ -233,8 +233,11 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   private readonly readiness: Readiness;
   private readonly clock: Clock;
   private readonly createProcess: (opts: ServiceProcessOptions) => SupervisedProcess;
+  /** Where the CLI anchored, the config's folder: the session's records and trust file. */
   private readonly root: string;
-  private readonly envFiles: EnvFileOrder;
+  /** The workspace root the `.env` files are walked up to: the config's `workspaceDir`. */
+  private readonly resolvedWorkspaceDir: string;
+  private readonly envFiles: string[];
   private readonly snapshot = new EnvFileSnapshot();
   private readonly services = new Map<string, Service>();
   /** Every process still running, dev and one-off alike, by the service it belongs to. */
@@ -267,6 +270,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     this.clock = opts.clock ?? systemClock;
     this.createProcess = opts.createProcess ?? ((o) => new ServiceProcess(o));
     this.root = this.plan.cwd ?? process.cwd();
+    this.resolvedWorkspaceDir = this.plan.resolvedWorkspaceDir ?? this.root;
     this.envFiles = this.plan.envFiles ?? envFileOrder();
     this.records = new ChildRecords(this.root);
     const gold = chalk.hex(STACKCTL_LABEL_COLOR);
@@ -288,7 +292,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     this.firstRead = this.snapshot
       .refresh([
         ...this.plan.sortedPackages.flatMap((p) => this.envPaths(p)),
-        ...(this.plan.envDecrypt ? [envKeysFile(this.root)] : []),
+        ...(this.plan.envDecrypt ? [envKeysFile(this.resolvedWorkspaceDir)] : []),
       ])
       .catch(() => {})
       .then(() => {
@@ -433,7 +437,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     const proc: SupervisedProcess = this.createProcess({
       name,
       command: spec.command,
-      cwd: svc.config.absoluteDir,
+      cwd: svc.config.resolvedTargetDir,
       env: spec.env,
       onLine: (text, isError) => this.line(svc, proc, text, isError),
       records: this.records,
@@ -620,7 +624,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     const proc: SupervisedProcess = this.createProcess({
       name,
       command: commandLine(spec.cmd, spec.args),
-      cwd: config.absoluteDir,
+      cwd: config.resolvedTargetDir,
       env: spec.env,
       onLine: (text, isError) => this.line(svc, proc, text, isError),
       records: this.records,
@@ -775,8 +779,8 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   /** The `.env` files a service's environment is read from. */
   private envPaths(config: AnyServiceConfig): string[] {
     return envCandidatePaths({
-      cwd: this.root,
-      relativeDir: config.relativeDir,
+      resolvedWorkspaceDir: this.resolvedWorkspaceDir,
+      resolvedTargetDir: config.resolvedTargetDir,
       files: this.envFiles,
     });
   }
@@ -786,7 +790,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     return {
       ...process.env,
       ...packageEnvLayer(config, {
-        cwd: this.root,
+        resolvedWorkspaceDir: this.resolvedWorkspaceDir,
         files: this.envFiles,
         override: this.plan.envOverride,
         decrypt: this.plan.envDecrypt,
@@ -798,8 +802,9 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   }
 
   /**
-   * (Re)watches the `.env` files: the workspace's restart every service, a service directory's
-   * that service, and with `env.decrypt` so does `.env.keys`. Each change also reads the files
+   * (Re)watches the `.env` files: a directory's restart every service at or below it — the
+   * workspace's every service, a service directory's that service — and with `env.decrypt` so
+   * does `.env.keys`. Each change also reads the files
    * again.
    */
   private watchEnv(): void {
@@ -815,26 +820,23 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
         void this.envChanged(name);
       }
     };
-    const root = path.resolve(this.root);
-    const targets: WatchTarget[] = [
-      {
-        dir: root,
-        filenames: [
-          ...this.envFiles.workspace,
-          ...(this.plan.envDecrypt ? [ENV_KEYS_FILENAME] : []),
-        ],
-        onChange: () => changed(root, [...this.services.keys()]),
-      },
-    ];
+    const root = path.resolve(this.resolvedWorkspaceDir);
+    // Every directory some service reads `.env` files from, with the services that read them: the
+    // root's are every service's, and one between the root and a service's every service below it.
+    const readers = new Map<string, string[]>([[root, []]]);
     for (const { config } of this.services.values()) {
-      if (path.resolve(config.absoluteDir) !== root) {
-        targets.push({
-          dir: config.absoluteDir,
-          filenames: this.envFiles.service,
-          onChange: () => changed(config.absoluteDir, [config.name]),
-        });
+      for (const dir of envDirs(root, config.resolvedTargetDir)) {
+        readers.set(dir, [...(readers.get(dir) ?? []), config.name]);
       }
     }
+    const targets: WatchTarget[] = [...readers].map(([dir, names]) => ({
+      dir,
+      filenames:
+        dir === root && this.plan.envDecrypt
+          ? [...this.envFiles, ENV_KEYS_FILENAME]
+          : this.envFiles,
+      onChange: () => changed(dir, names),
+    }));
     this.watch = watchEnvFiles({
       targets,
       onError: (dir, error) => {

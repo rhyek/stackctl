@@ -22,7 +22,7 @@ import {
 } from './config';
 import { packageEnvLayer } from './env';
 
-/** `defineConfig`'s options as seen with `serviceRootDir` set (so `relativeDir` is optional). */
+/** `defineConfig`'s options as seen with `serviceRootDir` set (so `targetDir` is optional). */
 type RootedOpts = Parameters<
   typeof defineConfig<Record<never, never>, Record<string, unknown>, string, 'packages'>
 >[0];
@@ -53,43 +53,202 @@ describe('command / autostart', () => {
 });
 
 describe('defineConfig path resolution', () => {
-  test('infers relativeDir from serviceRootDir + key, resolving path against cwd', () => {
+  test('infers targetDir from serviceRootDir + key, resolving path against cwd', () => {
     const cfg = defineConfig({ serviceRootDir: 'apps', services: { svc: {}, '@scope/x': {} } });
-    expect(cfg.services.svc.relativeDir).toBe('apps/svc');
-    expect(cfg.services.svc.absoluteDir).toBe(path.resolve(process.cwd(), 'apps/svc'));
-    expect(cfg.services['@scope/x'].relativeDir).toBe('apps/@scope/x');
+    expect(cfg.services.svc.targetDir).toBe('apps/svc');
+    expect(cfg.services.svc.resolvedTargetDir).toBe(path.resolve(process.cwd(), 'apps/svc'));
+    expect(cfg.services['@scope/x'].targetDir).toBe('apps/@scope/x');
   });
 
   test('normalizes a trailing slash on serviceRootDir', () => {
     const cfg = defineConfig({ serviceRootDir: 'apps/', services: { svc: {} } });
-    expect(cfg.services.svc.relativeDir).toBe('apps/svc');
+    expect(cfg.services.svc.targetDir).toBe('apps/svc');
   });
 
-  test('lets relativeDir override the inferred directory', () => {
+  test('lets targetDir override the inferred directory', () => {
     const cfg = defineConfig({
       serviceRootDir: 'packages',
-      services: { svc: { relativeDir: 'apps/svc' }, other: {} },
+      services: { svc: { targetDir: 'apps/svc' }, other: {} },
     });
-    expect(cfg.services.svc.relativeDir).toBe('apps/svc');
-    expect(cfg.services.other.relativeDir).toBe('packages/other');
+    expect(cfg.services.svc.targetDir).toBe('apps/svc');
+    expect(cfg.services.other.targetDir).toBe('packages/other');
   });
 
-  test('requires relativeDir when there is no serviceRootDir, naming the package', () => {
+  test('requires targetDir when there is no serviceRootDir, naming the package', () => {
     expect(() =>
-      // @ts-expect-error relativeDir is required without serviceRootDir
+      // @ts-expect-error targetDir is required without serviceRootDir
       defineConfig({ services: { svc: { port: 3000 } } }),
-    ).toThrow(/svc has no `relativeDir`, and the config sets no `serviceRootDir` to infer it from/);
+    ).toThrow(/svc has no `targetDir`, and the config sets no `serviceRootDir` to infer it from/);
   });
 
-  test('honors explicit relativeDir and workspaceDir', () => {
+  test('honors explicit targetDir and workspaceDir', () => {
     const packages = Object.values(
       defineConfig({
         serviceRootDir: 'packages',
         workspaceDir: '/repo',
-        services: { svc: { relativeDir: 'apps/svc' } },
+        services: { svc: { targetDir: 'apps/svc' } },
       }).services,
     );
-    expect(packages[0]!.absoluteDir).toBe(path.resolve('/repo', 'apps/svc'));
+    expect(packages[0]!.resolvedTargetDir).toBe(path.resolve('/repo', 'apps/svc'));
+  });
+});
+
+describe('targetDir and workspaceDir, relative or absolute', () => {
+  const CONFIG_DIR = Symbol.for('stackctl.configDir');
+  let ws: string;
+  beforeEach(() => {
+    ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-dirs-')));
+    fs.mkdirSync(path.join(ws, 'apps', 'api'), { recursive: true });
+  });
+  afterEach(() => {
+    delete (globalThis as Record<symbol, unknown>)[CONFIG_DIR];
+    fs.rmSync(ws, { recursive: true, force: true });
+  });
+
+  test('keeps a targetDir as written, and resolves it against the workspace', () => {
+    const cfg = defineConfig({ workspaceDir: ws, services: { api: { targetDir: 'apps/api' } } });
+    expect(cfg.services.api.targetDir).toBe('apps/api');
+    expect(cfg.services.api.resolvedTargetDir).toBe(path.join(ws, 'apps/api'));
+  });
+
+  test('takes an absolute targetDir inside the workspace', () => {
+    const abs = path.join(ws, 'apps/api');
+    const cfg = defineConfig({ workspaceDir: ws, services: { api: { targetDir: abs } } });
+    expect(cfg.services.api.targetDir).toBe(abs);
+    expect(cfg.services.api.resolvedTargetDir).toBe(abs);
+  });
+
+  test("takes '.' for a service at the workspace root", () => {
+    const cfg = defineConfig({ workspaceDir: ws, services: { api: { targetDir: '.' } } });
+    expect(cfg.services.api.resolvedTargetDir).toBe(ws);
+  });
+
+  test('normalizes a targetDir written with `..` that stays inside', () => {
+    const cfg = defineConfig({
+      workspaceDir: ws,
+      services: { api: { targetDir: 'apps/web/../api/' } },
+    });
+    expect(cfg.services.api.resolvedTargetDir).toBe(path.join(ws, 'apps/api'));
+  });
+
+  test('takes an absolute serviceRootDir inside the workspace', () => {
+    const cfg = defineConfig({
+      workspaceDir: ws,
+      serviceRootDir: path.join(ws, 'apps'),
+      services: { api: {} },
+    });
+    expect(cfg.services.api.resolvedTargetDir).toBe(path.join(ws, 'apps/api'));
+  });
+
+  test('rejects a relative targetDir that leaves the workspace', () => {
+    expect(() =>
+      defineConfig({ workspaceDir: ws, services: { api: { targetDir: '../elsewhere' } } }),
+    ).toThrow(`services.api.targetDir is "../elsewhere", which is outside the workspace (${ws})`);
+  });
+
+  test('rejects an absolute targetDir outside the workspace', () => {
+    const outside = path.dirname(ws);
+    expect(() =>
+      defineConfig({ workspaceDir: ws, services: { api: { targetDir: outside } } }),
+    ).toThrow(`services.api.targetDir is "${outside}", which is outside the workspace (${ws})`);
+  });
+
+  test('rejects a targetDir whose path only starts with the workspace', () => {
+    expect(() =>
+      defineConfig({ workspaceDir: ws, services: { api: { targetDir: `${ws}-other` } } }),
+    ).toThrow('which is outside the workspace');
+  });
+
+  test("rejects the old `relativeDir` key with the validator's own error", () => {
+    expect(
+      () =>
+      // @ts-expect-error - `relativeDir` is no longer a service key.
+      defineConfig({ workspaceDir: ws, services: { api: { targetDir: 'apps/api', relativeDir: 'x' } } }), // oxfmt-ignore
+    ).toThrow(/services\.api\.relativeDir: Invalid key/);
+  });
+
+  test('shows no `relativeDir` or `absoluteDir` on the resolved service', () => {
+    const cfg = defineConfig({ workspaceDir: ws, services: { api: { targetDir: 'apps/api' } } });
+    expect(cfg.services.api).not.toHaveProperty('relativeDir');
+    expect(cfg.services.api).not.toHaveProperty('absoluteDir');
+  });
+
+  test("resolves a relative workspaceDir against the config file's directory", () => {
+    (globalThis as Record<symbol, unknown>)[CONFIG_DIR] = path.join(ws, 'apps');
+    const cfg = defineConfig({ workspaceDir: '..', services: { api: { targetDir: 'apps/api' } } });
+    expect(getWorkspaceDir()).toBe(ws);
+    expect(cfg.services.api.resolvedTargetDir).toBe(path.join(ws, 'apps/api'));
+  });
+
+  test("resolves a relative workspaceDir below the config file's directory", () => {
+    (globalThis as Record<symbol, unknown>)[CONFIG_DIR] = ws;
+    defineConfig({ workspaceDir: 'apps', services: { api: { targetDir: 'api' } } });
+    expect(getWorkspaceDir()).toBe(path.join(ws, 'apps'));
+  });
+
+  test("defaults the workspace to the config file's directory", () => {
+    (globalThis as Record<symbol, unknown>)[CONFIG_DIR] = ws;
+    const cfg = defineConfig({ services: { api: { targetDir: 'apps/api' } } });
+    expect(getWorkspaceDir()).toBe(ws);
+    expect(cfg.services.api.resolvedTargetDir).toBe(path.join(ws, 'apps/api'));
+  });
+
+  test("ignores the config file's directory for an absolute workspaceDir", () => {
+    (globalThis as Record<symbol, unknown>)[CONFIG_DIR] = path.join(ws, 'apps');
+    defineConfig({ workspaceDir: ws, services: { api: { targetDir: 'apps/api' } } });
+    expect(getWorkspaceDir()).toBe(ws);
+  });
+
+  test('gives a callback the .env files of every directory up to its service', () => {
+    fs.writeFileSync(path.join(ws, '.env'), 'A=root\nB=root\nC=root\n');
+    fs.writeFileSync(path.join(ws, 'apps', '.env'), 'B=apps\nC=apps\n');
+    fs.writeFileSync(path.join(ws, 'apps', 'api', '.env'), 'C=api\n');
+    const seen: Record<string, string | undefined>[] = [];
+    defineConfig({
+      workspaceDir: ws,
+      services: {
+        api: {
+          targetDir: 'apps/api',
+          urls: [({ envs }) => (seen.push({ A: envs.A, B: envs.B, C: envs.C }), 'http://x')],
+        },
+      },
+    });
+    expect(seen).toEqual([{ A: 'root', B: 'apps', C: 'api' }]);
+  });
+
+  test("gives a service nested in another's directory the outer one's files too", () => {
+    fs.mkdirSync(path.join(ws, 'apps', 'api', 'worker'), { recursive: true });
+    fs.writeFileSync(path.join(ws, 'apps', 'api', '.env'), 'OUTER=api\nWHO=api\n');
+    fs.writeFileSync(path.join(ws, 'apps', 'api', 'worker', '.env'), 'WHO=worker\n');
+    const seen: Record<string, string | undefined>[] = [];
+    defineConfig({
+      workspaceDir: ws,
+      services: {
+        api: { targetDir: 'apps/api' },
+        worker: {
+          targetDir: 'apps/api/worker',
+          urls: [({ envs }) => (seen.push({ OUTER: envs.OUTER, WHO: envs.WHO }), 'http://x')],
+        },
+      },
+    });
+    expect(seen).toEqual([{ OUTER: 'api', WHO: 'worker' }]);
+  });
+
+  test("does not give a service a sibling's files", () => {
+    fs.mkdirSync(path.join(ws, 'apps', 'web'), { recursive: true });
+    fs.writeFileSync(path.join(ws, 'apps', 'web', '.env'), 'WEB=yes\n');
+    const seen: (string | undefined)[] = [];
+    defineConfig({
+      workspaceDir: ws,
+      services: {
+        api: {
+          targetDir: 'apps/api',
+          urls: [({ envs }) => (seen.push(envs.WEB), 'http://x')],
+        },
+        web: { targetDir: 'apps/web' },
+      },
+    });
+    expect(seen).toEqual([undefined]);
   });
 });
 
@@ -108,7 +267,7 @@ describe('meta defaults', () => {
   test("defaults envFiles to the development profile's set", () => {
     const cfg = defineConfig({ serviceRootDir: 'packages', services: { svc: {} } });
     const files = ['.env', '.env.local', '.env.development', '.env.development.local'];
-    expect(cfg.envFiles).toEqual({ workspace: files, service: files });
+    expect(cfg.envFiles).toEqual(files);
     expect(cfg.profile).toBe('development');
   });
 
@@ -117,7 +276,7 @@ describe('meta defaults', () => {
     try {
       const cfg = defineConfig({ serviceRootDir: 'packages', services: { svc: {} } });
       const files = ['.env', '.env.local', '.env.test', '.env.test.local'];
-      expect(cfg.envFiles).toEqual({ workspace: files, service: files });
+      expect(cfg.envFiles).toEqual(files);
       expect(cfg.profile).toBe('test');
     } finally {
       delete process.env.STACKCTL_PROFILE;
@@ -783,7 +942,7 @@ describe('validation', () => {
     const error = (() => {
       try {
         defineConfig({
-          services: { web: { relativeDir: 'web', port: 3000 } },
+          services: { web: { targetDir: 'web', port: 3000 } },
           reverseProxy: {
             port: 4000,
             publicAddress: { domain: 'localhost', scheme: 'http', port: 4000 },
@@ -1180,7 +1339,7 @@ describe('getWorkspaceDir', () => {
       // What decides whether a port holder belongs to this workspace — a config living in a
       // subdirectory can point `workspaceDir` somewhere else entirely.
       expect(getWorkspaceDir()).toBe(path.resolve(dir));
-      expect(getRegisteredPackages()[0]!.absoluteDir).toBe(path.join(dir, 'packages/svc'));
+      expect(getRegisteredPackages()[0]!.resolvedTargetDir).toBe(path.join(dir, 'packages/svc'));
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -1523,8 +1682,13 @@ describe('reverseProxy.routes', () => {
       expect(cfg.services.web.publicOrigin).toBeUndefined();
       expect(cfg.services.docs.publicOrigin).toBeUndefined();
       expect(seen).toEqual([{ name: 'web', kind: 'service', port: 3000, route: null, publicOrigin: undefined }]); // oxfmt-ignore
-      expect(packageEnvLayer(cfg.services.web, { cwd: os.tmpdir() })).not.toHaveProperty('PUBLIC_ORIGIN'); // oxfmt-ignore
-      expect(packageEnvLayer(cfg.services.web, { cwd: os.tmpdir() })).toMatchObject({
+      expect(packageEnvLayer(cfg.services.web, { resolvedWorkspaceDir: getWorkspaceDir(), read: () => null })).not.toHaveProperty('PUBLIC_ORIGIN'); // oxfmt-ignore
+      expect(
+        packageEnvLayer(cfg.services.web, {
+          resolvedWorkspaceDir: getWorkspaceDir(),
+          read: () => null,
+        }),
+      ).toMatchObject({
         PORT: '3000',
       });
       // Healthchecks are unaffected: still the service on loopback.
@@ -1926,7 +2090,12 @@ describe('reverseProxy', () => {
       'http://www.example.test:4000',
       'http://www.example.test:4000/pricing',
     ]);
-    expect(packageEnvLayer(cfg.services.landing, { cwd: os.tmpdir() })).toMatchObject({
+    expect(
+      packageEnvLayer(cfg.services.landing, {
+        resolvedWorkspaceDir: getWorkspaceDir(),
+        read: () => null,
+      }),
+    ).toMatchObject({
       PORT: '3000',
       PUBLIC_ORIGIN: 'http://www.example.test:4000',
     });
@@ -1951,7 +2120,7 @@ describe('reverseProxy', () => {
         },
         services: { web: { port: 3000 }, api: { port: 3001 } },
       });
-      const layer = (pkg: AnyServiceConfig) => packageEnvLayer(pkg, { cwd: dir });
+      const layer = (pkg: AnyServiceConfig) => packageEnvLayer(pkg, { resolvedWorkspaceDir: dir });
       expect(layer(cfg.services.web)).toMatchObject({
         PORT: '3000',
         PUBLIC_ORIGIN: 'https://web.example.test',
@@ -2345,7 +2514,7 @@ describe('publicOrigin', () => {
     expect(cfg.services.web.publicOrigin).toBe('https://app.example.test');
     expect(cfg.services.web.urls).toEqual(['https://app.example.test', 'https://app.example.test/todos', 'https://app.example.test/x']); // oxfmt-ignore
     expect(cfg.services.docs.urls).toEqual(['https://www.example.test/docs']);
-    expect(packageEnvLayer(cfg.services.web, { cwd: os.tmpdir() })).toMatchObject({ PUBLIC_ORIGIN: 'https://app.example.test' }); // oxfmt-ignore
+    expect(packageEnvLayer(cfg.services.web, { resolvedWorkspaceDir: getWorkspaceDir(), read: () => null })).toMatchObject({ PUBLIC_ORIGIN: 'https://app.example.test' }); // oxfmt-ignore
     expect(seen).toEqual([{ name: 'web', kind: 'service', port: 3000, route: null, publicOrigin: 'https://app.example.test' }]); // oxfmt-ignore
     // Routing is untouched: the same routes, no host of its own, and the healthcheck on loopback.
     expect(cfg.reverseProxy).toEqual(plain.reverseProxy);
@@ -3607,34 +3776,25 @@ describe('env.additionalFiles', () => {
   const base = () => ({ serviceRootDir: 'packages' as const, workspaceDir: ws });
   const write = (rel: string, text: string) => fs.writeFileSync(path.join(ws, rel), text);
 
-  test("places the files among stackctl's own on the resolved config, per scope", () => {
+  test("places the files among stackctl's own on the resolved config", () => {
     const cfg = defineConfig({
       ...base(),
       env: {
         additionalFiles: [
-          { file: '.env.development.pre', before: 'profile' },
-          { file: '.env.secrets', after: 'profileLocal', scope: 'service' },
+          { file: '.env.development.pre', before: '.env.<profile>' },
+          { file: '.env.secrets', after: '.env.<profile>.local' },
         ],
       },
       services: { api: {} },
     });
-    expect(cfg.envFiles).toEqual({
-      workspace: [
-        '.env',
-        '.env.local',
-        '.env.development.pre',
-        '.env.development',
-        '.env.development.local',
-      ],
-      service: [
-        '.env',
-        '.env.local',
-        '.env.development.pre',
-        '.env.development',
-        '.env.development.local',
-        '.env.secrets',
-      ],
-    });
+    expect(cfg.envFiles).toEqual([
+      '.env',
+      '.env.local',
+      '.env.development.pre',
+      '.env.development',
+      '.env.development.local',
+      '.env.secrets',
+    ]);
   });
 
   test('calls a callback with the active profile', () => {
@@ -3645,13 +3805,13 @@ describe('env.additionalFiles', () => {
       env: {
         additionalFiles: ({ profile }) => {
           profiles.push(profile);
-          return [{ file: `.env.${profile}.pre`, before: 'profile' }];
+          return [{ file: `.env.${profile}.pre`, before: '.env.<profile>' }];
         },
       },
       services: { api: {} },
     });
     expect(profiles).toEqual(['test']);
-    expect(cfg.envFiles.workspace).toEqual([
+    expect(cfg.envFiles).toEqual([
       '.env',
       '.env.local',
       '.env.test.pre',
@@ -3668,8 +3828,8 @@ describe('env.additionalFiles', () => {
       ...base(),
       env: {
         additionalFiles: ({ profile }) => [
-          { file: `.env.${profile}.pre`, before: 'profile' },
-          { file: `.env.${profile}.pre.local`, before: 'profile' },
+          { file: `.env.${profile}.pre`, before: '.env.<profile>' },
+          { file: `.env.${profile}.pre.local`, before: '.env.<profile>' },
         ],
       },
       services: { api: { port: ({ envs }) => Number(envs.PORT_OF_API) } },
@@ -3682,7 +3842,7 @@ describe('env.additionalFiles', () => {
     const cfg = defineConfig({
       ...base(),
       env: {
-        additionalFiles: [{ file: '.env.local.extra', after: 'local' }],
+        additionalFiles: [{ file: '.env.local.extra', after: '.env.local' }],
         vars: ({ envs }) => ({ BUCKET: `dev-${String(envs.REGION)}` }),
       },
       services: { api: {} },
@@ -3697,13 +3857,13 @@ describe('env.additionalFiles', () => {
       const cfg = defineConfig({
         ...base(),
         env: {
-          additionalFiles: [{ file: '.env.development.pre', before: 'profile' }],
+          additionalFiles: [{ file: '.env.development.pre', before: '.env.<profile>' }],
           override: ['STACKCTL_SPEC_PINNED'],
         },
         services: { api: {} },
       });
       const layer = packageEnvLayer(cfg.services.api, {
-        cwd: ws,
+        resolvedWorkspaceDir: ws,
         files: cfg.envFiles,
         override: cfg.envOverride,
       });
@@ -3725,70 +3885,73 @@ describe('env.additionalFiles', () => {
     const invalid = (issue: string) => `invalid stackctl config:\n  - env.additionalFiles.${issue}`;
 
     test('an entry with both before and after, or neither', () => {
-      expect(load([{ file: '.env.x', before: 'profile', after: 'local' }])).toThrow(
-        invalid('0.after: Invalid type: Expected never but received "local"'),
+      expect(load([{ file: '.env.x', before: '.env.<profile>', after: '.env.local' }])).toThrow(
+        invalid('0.after: Invalid type: Expected never but received ".env.local"'),
       );
-      expect(load([{ file: '.env.ok', before: 'profile' }, { file: '.env.x' }])).toThrow(
+      expect(load([{ file: '.env.ok', before: '.env.<profile>' }, { file: '.env.x' }])).toThrow(
         invalid('1.before: Invalid key: Expected "before" but received undefined'),
       );
     });
 
-    test('an unknown anchor', () => {
-      expect(load([{ file: '.env.x', after: '.env.local' }])).toThrow(
-        invalid('0.after: Invalid type: Expected ("base" | "local" | "profile" | "profileLocal") but received ".env.local"'), // oxfmt-ignore
+    test('an unknown anchor: an old name, or the profile file by its real name', () => {
+      expect(load([{ file: '.env.x', after: 'local' }])).toThrow(
+        invalid('0.after: Invalid type: Expected (".env" | ".env.local" | ".env.<profile>" | ".env.<profile>.local") but received "local"'), // oxfmt-ignore
+      );
+      expect(load([{ file: '.env.x', before: '.env.development' }])).toThrow(
+        invalid('0.before: Invalid type: Expected (".env" | ".env.local" | ".env.<profile>" | ".env.<profile>.local") but received ".env.development"'), // oxfmt-ignore
       );
     });
 
     test('an empty file', () => {
-      expect(load([{ file: '', before: 'profile' }])).toThrow(
+      expect(load([{ file: '', before: '.env.<profile>' }])).toThrow(
         'env.additionalFiles.0.file: Invalid length: Expected >=1 but received 0',
       );
     });
 
     test.each(['/etc/.env', '../.env.x', 'config/.env.x', '..', '.'])('the path %j', (file) => {
-      expect(load([{ file, before: 'profile' }])).toThrow(
-        `env.additionalFiles[0] (${JSON.stringify(file)}): \`file\` must be a filename in the scope's directory, not a path`,
+      expect(load([{ file, before: '.env.<profile>' }])).toThrow(
+        `env.additionalFiles[0] (${JSON.stringify(file)}): \`file\` must be a filename, not a path`,
       );
     });
 
     test("one of stackctl's own files", () => {
-      expect(load([{ file: '.env.development', after: 'local' }])).toThrow(
+      expect(load([{ file: '.env.development', after: '.env.local' }])).toThrow(
         `env.additionalFiles[0] (".env.development"): ".env.development" is one of stackctl's own files for profile "development", which load anyway`,
       );
     });
 
-    test('a file another entry lists at a scope they share', () => {
+    test('a file another entry lists, on another anchor', () => {
       expect(
         load([
-          { file: '.env.x', before: 'profile', scope: 'service' },
-          { file: '.env.x', after: 'profileLocal' },
+          { file: '.env.x', before: '.env.<profile>' },
+          { file: '.env.x', after: '.env.<profile>.local' },
         ]),
       ).toThrow('env.additionalFiles[1] (".env.x"): already listed as env.additionalFiles[0]');
     });
 
-    test('an unknown key or scope', () => {
-      expect(load([{ file: '.env.x', befor: 'profile' }])).toThrow(
+    test('an unknown key, `scope` among them', () => {
+      expect(load([{ file: '.env.x', befor: '.env.<profile>' }])).toThrow(
         invalid('0.befor: Invalid key: Expected never but received "befor"'),
       );
-      expect(load([{ file: '.env.x', before: 'profile', scope: 'root' }])).toThrow(
-        invalid('0.scope: Invalid type: Expected ("workspace" | "service") but received "root"'),
+      expect(load([{ file: '.env.x', before: '.env.<profile>', scope: 'service' }])).toThrow(
+        invalid('0.scope: Invalid key: Expected never but received "scope"'),
       );
     });
 
     test('an entry from a callback, by its index, with the profile it was called for', () => {
-      expect(load(() => [{ file: '.env.x', before: 'profile', befor: 'x' }])).toThrow(
+      expect(load(() => [{ file: '.env.x', before: '.env.<profile>', befor: 'x' }])).toThrow(
         'invalid stackctl config:\n  - env.additionalFiles.0.befor: Invalid key: Expected never but received "befor"\n  (returned by the env.additionalFiles callback for profile "development")', // oxfmt-ignore
       );
       expect(
         load(() => [
-          { file: '.env.ok', before: 'profile' },
+          { file: '.env.ok', before: '.env.<profile>' },
           { file: '.env.x', before: 'nope' },
         ]),
       ).toThrow(
-        'env.additionalFiles.1.before: Invalid type: Expected ("base" | "local" | "profile" | "profileLocal") but received "nope"\n  (returned by the env.additionalFiles callback for profile "development")', // oxfmt-ignore
+        'env.additionalFiles.1.before: Invalid type: Expected (".env" | ".env.local" | ".env.<profile>" | ".env.<profile>.local") but received "nope"\n  (returned by the env.additionalFiles callback for profile "development")', // oxfmt-ignore
       );
-      expect(load(() => [{ file: 'a/.env.x', before: 'profile' }])).toThrow(
-        'env.additionalFiles[0] ("a/.env.x"): `file` must be a filename in the scope\'s directory, not a path\n  (returned by the env.additionalFiles callback for profile "development")', // oxfmt-ignore
+      expect(load(() => [{ file: 'a/.env.x', before: '.env.<profile>' }])).toThrow(
+        'env.additionalFiles[0] ("a/.env.x"): `file` must be a filename, not a path\n  (returned by the env.additionalFiles callback for profile "development")', // oxfmt-ignore
       );
     });
 
@@ -3799,18 +3962,24 @@ describe('env.additionalFiles', () => {
     });
   });
 
-  test('allows one file at each scope, listed twice', () => {
-    const cfg = defineConfig({
+  test('gives a service the additional files of each directory between the root and it', () => {
+    write('.env.extra', 'A=root\nB=root\nC=root\n');
+    fs.mkdirSync(path.join(ws, 'packages'), { recursive: true });
+    write('packages/.env.extra', 'B=packages\nC=packages\n');
+    write('packages/api/.env.extra', 'C=api\n');
+    const seen: Record<string, string | undefined>[] = [];
+    defineConfig({
       ...base(),
-      env: {
-        additionalFiles: [
-          { file: '.env.x', before: 'profile', scope: 'workspace' },
-          { file: '.env.x', after: 'profileLocal', scope: 'service' },
-        ],
+      env: { additionalFiles: [{ file: '.env.extra', after: '.env.<profile>.local' }] },
+      services: {
+        api: {
+          port: ({ envs }) => {
+            seen.push({ A: envs.A, B: envs.B, C: envs.C });
+            return 3000;
+          },
+        },
       },
-      services: { api: {} },
     });
-    expect(cfg.envFiles.workspace).toContain('.env.x');
-    expect(cfg.envFiles.service.at(-1)).toBe('.env.x');
+    expect(seen).toEqual([{ A: 'root', B: 'packages', C: 'api' }]);
   });
 });

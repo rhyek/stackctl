@@ -214,8 +214,8 @@ export function setUpCliWorkspace(name: string): void {
         '    }),',
         "    override: ['PINNED_DIR', 'APPENDED'],",
         '    additionalFiles: ({ profile }) => [',
-        "      { file: `.env.${profile}.pre`, before: 'profile' },",
-        "      { file: `.env.${profile}.pre.local`, before: 'profile' },",
+        "      { file: `.env.${profile}.pre`, before: '.env.<profile>' },",
+        "      { file: `.env.${profile}.pre.local`, before: '.env.<profile>' },",
         '    ],',
         '  },',
         '  services: {',
@@ -256,6 +256,7 @@ export function setUpCliWorkspace(name: string): void {
       rootdir: script('console.log(process.env.ROOT_DIR)'),
       appended: script('console.log(process.env.APPENDED)'),
       preurl: script('console.log(process.env.PRE_URL)'),
+      mid: script('console.log(process.env.MID_VAR)'),
       // A stackctl started from inside one: the script runs `stackctl exec` for `wide`.
       nested: `node "$NESTED_CLI" exec wide -- ${script("console.log(String(process.env.APP_VAR)+'|'+String(process.env.FROM_SHELL))")}`,
       whoami: script(
@@ -300,6 +301,11 @@ export function setUpCliWorkspace(name: string): void {
     });
     fs.mkdirSync(path.join(ws, 'scripts'));
     fs.writeFileSync(path.join(ws, 'scripts', '.env.development'), 'SCRIPTS_VAR=from-scripts\n');
+    // The `.env` files of the directories between the root and a target: the services' folder, and
+    // a directory nested inside `scripts`.
+    fs.writeFileSync(path.join(ws, 'packages', '.env.development'), 'MID_VAR=from-packages\n');
+    fs.mkdirSync(path.join(ws, 'scripts', 'db'));
+    fs.writeFileSync(path.join(ws, 'scripts', 'db', '.env.development'), 'DB_VAR=from-db\n');
   }, 120_000);
 
   afterAll(() => {

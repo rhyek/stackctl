@@ -124,7 +124,7 @@ function setup(seams: Partial<SessionSeams>) {
     close: () => Promise.resolve(),
   };
   const session = new Session({
-    plan: { ...buildSessionPlan(packages.map((p) => p.name)), cwd: root, envFiles: { workspace: ['.env'], service: ['.env'] } }, // oxfmt-ignore
+    plan: { ...buildSessionPlan(packages.map((p) => p.name)), cwd: root, resolvedWorkspaceDir: root, envFiles: ['.env'] }, // oxfmt-ignore
     configPath: path.join(root, 'stackctl.config.ts'),
     logFile,
     forked: false,

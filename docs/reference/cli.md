@@ -270,10 +270,10 @@ are applied. It is the same object a session reports as `config` on
 
 | Field           | What it holds                                                                          |
 | --------------- | -------------------------------------------------------------------------------------- |
-| `services`      | Each service's `port`, `publicOrigin`, `urls`, `healthcheck`, `deps`, `command`, `relativeDir` and `absoluteDir`. |
+| `services`      | Each service's `port`, `publicOrigin`, `urls`, `healthcheck`, `deps`, `command`, `targetDir` (as written) and `resolvedTargetDir` (absolute). |
 | `infra`         | Per provider: the compose `file`, the profile's `projectName`, and each service's `enabled`, `port`, `urls` and `publicOrigin`. |
 | `reverseProxy`  | Its `port`, `tls`, `publicAddress` and `routes`.                                       |
-| `envFiles`      | The `.env` files the profile looks for, in load order, at the `workspace` and `service` scopes. |
+| `envFiles`      | The `.env` filenames the profile looks for in each directory, in load order.          |
 
 Functions (`logs.formatter`, infra callbacks) have no JSON form and are left out.
 

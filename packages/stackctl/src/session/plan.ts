@@ -1,4 +1,10 @@
-import { type AnyServiceConfig, findService, getLoadedConfig, normalizeUrlEntry } from '../config';
+import {
+  type AnyServiceConfig,
+  findService,
+  getLoadedConfig,
+  getWorkspaceDir,
+  normalizeUrlEntry,
+} from '../config';
 import { menuCommandsOf } from '../scripts';
 import { planSelection } from '../selection-plan';
 import type { SessionPlan } from './types';
@@ -45,5 +51,6 @@ export function buildSessionPlan(selected: string[]): SessionPlan {
     envVars: config?.envVars,
     logTimestamps: config?.logTimestamps,
     cwd: process.cwd(),
+    resolvedWorkspaceDir: config ? getWorkspaceDir() : process.cwd(),
   };
 }
