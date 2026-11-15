@@ -22,10 +22,12 @@ import {
   OutsideWorkspaceError,
   packageEnvLayer,
   publishProfileSource,
+  recordWorkspaceEnv,
   resolveEnvFrom,
   resolveProfile,
   targetEnvLayer,
   workspaceEnvLayer,
+  withoutWorkspaceEnv,
 } from './env';
 import type { ResolvedTarget } from './target';
 
@@ -1453,6 +1455,53 @@ describe('packageEnvLayer', () => {
     ).toBe('3001');
   });
 
+  test("resolves with the service's own files, override and vars over the caller's", () => {
+    write('packages/api/.env.api', 'FROM_API_FILE=1\n');
+    write('.env', 'SHELL_SET=file\n');
+    withAmbient({ SHELL_SET: 'shell' }, () => {
+      const pkg = mkPkg({
+        envFiles: ['.env', '.env.api'],
+        envOverride: ['SHELL_SET'],
+        envVars: { OWN_VAR: 'api' },
+      });
+      const layer = withoutList(
+        packageEnvLayer(pkg, {
+          resolvedWorkspaceDir: workspaceDir,
+          files: ['.env'],
+          vars: { CALLER_VAR: 'caller' },
+        }),
+      );
+      const { STACKCTL_REPLACED_ENV: replaced, ...vars } = layer;
+      expect(vars).toEqual({ FROM_API_FILE: '1', SHELL_SET: 'file', OWN_VAR: 'api' });
+      expect(JSON.parse(replaced!)).toEqual({ SHELL_SET: 'shell' });
+    });
+  });
+
+  test("takes the service's unset override as unset, not the caller's: the shell wins", () => {
+    write('.env', 'SHELL_SET=file\n');
+    withAmbient({ SHELL_SET: 'shell' }, () => {
+      const pkg = mkPkg({ envFiles: ['.env'] });
+      const layer = packageEnvLayer(pkg, {
+        resolvedWorkspaceDir: workspaceDir,
+        override: ['SHELL_SET'],
+      });
+      expect(layer.SHELL_SET).toBe('shell');
+    });
+  });
+
+  test("falls back to the caller's options for a service without its own", () => {
+    write('.env', 'A=1\n');
+    write('.env.extra', 'B=2\n');
+    const layer = withoutList(
+      packageEnvLayer(mkPkg({}), {
+        resolvedWorkspaceDir: workspaceDir,
+        files: ['.env', '.env.extra'],
+        vars: { C: '3' },
+      }),
+    );
+    expect(layer).toEqual({ A: '1', B: '2', C: '3' });
+  });
+
   test('keeps the injected PORT and PUBLIC_ORIGIN over a directory between the root and it', () => {
     write('packages/.env', 'PORT=9999\nPUBLIC_ORIGIN=https://mid.example\n');
     const layer = packageEnvLayer(
@@ -2093,4 +2142,36 @@ describe('configEnvReader', () => {
       expect(Date.now() - started).toBeLessThan(3000);
     },
   );
+});
+
+describe('withoutWorkspaceEnv', () => {
+  afterEach(() => {
+    recordWorkspaceEnv([]);
+    delete process.env.STACKCTL_SPEC_WS_NEW;
+    delete process.env.STACKCTL_SPEC_WS_OLD;
+  });
+
+  test('is the environment as given when nothing was merged', () => {
+    recordWorkspaceEnv([]);
+    expect(withoutWorkspaceEnv({ A: '1' })).toEqual({ A: '1' });
+  });
+
+  test('drops what the merge added and restores what it replaced', () => {
+    process.env.STACKCTL_SPEC_WS_OLD = 'shell';
+    recordWorkspaceEnv(['STACKCTL_SPEC_WS_NEW', 'STACKCTL_SPEC_WS_OLD']);
+    process.env.STACKCTL_SPEC_WS_NEW = 'file';
+    process.env.STACKCTL_SPEC_WS_OLD = 'file';
+    const env = withoutWorkspaceEnv();
+    expect(env.STACKCTL_SPEC_WS_NEW).toBeUndefined();
+    expect(env.STACKCTL_SPEC_WS_OLD).toBe('shell');
+    expect(process.env.STACKCTL_SPEC_WS_NEW).toBe('file');
+  });
+
+  test('leaves every other variable alone, and returns a copy', () => {
+    recordWorkspaceEnv(['STACKCTL_SPEC_WS_NEW']);
+    const given = { KEEP: 'yes', STACKCTL_SPEC_WS_NEW: 'file' };
+    const env = withoutWorkspaceEnv(given);
+    expect(env).toEqual({ KEEP: 'yes' });
+    expect(given.STACKCTL_SPEC_WS_NEW).toBe('file');
+  });
 });

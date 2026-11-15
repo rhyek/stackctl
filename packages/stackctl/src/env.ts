@@ -14,6 +14,7 @@ import {
   envFileNames,
   rejectUnknownOptions,
   shellEnvironment,
+  withoutWorkspaceEnv,
   type EnvOverride,
   type Profile,
 } from './env-base';
@@ -247,7 +248,7 @@ export function envCandidatePaths({
  */
 function withInjectedList(layer: Record<string, string>): Record<string, string> {
   const shell = shellEnvironment();
-  const child: NodeJS.ProcessEnv = { ...process.env, ...layer };
+  const child: NodeJS.ProcessEnv = { ...withoutWorkspaceEnv(), ...layer };
   const injected = Object.keys(child).filter(
     (key) =>
       key !== INJECTED_ENV_VAR &&
@@ -729,17 +730,35 @@ interface EnvLayerOptions {
  * origin as `PUBLIC_ORIGIN`, and the trust file of the proxy's self-signed certificates (if any)
  * as `NODE_EXTRA_CA_CERTS`. Those are the service's own, so they win over a value set
  * workspace-wide — by the config's variables or a workspace `.env` file — and only a file of the
- * service's own replaces them. Excludes `process.env` — merge
- * this over it at spawn time (`Object.assign({}, process.env, layer)`). Shared by the TUI/plain
- * session and `stackctl exec` so both build the same env.
+ * service's own replaces them. Resolved with the service's own env options (its `env` combined
+ * with the config's) when it carries them. Excludes `process.env`: merge this over
+ * {@link withoutWorkspaceEnv} at spawn time, not over `process.env`, which holds the workspace's
+ * layer the CLI merged in. Shared by the TUI/plain session and `stackctl exec` so both build the
+ * same env.
  */
+/**
+ * A service's own env options — its `env` combined with the config's, as `defineConfig` resolved
+ * them — to resolve its environment with in place of the config's. None for a service built by
+ * hand without them (a test's), which keeps whatever the caller passes.
+ */
+export function serviceEnvOptions(
+  pkg: AnyServiceConfig,
+): Pick<ResolveEnvOptions, 'files' | 'override' | 'vars'> {
+  // Typed as always set, but a service built by hand (a test's, a JS caller's) may lack it.
+  const files = pkg.envFiles as string[] | undefined;
+  if (files === undefined) {
+    return {};
+  }
+  return { files, override: pkg.envOverride, vars: pkg.envVars };
+}
+
 export function packageEnvLayer(
   pkg: AnyServiceConfig,
   opts: EnvLayerOptions,
 ): Record<string, string> {
   const { read, extraCaCerts, ...rest } = opts;
   const { env, packageNames } = resolveEnvFrom(
-    { ...rest, resolvedTargetDir: pkg.resolvedTargetDir },
+    { ...rest, ...serviceEnvOptions(pkg), resolvedTargetDir: pkg.resolvedTargetDir },
     read,
   );
   const injected: Record<string, string> = {};

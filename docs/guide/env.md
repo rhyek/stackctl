@@ -57,7 +57,8 @@ To commit secrets too, encrypt them with dotenvx and turn on
 
 From lowest to highest:
 
-1. [`env.vars`](../config/env.md#envvars), variables set in the config.
+1. [`env.vars`](../config/env.md#envvars), variables set in the config, with a service's own
+   [`env.vars`](../config/services.md#env) over them.
 2. The `.env` files, in the order [above](#which-files-load).
 3. **The environment stackctl was started with.** `LOG_LEVEL=debug sctl` overrides every
    file for one run, as in Vite, Next.js and `node --env-file`.
@@ -120,7 +121,9 @@ When a file's content changes, the services that read it restart:
 | a folder such as `apps/`    | every running service below it        |
 | a service's own folder      | that service                          |
 
-Symlinked files are followed. A write
+A file only one service looks for, through its own
+[`env.additionalFiles`](../config/services.md#env), restarts only that service. Symlinked files
+are followed. A write
 that changes nothing (a `touch`) restarts nothing.
 
 Values the config computed are the exception: `env.vars` and callbacks such as `port` run once,

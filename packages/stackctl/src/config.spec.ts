@@ -20,7 +20,7 @@ import {
   infraServiceDetails,
   proxyHostsFor,
 } from './config';
-import { packageEnvLayer } from './env';
+import { envFileNames, packageEnvLayer } from './env';
 
 /** `defineConfig`'s options as seen with `serviceRootDir` set (so `targetDir` is optional). */
 type RootedOpts = Parameters<
@@ -675,7 +675,7 @@ describe('url/healthcheck callbacks', () => {
 });
 
 describe('healthcheck', () => {
-  const health = (api: RootedOpts['services'][string]) =>
+  const health = (api: NonNullable<RootedOpts['services']>[string]) =>
     Object.values(
       // tsc rejects `{ api }` without the cast.
       defineConfig({ serviceRootDir: 'packages', services: { api } as RootedOpts['services'] })
@@ -2285,7 +2285,7 @@ describe('buildAddress', () => {
   /** The `buildAddress` `web` gets, given its own config. */
   const of = (opts: {
     reverseProxy?: RootedOpts['reverseProxy'];
-    web?: RootedOpts['services'][string];
+    web?: NonNullable<RootedOpts['services']>[string];
   }) => {
     // oxfmt-ignore
     let made: BuildAddress | undefined;
@@ -2585,7 +2585,7 @@ describe('publicOrigin', () => {
   });
 
   test('without a reverseProxy, replaces parts of http://localhost:<port>', () => {
-    const origin = (publicOrigin: RootedOpts['services'][string]['publicOrigin'], port: { port?: number } = { port: 3000 }) => // oxfmt-ignore
+    const origin = (publicOrigin: NonNullable<RootedOpts['services']>[string]['publicOrigin'], port: { port?: number } = { port: 3000 }) => // oxfmt-ignore
       defineConfig({ serviceRootDir: 'packages', services: { web: { ...port, publicOrigin, urls: ['/x'] } } }).services.web; // oxfmt-ignore
     expect(origin({ subdomain: 'app' }).publicOrigin).toBe('http://app.localhost:3000');
     expect(origin({ port: 8080 }).publicOrigin).toBe('http://localhost:8080');
@@ -3981,5 +3981,413 @@ describe('env.additionalFiles', () => {
       },
     });
     expect(seen).toEqual([{ A: 'root', B: 'packages', C: 'api' }]);
+  });
+});
+
+describe('services, optional', () => {
+  test('a config with none resolves to no services', () => {
+    const cfg = defineConfig({ env: { vars: { A: '1' } } });
+    expect(cfg.services).toEqual({});
+    expect(getRegisteredPackages()).toEqual([]);
+    expect(cfg.envVars).toEqual({ A: '1' });
+  });
+
+  test('an empty config is valid', () => {
+    expect(defineConfig({}).services).toEqual({});
+  });
+});
+
+describe('services.<name>.env', () => {
+  let ws: string;
+  beforeEach(() => {
+    ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-svc-env-')));
+    for (const dir of ['packages/api', 'packages/web']) {
+      fs.mkdirSync(path.join(ws, dir), { recursive: true });
+    }
+  });
+  afterEach(() => {
+    fs.rmSync(ws, { recursive: true, force: true });
+    delete process.env.STACKCTL_SPEC_SVC_SHELL;
+  });
+  const write = (rel: string, text: string) => fs.writeFileSync(path.join(ws, rel), text);
+  const base = () => ({ serviceRootDir: 'packages' as const, workspaceDir: ws });
+  /** What each service's `port` callback saw, by service. */
+  const seenBy = (names: string[]) => {
+    const seen: Record<string, Record<string, string | undefined>> = {};
+    const port =
+      (name: string) =>
+      ({ envs }: { envs: Record<string, string | undefined> }) => {
+        seen[name] = { ...envs };
+        return 3000;
+      };
+    return { seen, port: (name: string) => (names.includes(name) ? port(name) : undefined) };
+  };
+
+  describe('inheriting (the default)', () => {
+    test("merges its vars over the config's, its own winning", () => {
+      const cfg = defineConfig({
+        ...base(),
+        env: { vars: { SHARED: 'top', TOP_ONLY: 'top' } },
+        services: { api: { env: { vars: { SHARED: 'api', API_ONLY: 'api' } } }, web: {} },
+      });
+      expect(cfg.services.api.envVars).toEqual({ SHARED: 'api', TOP_ONLY: 'top', API_ONLY: 'api' });
+      expect(cfg.services.web.envVars).toEqual({ SHARED: 'top', TOP_ONLY: 'top' });
+      expect(cfg.envVars).toEqual({ SHARED: 'top', TOP_ONLY: 'top' });
+    });
+
+    test('gives its callbacks the merged vars, and no other service', () => {
+      const { seen, port } = seenBy(['api', 'web']);
+      defineConfig({
+        ...base(),
+        env: { vars: { SHARED: 'top' } },
+        services: {
+          api: { env: { vars: { SHARED: 'api', MINE: 'api' } }, port: port('api') },
+          web: { port: port('web') },
+        },
+      });
+      expect([seen.api?.SHARED, seen.api?.MINE]).toEqual(['api', 'api']);
+      expect([seen.web?.SHARED, seen.web?.MINE]).toEqual(['top', undefined]);
+    });
+
+    test('ranks its vars below every .env file, as the top level does', () => {
+      write('packages/api/.env', 'WHO=file\n');
+      const cfg = defineConfig({
+        ...base(),
+        services: { api: { env: { vars: { WHO: 'var', ONLY_VAR: 'var' } } } },
+      });
+      const { port, seen } = seenBy(['api']);
+      defineConfig({
+        ...base(),
+        services: { api: { env: { vars: { WHO: 'var' } }, port: port('api') } },
+      });
+      expect(seen.api?.WHO).toBe('file');
+      expect(cfg.services.api.envVars).toEqual({ WHO: 'var', ONLY_VAR: 'var' });
+    });
+
+    test('lets a .env file reference its vars', () => {
+      write('packages/api/.env', 'URL=http://${HOST}/api\n');
+      const { seen, port } = seenBy(['api']);
+      defineConfig({
+        ...base(),
+        services: { api: { env: { vars: { HOST: 'localhost:1' } }, port: port('api') } },
+      });
+      expect(seen.api?.URL).toBe('http://localhost:1/api');
+    });
+
+    test("adds its override to the config's", () => {
+      const cfg = defineConfig({
+        ...base(),
+        env: { override: ['A', 'B'] },
+        services: { api: { env: { override: ['B', 'C'] } }, web: {} },
+      });
+      expect(cfg.services.api.envOverride).toEqual(['A', 'B', 'C']);
+      expect(cfg.services.web.envOverride).toEqual(['A', 'B']);
+    });
+
+    test('overrides everything when either level says true', () => {
+      const cfg = defineConfig({
+        ...base(),
+        env: { override: true },
+        services: { api: { env: { override: ['A'] } }, web: { env: { override: [] } } },
+      });
+      expect(cfg.services.api.envOverride).toBe(true);
+      expect(cfg.services.web.envOverride).toBe(true);
+      const own = defineConfig({
+        ...base(),
+        env: { override: ['A'] },
+        services: { api: { env: { override: true } } },
+      });
+      expect(own.services.api.envOverride).toBe(true);
+    });
+
+    test('leaves override unset when neither level sets it', () => {
+      const cfg = defineConfig({ ...base(), services: { api: { env: { vars: {} } } } });
+      expect(cfg.services.api.envOverride).toBeUndefined();
+    });
+
+    test('lets its own override win a file over the shell for it alone', () => {
+      process.env.STACKCTL_SPEC_SVC_SHELL = 'shell';
+      write('.env', 'STACKCTL_SPEC_SVC_SHELL=file\n');
+      const { seen, port } = seenBy(['api', 'web']);
+      defineConfig({
+        ...base(),
+        services: {
+          api: { env: { override: ['STACKCTL_SPEC_SVC_SHELL'] }, port: port('api') },
+          web: { port: port('web') },
+        },
+      });
+      expect(seen.api?.STACKCTL_SPEC_SVC_SHELL).toBe('file');
+      expect(seen.web?.STACKCTL_SPEC_SVC_SHELL).toBe('shell');
+    });
+
+    test("puts its additional files after the config's, for it alone", () => {
+      const cfg = defineConfig({
+        ...base(),
+        env: { additionalFiles: [{ file: '.env.shared', after: '.env.<profile>' }] },
+        services: {
+          api: { env: { additionalFiles: [{ file: '.env.api', after: '.env.<profile>' }] } },
+          web: {},
+        },
+      });
+      expect(cfg.services.api.envFiles).toEqual([
+        '.env',
+        '.env.local',
+        '.env.development',
+        '.env.shared',
+        '.env.api',
+        '.env.development.local',
+      ]);
+      expect(cfg.services.web.envFiles).toEqual(cfg.envFiles);
+      expect(cfg.envFiles).not.toContain('.env.api');
+    });
+
+    test('reads its additional files in every directory of its walk', () => {
+      write('.env.api', 'A=root\n');
+      write('packages/.env.api', 'B=packages\n');
+      write('packages/api/.env.api', 'C=api\n');
+      const { seen, port } = seenBy(['api', 'web']);
+      defineConfig({
+        ...base(),
+        services: {
+          api: {
+            env: { additionalFiles: [{ file: '.env.api', before: '.env.local' }] },
+            port: port('api'),
+          },
+          web: { port: port('web') },
+        },
+      });
+      expect([seen.api?.A, seen.api?.B, seen.api?.C]).toEqual(['root', 'packages', 'api']);
+      expect([seen.web?.A, seen.web?.B]).toEqual([undefined, undefined]);
+    });
+
+    test('takes its additional files from a callback, given the profile', () => {
+      process.env.STACKCTL_PROFILE = 'test';
+      try {
+        const cfg = defineConfig({
+          ...base(),
+          services: {
+            api: {
+              env: {
+                additionalFiles: ({ profile }) => [
+                  { file: `.env.${profile}.api`, after: '.env.<profile>' },
+                ],
+              },
+            },
+          },
+        });
+        expect(cfg.services.api.envFiles).toContain('.env.test.api');
+      } finally {
+        delete process.env.STACKCTL_PROFILE;
+      }
+    });
+
+    test("rejects an additional file the config's env already lists", () => {
+      expect(() =>
+        defineConfig({
+          ...base(),
+          env: { additionalFiles: [{ file: '.env.x', after: '.env' }] },
+          services: { api: { env: { additionalFiles: [{ file: '.env.x', before: '.env.local' }] } } }, // oxfmt-ignore
+        }),
+      ).toThrow(
+        'services.api.env.additionalFiles[0] (".env.x"): already listed as env.additionalFiles[0]',
+      );
+    });
+
+    test('rejects its own mistakes by its own name', () => {
+      expect(() =>
+        defineConfig({
+          ...base(),
+          services: { api: { env: { additionalFiles: [{ file: 'a/.env', after: '.env' }] } } },
+        }),
+      ).toThrow('services.api.env.additionalFiles[0] ("a/.env"): `file` must be a filename, not a path'); // oxfmt-ignore
+      expect(() =>
+        defineConfig({
+          ...base(),
+          services: { api: { env: { vars: { 'BAD NAME': 'x' } } } },
+        }),
+      ).toThrow('services.api.env.vars: "BAD NAME" is not a valid environment variable name');
+      expect(() =>
+        defineConfig({
+          ...base(),
+          services: { api: { env: { vars: () => 'nope' as never } } },
+        }),
+      ).toThrow('services.api.env.vars: callback returned "nope" (expected an object of variables)'); // oxfmt-ignore
+    });
+  });
+
+  describe('inherits: false', () => {
+    test("uses none of the config's vars, override or additional files", () => {
+      const cfg = defineConfig({
+        ...base(),
+        env: {
+          vars: { TOP: 'top' },
+          override: ['A'],
+          additionalFiles: [{ file: '.env.shared', after: '.env' }],
+        },
+        services: {
+          api: {
+            env: {
+              inherits: false,
+              vars: { MINE: 'api' },
+              additionalFiles: [{ file: '.env.api', after: '.env' }],
+            },
+          },
+          web: {},
+        },
+      });
+      expect(cfg.services.api.envVars).toEqual({ MINE: 'api' });
+      expect(cfg.services.api.envOverride).toBeUndefined();
+      expect(cfg.services.api.envFiles).toEqual([
+        '.env',
+        '.env.api',
+        '.env.local',
+        '.env.development',
+        '.env.development.local',
+      ]);
+      expect(cfg.services.web.envVars).toEqual({ TOP: 'top' });
+      expect(cfg.services.web.envFiles).toContain('.env.shared');
+    });
+
+    test("with nothing of its own, has no vars, no override, and stackctl's files only", () => {
+      const cfg = defineConfig({
+        ...base(),
+        env: { vars: { TOP: 'top' }, override: true },
+        services: { api: { env: { inherits: false } } },
+      });
+      expect(cfg.services.api.envVars).toBeUndefined();
+      expect(cfg.services.api.envOverride).toBeUndefined();
+      expect(cfg.services.api.envFiles).toEqual(envFileNames('development'));
+    });
+
+    test("keeps the config's vars out of its callbacks", () => {
+      const { seen, port } = seenBy(['api']);
+      defineConfig({
+        ...base(),
+        env: { vars: { TOP: 'top' } },
+        services: { api: { env: { inherits: false }, port: port('api') } },
+      });
+      expect(seen.api?.TOP).toBeUndefined();
+    });
+
+    test("may list a file the config's env lists", () => {
+      const cfg = defineConfig({
+        ...base(),
+        env: { additionalFiles: [{ file: '.env.x', after: '.env' }] },
+        services: {
+          api: { env: { inherits: false, additionalFiles: [{ file: '.env.x', before: '.env.local' }] } }, // oxfmt-ignore
+        },
+      });
+      expect(cfg.services.api.envFiles.filter((f) => f === '.env.x')).toHaveLength(1);
+    });
+
+    test('still reads the .env files of every directory of its walk', () => {
+      write('.env', 'ROOT=1\n');
+      const { seen, port } = seenBy(['api']);
+      defineConfig({
+        ...base(),
+        services: { api: { env: { inherits: false }, port: port('api') } },
+      });
+      expect(seen.api?.ROOT).toBe('1');
+    });
+  });
+
+  describe('the callback form', () => {
+    test('stands for vars, seeing its files and the vars it inherits', () => {
+      write('packages/api/.env', 'FROM_FILE=file\n');
+      const seen: Record<string, string | undefined>[] = [];
+      const cfg = defineConfig({
+        ...base(),
+        env: { vars: { TOP: 'top' } },
+        services: {
+          api: {
+            env: ({ envs }) => {
+              seen.push({ FROM_FILE: envs.FROM_FILE, TOP: envs.TOP });
+              return { DERIVED: `${String(envs.FROM_FILE)}+${String(envs.TOP)}` };
+            },
+          },
+        },
+      });
+      expect(seen).toEqual([{ FROM_FILE: 'file', TOP: 'top' }]);
+      expect(cfg.services.api.envVars).toEqual({ TOP: 'top', DERIVED: 'file+top' });
+    });
+
+    test("gets the service's tokens", () => {
+      let region: string | undefined;
+      defineConfig({
+        ...base(),
+        tokens: { region: 'top' },
+        services: {
+          api: {
+            tokens: { region: 'api' },
+            env: { vars: ({ tokens }) => ((region = tokens.region), {}) },
+          },
+        },
+      });
+      expect(region).toBe('api');
+    });
+
+    test('runs once, before its other callbacks, which see its result', () => {
+      let calls = 0;
+      const { seen, port } = seenBy(['api']);
+      defineConfig({
+        ...base(),
+        services: {
+          api: {
+            env: () => (calls++, { API_PORT_FROM_VARS: '4000' }),
+            port: port('api'),
+          },
+        },
+      });
+      expect(calls).toBe(1);
+      expect(seen.api?.API_PORT_FROM_VARS).toBe('4000');
+    });
+  });
+
+  test('takes no decrypt: it is the workspace’s', () => {
+    expect(() =>
+      // @ts-expect-error - `decrypt` is not a service's.
+      defineConfig({ ...base(), services: { api: { env: { decrypt: true } } } }),
+    ).toThrow(/services\.api\.env\.decrypt: Invalid key/);
+  });
+
+  test('rejects an unknown key', () => {
+    expect(() =>
+      // @ts-expect-error - not an env option.
+      defineConfig({ ...base(), services: { api: { env: { files: [] } } } }),
+    ).toThrow(/services\.api\.env\.files: Invalid key/);
+  });
+
+  test('shows no raw env on the resolved service', () => {
+    const cfg = defineConfig({
+      ...base(),
+      services: { api: { env: { vars: () => ({ A: '1' }) } } },
+    });
+    expect(cfg.services.api).not.toHaveProperty('env');
+    expect(cfg.services.api.envVars).toEqual({ A: '1' });
+  });
+
+  test('gives every service the combined fields, with or without an env of its own', () => {
+    const cfg = defineConfig({
+      ...base(),
+      env: { vars: { A: '1' }, override: ['A'] },
+      services: { api: {} },
+    });
+    expect(cfg.services.api).toMatchObject({
+      envFiles: cfg.envFiles,
+      envOverride: ['A'],
+      envVars: { A: '1' },
+    });
+  });
+
+  test("leaves the workspace-wide urls the config's env alone", () => {
+    let seenTop: string | undefined;
+    let seenMine: string | undefined;
+    defineConfig({
+      ...base(),
+      env: { vars: { TOP: 'top' } },
+      urls: [({ envs }) => ((seenTop = envs.TOP), (seenMine = envs.MINE), 'http://x')],
+      services: { api: { env: { vars: { MINE: 'api' } } } },
+    });
+    expect([seenTop, seenMine]).toEqual(['top', undefined]);
   });
 });

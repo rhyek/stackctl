@@ -1,5 +1,6 @@
 import { startedByAgent } from '../agent-detection';
 import { guidanceAtStart } from '../agent-guidance';
+import { getRegisteredPackages } from '../config';
 import { isCI } from '../env-base';
 import { resolveSelectedNames } from '../saved-selection';
 import { readOwnVersion } from '../skill';
@@ -42,6 +43,14 @@ export function resolveSelectedNamesOrExit(
 /** Starts the session the options ask for; a session ends by exiting the process. */
 export async function runDefaultAction(opts: StartOptions): Promise<void> {
   await loadConfigOrExit();
+  // A config may declare none, to set the environment of `exec` and `run` alone.
+  if (getRegisteredPackages().length === 0) {
+    console.error(
+      'stackctl.config.ts declares no services, so there is nothing to start. ' +
+        'Run a command with `stackctl exec` or `stackctl run`.',
+    );
+    process.exit(1);
+  }
 
   // Best-effort: the agent guidance should never block a run. What is installed is kept
   // current; what is missing is offered once, and only to a person about to see the terminal UI.

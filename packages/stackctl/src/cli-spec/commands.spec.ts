@@ -424,6 +424,137 @@ describe('exec and run take a target', () => {
   });
 });
 
+describe("a service's own env", () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = path.join(ws, 'svc-env');
+    for (const name of ['api', 'solo', 'web']) {
+      fs.mkdirSync(path.join(dir, 'packages', name), { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, 'packages', name, 'package.json'),
+        JSON.stringify({ name, scripts: { dev: 'true' } }),
+      );
+    }
+    fs.mkdirSync(path.join(dir, 'scripts'));
+    fs.writeFileSync(
+      path.join(dir, 'stackctl.config.ts'),
+      [
+        "import { defineConfig } from 'stackctl';",
+        'export default defineConfig({',
+        "  serviceRootDir: 'packages',",
+        "  env: { vars: { TOP: 'top', SHARED: 'top' }, additionalFiles: [{ file: '.env.shared', after: '.env' }] },", // oxfmt-ignore
+        '  services: {',
+        "    api: { env: { vars: { SHARED: 'api' }, override: ['SHELL_SET'], additionalFiles: [{ file: '.env.api', after: '.env' }] } },", // oxfmt-ignore
+        "    solo: { env: { inherits: false, vars: { MINE: 'solo' } } },",
+        '    web: {},',
+        '  },',
+        '});',
+        '',
+      ].join('\n'),
+    );
+    fs.writeFileSync(path.join(dir, '.env'), 'SHELL_SET=file\n');
+    fs.writeFileSync(path.join(dir, '.env.shared'), 'SHARED_FILE=1\n');
+    fs.writeFileSync(path.join(dir, '.env.api'), 'API_FILE=1\n');
+  });
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const names = ['TOP', 'SHARED', 'API_FILE', 'SHARED_FILE', 'SHELL_SET', 'MINE'];
+  const print = ['sh', '-c', `echo "${names.map((name) => `$${name}`).join('|')}"`];
+  const execIn = (target: string) =>
+    stackctl(['--workspace-dir', dir, 'exec', target, '--', ...print], {
+      env: { SHELL_SET: 'shell' },
+    });
+
+  test("exec gives a service its own vars, files and override over the config's", async () => {
+    expect((await execIn('api')).stdout).toBe('top|api|1|1|file|');
+  });
+
+  test("exec gives another service the config's alone", async () => {
+    expect((await execIn('web')).stdout).toBe('top|top||1|shell|');
+  });
+
+  test("exec gives a service that doesn't inherit its own alone", async () => {
+    expect((await execIn('solo')).stdout).toBe('||||shell|solo');
+  });
+
+  test("exec gives a directory that is no service the config's alone", async () => {
+    expect((await execIn('./scripts')).stdout).toBe('top|top||1|shell|');
+  });
+
+  test("resolveEnv() lists the service's own files", async () => {
+    const { resolveEnv } = (await import(
+      pathToFileURL(path.join(buildDir, 'index.js')).href
+    )) as typeof import('../index');
+    const api = resolveEnv({ workspaceDir: dir, target: 'api' });
+    const web = resolveEnv({ workspaceDir: dir, target: 'web' });
+    expect(api.files).toContain(path.join(dir, '.env.api'));
+    expect(api.env).toMatchObject({ SHARED: 'api', API_FILE: '1' });
+    expect(web.files).not.toContain(path.join(dir, '.env.api'));
+    expect(web.env.SHARED).toBe('top');
+  });
+
+  test('show-config prints each service its combined env', async () => {
+    const result = await stackctl(['--workspace-dir', dir, 'show-config']);
+    const { services } = JSON.parse(result.stdout) as {
+      services: Record<string, { envFiles: string[]; envOverride?: unknown; envVars?: unknown }>;
+    };
+    expect(services.api).toMatchObject({
+      envOverride: ['SHELL_SET'],
+      envVars: { TOP: 'top', SHARED: 'api' },
+    });
+    expect(services.api!.envFiles).toEqual([
+      '.env',
+      '.env.shared',
+      '.env.api',
+      '.env.local',
+      '.env.development',
+      '.env.development.local',
+    ]);
+    expect(services.solo).toMatchObject({ envVars: { MINE: 'solo' } });
+    expect(services.solo!.envFiles).not.toContain('.env.shared');
+    expect(services.web!.envFiles).not.toContain('.env.api');
+  });
+});
+
+describe('a config with no services', () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = path.join(ws, 'no-services');
+    fs.mkdirSync(path.join(dir, 'scripts', 'tool'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'stackctl.config.ts'),
+      "import { defineConfig } from 'stackctl';\nexport default defineConfig({ env: { vars: { FROM_CONFIG: 'yes' } } });\n", // oxfmt-ignore
+    );
+    fs.writeFileSync(path.join(dir, 'scripts', 'tool', '.env.local'), 'TOOL_VAR=tool\n');
+  });
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  test('start says there is nothing to start, and fails', async () => {
+    const result = await stackctl(['--workspace-dir', dir, '--headless']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('stackctl.config.ts declares no services');
+  });
+
+  test('exec runs a command in a directory with the config and its .env files', async () => {
+    const result = await stackctl([
+      '--workspace-dir',
+      dir,
+      'exec',
+      './scripts/tool',
+      '--',
+      'sh',
+      '-c',
+      'echo "$FROM_CONFIG|$TOOL_VAR|$PWD"',
+    ]);
+    expect(result.stdout).toBe(`yes|tool|${path.join(dir, 'scripts', 'tool')}`);
+  });
+
+  test('show-config prints no services', async () => {
+    const result = await stackctl(['--workspace-dir', dir, 'show-config']);
+    expect((JSON.parse(result.stdout) as { services: unknown }).services).toEqual({});
+  });
+});
+
 describe("a config whose workspaceDir isn't its own folder", () => {
   // outer/config/stackctl.config.ts sets `workspaceDir: '..'`: the workspace is outer/, where the
   // services and the walked-up .env files are, and config/'s own .env file is no workspace's.

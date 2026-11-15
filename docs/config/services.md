@@ -1,5 +1,5 @@
 ---
-description: Every option of a service in stackctl.config.ts - port, healthcheck and readiness, deps, command, urls, autostart, tokens, logs, color and directory.
+description: Every option of a service in stackctl.config.ts - port, healthcheck and readiness, deps, command, urls, autostart, its own env files and variables, tokens, logs, color and directory.
 ---
 
 # Services
@@ -41,6 +41,7 @@ Every option is optional. `{}` is a valid service: it runs the `dev` script in
 | [`autostart`](#autostart)       | `true`                | Whether it starts with the session.                |
 | [`selectable`](#selectable)     | `true`                | Whether the picker lists it.                       |
 | [`targetDir`](#targetdir)       | `<serviceRootDir>/<name>` | The service's directory.                       |
+| [`env`](#env)                   | the config's          | `.env` files, variables and overrides of its own.  |
 | [`tokens`](#tokens)             | none                  | Values for this service's callbacks.               |
 | [`logs`](#logs)                 | inherits              | Timestamps and log formatting for this service.    |
 | [`color`](#color)               | assigned              | The color of its log label.                        |
@@ -174,6 +175,42 @@ lives somewhere else. It is required when the config has no `serviceRootDir`.
 - **It must be inside the workspace.** One outside fails when the config loads.
 - **It decides which `.env` files load**: those of every directory from the root down to it.
   See [Which files load](../guide/env.md#which-files-load).
+
+## `env`
+
+- **Type:** `{ inherits?, vars?, override?, additionalFiles? } | (ctx) => vars`
+
+`.env` files, variables and overrides for this service alone, on top of the config's
+[`env`](./env.md):
+
+```ts
+api: {
+  env: {
+    vars: { LOG_LEVEL: 'debug' },
+    override: ['NODE_OPTIONS'],
+    additionalFiles: [{ file: '.env.api', after: '.env' }],
+  },
+},
+```
+
+Each option works as its namesake in the config's [`env`](./env.md), for this service only.
+`inherits` decides what happens to the config's:
+
+| Option            | `inherits: true` (default)              | `inherits: false` |
+| ----------------- | --------------------------------------- | ----------------- |
+| `vars`            | Merged over the config's, its own win.  | Its own only.     |
+| `override`        | Added to the config's.                  | Its own only.     |
+| `additionalFiles` | Loaded after the config's.              | Its own only.     |
+
+- **A callback stands for `vars`**: `env: ({ envs }) => ({ … })`. Its `envs` holds the service's
+  `.env` files and the config's `vars` when it inherits, and its `tokens` are the service's.
+- **It reaches the service everywhere**: its process, its callbacks (`port`, `urls`, …), and
+  [`stackctl exec` and `run`](../guide/commands.md#targets) with it as the target. A directory
+  that is no service gets the config's `env` alone.
+- **`decrypt` is the config's**, and applies to every service either way.
+- **A file the config's `additionalFiles` lists** is an error here, unless `inherits: false`.
+- **It shows in the resolved config**: `stackctl show-config` prints each service's result as
+  `envFiles`, `envOverride` and `envVars`, so don't compose a secret in `vars`.
 
 ## `tokens`
 

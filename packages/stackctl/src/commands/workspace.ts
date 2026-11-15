@@ -5,7 +5,7 @@ import {
   getRegisteredPackages,
   getWorkspaceDir,
 } from '../config';
-import { envFileNames, workspaceEnvLayer } from '../env';
+import { envFileNames, recordWorkspaceEnv, workspaceEnvLayer } from '../env';
 import {
   NoProjectConfigError,
   findConfigPath,
@@ -40,17 +40,17 @@ export function applyWorkspaceEnv(config: Config<string> | null): void {
     return;
   }
   workspaceEnvApplied = true;
-  Object.assign(
-    process.env,
-    workspaceEnvLayer({
-      // The config's own root, which may not be the folder holding it (where the CLI anchored).
-      resolvedWorkspaceDir: config ? getWorkspaceDir() : process.cwd(),
-      files: config?.envFiles ?? envFileNames(),
-      override: config?.envOverride,
-      decrypt: config?.envDecrypt,
-      vars: config?.envVars,
-    }),
-  );
+  const layer = workspaceEnvLayer({
+    // The config's own root, which may not be the folder holding it (where the CLI anchored).
+    resolvedWorkspaceDir: config ? getWorkspaceDir() : process.cwd(),
+    files: config?.envFiles ?? envFileNames(),
+    override: config?.envOverride,
+    decrypt: config?.envDecrypt,
+    vars: config?.envVars,
+  });
+  // So what a target is started with can leave it out: see `withoutWorkspaceEnv`.
+  recordWorkspaceEnv(Object.keys(layer));
+  Object.assign(process.env, layer);
 }
 
 /**

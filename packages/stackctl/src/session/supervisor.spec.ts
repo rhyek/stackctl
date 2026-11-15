@@ -8,6 +8,7 @@ import chalk from 'chalk';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { STACKCTL_LABEL_COLOR, PACKAGE_PALETTE } from '../colors';
 import { type AnyServiceConfig, defineConfig } from '../config';
+import { recordWorkspaceEnv } from '../env';
 import type { EnvWatch, WatchTarget } from '../env-watch';
 import { stripAnsi } from '../format';
 import { labelGutter } from './log-layout';
@@ -245,6 +246,8 @@ function setup(opts: {
   held?: string;
   /** The plan's `cwd`, relative to the workspace, when it isn't the workspace root itself. */
   cwd?: string;
+  /** The config's top-level `env`. */
+  env?: Record<string, unknown>;
 }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-sup-')));
   for (const [name, service] of Object.entries(opts.services)) {
@@ -266,6 +269,7 @@ function setup(opts: {
     workspaceDir: root,
     serviceRootDir: 'packages',
     ...(opts.logTimestamps === undefined ? {} : { logs: { timestamps: opts.logTimestamps } }),
+    ...(opts.env === undefined ? {} : { env: opts.env }),
     services: opts.services,
   } as unknown as Parameters<typeof defineConfig>[0]);
   const all = Object.values(config.services) as AnyServiceConfig[];
@@ -421,6 +425,59 @@ describe('starting the session', () => {
     await until(() => expect(t.procs).toHaveLength(1));
     const { env } = t.proc('api').opts;
     expect([env.A, env.B, env.C]).toEqual(['root', 'packages', 'api']);
+  });
+
+  test("starts a service with its own env: its vars and files, and no other service's", async () => {
+    const t = setup({
+      env: { vars: { TOP: 'top', SHARED: 'top' } },
+      services: {
+        api: {
+          env: {
+            vars: { SHARED: 'api', MINE: 'api' },
+            additionalFiles: [{ file: '.env.api', after: '.env' }],
+          },
+        },
+        web: {},
+      },
+      files: { '.env.api': 'FROM_API_FILE=1\n' },
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.procs).toHaveLength(2));
+    const api = t.proc('api').opts.env;
+    const web = t.proc('web').opts.env;
+    expect([api.TOP, api.SHARED, api.MINE, api.FROM_API_FILE]).toEqual(['top', 'api', 'api', '1']);
+    expect([web.TOP, web.SHARED, web.MINE, web.FROM_API_FILE]).toEqual(['top', 'top', undefined, undefined]); // oxfmt-ignore
+  });
+
+  test("starts a service that doesn't inherit without the config's env", async () => {
+    const t = setup({
+      env: { vars: { TOP: 'top' }, additionalFiles: [{ file: '.env.shared', after: '.env' }] },
+      services: { api: { env: { inherits: false, vars: { MINE: 'api' } } } },
+      files: { '.env.shared': 'SHARED_FILE=1\n' },
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.procs).toHaveLength(1));
+    const { env } = t.proc('api').opts;
+    expect([env.TOP, env.SHARED_FILE, env.MINE]).toEqual([undefined, undefined, 'api']);
+  });
+
+  test("keeps the workspace layer the CLI merged into its own env out of a service that doesn't inherit", async () => {
+    // What `applyWorkspaceEnv` does in the CLI, before a session starts.
+    recordWorkspaceEnv(['STACKCTL_SPEC_TOP']);
+    process.env.STACKCTL_SPEC_TOP = 'top';
+    try {
+      const t = setup({
+        env: { vars: { STACKCTL_SPEC_TOP: 'top' } },
+        services: { solo: { env: { inherits: false } }, api: {} },
+      });
+      t.supervisor.launchAll();
+      await until(() => expect(t.procs).toHaveLength(2));
+      expect(t.proc('solo').opts.env.STACKCTL_SPEC_TOP).toBeUndefined();
+      expect(t.proc('api').opts.env.STACKCTL_SPEC_TOP).toBe('top');
+    } finally {
+      delete process.env.STACKCTL_SPEC_TOP;
+      recordWorkspaceEnv([]);
+    }
   });
 
   test('keeps the injected PORT over a PORT set in a directory between', async () => {
@@ -1397,6 +1454,75 @@ describe('the .env watch', () => {
     }
     expect(t.of('api')[0]!.stops).toBe(1);
     expect(t.of('worker')[0]!.stops).toBe(1);
+  }, 30_000);
+
+  test('a change to a file only one service looks for restarts that service alone', async () => {
+    const t = setup({
+      services: {
+        api: { env: { additionalFiles: [{ file: '.env.api', after: '.env' }] } },
+        web: {},
+      },
+    });
+    const mine = () => watches.filter((w) => w.dirs.includes(t.root));
+    t.supervisor.launchAll();
+    await until(() => expect(mine()).toHaveLength(1));
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    await until(() => expect(t.of('web')).toHaveLength(1));
+    const atRoot = mine()[0]!.targets.filter((x) => x.dir === t.root);
+    // One target for api, which looks for `.env.api` too, and one for web, which doesn't.
+    expect(atRoot).toHaveLength(2);
+    expect(atRoot.filter((x) => x.filenames.includes('.env.api'))).toHaveLength(1);
+    atRoot.find((x) => x.filenames.includes('.env.api'))!.onChange();
+    await until(() => expect(t.of('api')[0]!.stops).toBe(1));
+    expect(t.of('web')[0]!.stops).toBe(0);
+  });
+
+  test("reports one change for a directory's targets firing together, with all their services", async () => {
+    const t = setup({
+      services: {
+        api: { env: { additionalFiles: [{ file: '.env.api', after: '.env' }] } },
+        web: {},
+      },
+    });
+    const events: [string, string[]][] = [];
+    t.supervisor.on('env-change', (dir, services) => events.push([dir, services]));
+    const mine = () => watches.filter((w) => w.dirs.includes(t.root));
+    t.supervisor.launchAll();
+    await until(() => expect(mine()).toHaveLength(1));
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    await until(() => expect(t.of('web')).toHaveLength(1));
+    for (const target of mine()[0]!.targets.filter((x) => x.dir === t.root)) {
+      target.onChange();
+    }
+    await until(() => expect(events).toHaveLength(1));
+    expect(events[0]![0]).toBe('.');
+    expect(events[0]![1].toSorted()).toEqual(['api', 'web']);
+    await until(() => expect(t.of('api')[0]!.stops).toBe(1));
+    await until(() => expect(t.of('web')[0]!.stops).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(events).toHaveLength(1);
+  });
+
+  test('editing a file only one service looks for restarts that service alone', async () => {
+    const t = setup({
+      services: {
+        api: { env: { additionalFiles: [{ file: '.env.api', after: '.env' }] } },
+        web: {},
+      },
+      files: { '.env.api': 'A=0\n' },
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    await until(() => expect(t.of('web')).toHaveLength(1));
+    const stopped = () => t.of('api')[0]!.stops > 0;
+    for (let attempt = 1; attempt <= 8 && !stopped(); attempt++) {
+      fs.writeFileSync(path.join(t.root, '.env.api'), `A=${attempt}\n`);
+      for (let waited = 0; waited < 2000 && !stopped(); waited += 20) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    expect(t.of('api')[0]!.stops).toBe(1);
+    expect(t.of('web')[0]!.stops).toBe(0);
   }, 30_000);
 
   test('a change in a directory between restarts a service with its new values', async () => {
