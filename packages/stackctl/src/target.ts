@@ -13,7 +13,7 @@ export class TargetNotFoundError extends Error {}
  */
 export type ResolvedTarget =
   | { kind: 'service'; dir: string; service: AnyServiceConfig }
-  | { kind: 'directory'; dir: string; relativeDir: string }
+  | { kind: 'directory'; dir: string }
   | { kind: 'root'; dir: string };
 
 /**
@@ -36,7 +36,7 @@ export function resolveTarget(
   if (!asPath) {
     const named = ctx.services.find((s) => s.name === typed);
     if (named) {
-      return { kind: 'service', dir: realpath(named.absoluteDir), service: named };
+      return { kind: 'service', dir: realpath(named.resolvedTargetDir), service: named };
     }
   }
   const notFound = new TargetNotFoundError(
@@ -57,7 +57,7 @@ export function resolveTarget(
   }
   let best: { service: AnyServiceConfig; length: number } | undefined;
   for (const service of ctx.services) {
-    const serviceDir = realpath(service.absoluteDir);
+    const serviceDir = realpath(service.resolvedTargetDir);
     if (
       (dir === serviceDir || dir.startsWith(withSep(serviceDir))) &&
       (best === undefined || serviceDir.length > best.length)
@@ -66,12 +66,16 @@ export function resolveTarget(
     }
   }
   if (best) {
-    return { kind: 'service', dir: realpath(best.service.absoluteDir), service: best.service };
+    return {
+      kind: 'service',
+      dir: realpath(best.service.resolvedTargetDir),
+      service: best.service,
+    };
   }
   if (dir === root) {
     return { kind: 'root', dir };
   }
-  return { kind: 'directory', dir, relativeDir: path.relative(root, dir) };
+  return { kind: 'directory', dir };
 }
 
 function withSep(dir: string): string {

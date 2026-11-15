@@ -19,13 +19,14 @@ import {
   baseEnvs,
   configEnvReader,
   envCandidatePaths,
+  envDirs,
   envKeysFile,
+  OutsideWorkspaceError,
   resolveEnvFrom,
   envFileNames,
   envFileOrder,
   currentProfile,
   type EnvAdditionalFile,
-  type EnvFileOrder,
   type Envs,
   type EnvOverride,
   type Profile,
@@ -83,8 +84,9 @@ export interface ConfigContext<T = TokenRecord> {
    * The service's resolved `.env` files merged **over** `process.env` — the same environment
    * its dev process will be spawned with, minus the `PORT` and `PUBLIC_ORIGIN` stackctl injects.
    * File values win
-   * over ambient ones, and service-scope files win over workspace-scope ones. (For the
-   * workspace-wide `urls`, which belong to no service, this is the workspace scope alone.)
+   * over ambient ones, and a nearer directory's files over a farther one's, from the workspace
+   * root down to the service's own. (For the workspace-wide `urls`, which belong to no service,
+   * this is the workspace root's files alone.)
    * The config's own `env.vars` are in it too, ranked as a file below every real one — except
    * for the `env.vars` callback itself, which is what computes them. The variables stackctl
    * sets (`STACKCTL_PROFILE`, `STACKCTL_CWD`, `STACKCTL_WORKSPACE_DIR`) are always in it, by name.
@@ -184,7 +186,7 @@ export interface ServiceContext<T = TokenRecord> extends ConfigContext<T> {
 }
 
 /**
- * What a workspace-wide `urls` callback receives: {@link ConfigContext} at the workspace scope,
+ * What a workspace-wide `urls` callback receives: {@link ConfigContext} at the workspace root,
  * and `buildAddress`. Those links belong to no service, so there is no `port` and no `service`.
  */
 export interface WorkspaceUrlsContext<T = TokenRecord> extends ConfigContext<T> {
@@ -306,15 +308,15 @@ export type EnvInput<T = TokenRecord> =
        */
       override?: EnvOverride;
       /**
-       * Extra `.env` files, each placed just `before` or `after` one of stackctl's own: `'base'`
-       * (`.env`), `'local'` (`.env.local`), `'profile'` (`.env.<profile>`) or `'profileLocal'`
-       * (`.env.<profile>.local`). Files on the same anchor load in array order. Each is an ordinary
+       * Extra `.env` files, each placed just `before` or `after` one of stackctl's own: `'.env'`,
+       * `'.env.local'`, `'.env.<profile>'` or `'.env.<profile>.local'` (`<profile>` as written,
+       * for whichever profile is active). Files on the same anchor load in array order. Each is an ordinary
        * `.env` file at its place: it wins over the files before it and loses to those after.
-       * Looked for at both scopes unless `scope` says `'workspace'` or `'service'`, and read
-       * wherever stackctl reads its own files. An array, or a callback over `{ profile }`:
+       * Looked for in every directory stackctl's own are, and read wherever stackctl reads
+       * them. An array, or a callback over `{ profile }`:
        *
        * ```ts
-       * additionalFiles: ({ profile }) => [{ file: `.env.${profile}.generated`, after: 'profile' }]
+       * additionalFiles: ({ profile }) => [{ file: `.env.${profile}.generated`, after: '.env.<profile>' }]
        * ```
        */
       additionalFiles?: EnvAdditionalFile[] | EnvAdditionalFilesResolver;
@@ -483,13 +485,13 @@ export type ServiceConfigInput<
   N extends string = string,
   RootDir extends string | undefined = undefined,
 > = DepsInput<N, ServiceTokens<Top, Own>> &
-  RelativeDirField<RootDir> & {
+  TargetDirField<RootDir> & {
     /**
-     * Directory holding the service, relative to `workspaceDir`. Inferred as
-     * `<serviceRootDir>/<key>` when the config sets `serviceRootDir`; required otherwise. Set it
-     * to override the inferred one.
+     * Directory holding the service: relative to `workspaceDir`, or absolute, inside the
+     * workspace either way. Inferred as `<serviceRootDir>/<key>` when the config sets
+     * `serviceRootDir`; required otherwise. Set it to override the inferred one.
      */
-    relativeDir?: string;
+    targetDir?: string;
     /** Show in the interactive picker (default `true`). */
     selectable?: boolean | undefined;
     /**
@@ -670,7 +672,7 @@ export type ServiceConfigInput<
  * checked where it's written: `export const api = { command: 'dev', deps: ['worker'] } satisfies
  * ServiceInput<'api' | 'worker'>`. `N` is the config's service names, which `deps` is checked
  * against (it can't be read from a config the file is imported by); `T` is the config's `tokens`.
- * `relativeDir` is optional here: `defineConfig` checks it once the service is in the config.
+ * `targetDir` is optional here: `defineConfig` checks it once the service is in the config.
  *
  * Use `satisfies`, not an annotation: an annotation gives the variable this whole type, which is
  * wider than the service as written, so `defineConfig` infers less from it.
@@ -985,14 +987,14 @@ function addressBuilder(
 }
 
 /**
- * Makes a service's `relativeDir` required when the config sets no `serviceRootDir`, and adds
+ * Makes a service's `targetDir` required when the config sets no `serviceRootDir`, and adds
  * nothing when it does (the directory is then inferred as `<serviceRootDir>/<key>`). `RootDir` is
  * the type of the config's `serviceRootDir` — `undefined` when it isn't set. The field and its
  * docs are declared in {@link ServiceConfigInput}: a field declared only inside a conditional
  * type shows no docs on hover.
  */
-type RelativeDirField<RootDir extends string | undefined> = undefined extends RootDir
-  ? { relativeDir: string }
+type TargetDirField<RootDir extends string | undefined> = undefined extends RootDir
+  ? { targetDir: string }
   : unknown;
 
 /**
@@ -1014,8 +1016,8 @@ export type DefineConfigOptions<
    */
   apiPort?: number | undefined;
   /**
-   * Root each service's `relativeDir` resolves against. Defaults to the directory holding the
-   * config file.
+   * The workspace root, which each service's `targetDir` resolves against: relative to the
+   * directory holding the config file, or absolute. Defaults to that directory.
    */
   workspaceDir?: string | undefined;
   /** Log display options. */
@@ -1047,8 +1049,8 @@ export type DefineConfigOptions<
   infra?: InfraInput<Top>;
   /**
    * The directory the services live under, relative to `workspaceDir` — `'apps'`, say. With
-   * it set, a service's directory is inferred as `<serviceRootDir>/<key>` and its `relativeDir`
-   * becomes optional (an override); without it, every service must set `relativeDir`.
+   * it set, a service's directory is inferred as `<serviceRootDir>/<key>` and its `targetDir`
+   * becomes optional (an override); without it, every service must set `targetDir`.
    */
   serviceRootDir?: RootDir;
   /**
@@ -1060,7 +1062,7 @@ export type DefineConfigOptions<
   reverseProxy?: ReverseProxyInput<Top, K | I>;
   /**
    * Your application services, **keyed by service name**. The key is the service's name —
-   * what `-s` takes, what `deps` reference, and what `relativeDir` defaults from
+   * what `-s` takes, what `deps` reference, and what `targetDir` defaults from
    * (`<serviceRootDir>/<key>`).
    */
   // `& Record<K, unknown>` is a second, **key-only** inference channel, and it is what keeps the
@@ -1079,7 +1081,7 @@ export type DefineConfigOptions<
   /**
    * Workspace-wide footer links, not tied to a service — same entry shape as a service's
    * `urls`, but a callback here gets only `{ envs, tokens, buildAddress }` (there's no service,
-   * so no `port`, and only the top-level tokens), with `envs` resolved at the workspace scope.
+   * so no `port`, and only the top-level tokens), with `envs` resolved at the workspace root.
    * Its `buildAddress` starts from the dev reverse proxy's public address, at the bare domain. It
    * may be a callback returning the list, as a service's may.
    */
@@ -1128,10 +1130,10 @@ export type ResolvedServiceConfig<N extends string, T = TokenRecord> = {
    * service's tokens: `config.services.api.tokens.region`.
    */
   tokens: T;
-  /** The service directory relative to `workspaceDir`: as written, or `<serviceRootDir>/<key>`. */
-  relativeDir: string;
-  /** The service directory, absolute (`workspaceDir` + `relativeDir`). */
-  absoluteDir: string;
+  /** The service directory as written (relative to `workspaceDir`, or absolute), or `<serviceRootDir>/<key>`. */
+  targetDir: string;
+  /** The service directory, absolute: `targetDir` resolved against the workspace root. */
+  resolvedTargetDir: string;
   /** The service's dev port, with any `port` callback already resolved. */
   port?: number;
   /** Footer links, with every callback already resolved to a string. */
@@ -1179,10 +1181,10 @@ export interface Config<
   /** The infra providers, resolved, or `undefined` when the config declares none. */
   infra?: ResolvedInfra<I>;
   /**
-   * The `.env` files looked for at each scope for the active profile, ascending precedence:
+   * The `.env` filenames looked for in each directory for the active profile, ascending precedence:
    * stackctl's own, with `env.additionalFiles` placed among them.
    */
-  envFiles: EnvFileOrder;
+  envFiles: string[];
   /**
    * The active profile (`--profile`, else `STACKCTL_PROFILE`, else `test` in CI, else
    * `development`).
@@ -1222,8 +1224,8 @@ export function getLoadedConfig(): Config<string> | null {
 }
 
 /**
- * The workspace root every service path was resolved against — the config's `workspaceDir`, or
- * the cwd when it doesn't set one. Not the config file's own directory: a config in a subdirectory
+ * The workspace root every service path was resolved against, absolute — the config's
+ * `workspaceDir`, or the config file's directory when it doesn't set one. Not the config file's own directory: a config in a subdirectory
  * can point `workspaceDir` elsewhere, and anything reasoning about "is this process ours?" has to
  * ask about the same tree the services actually live in.
  */
@@ -1525,31 +1527,26 @@ function resolveAdditionalFiles(
     called,
   );
   const standard = new Set(envFileNames(profile));
-  const seen: { file: string; scope: unknown; at: string }[] = [];
+  const seen: { file: string; at: string }[] = [];
   return result.map((entry, i): EnvAdditionalFile => {
     const at = `env.additionalFiles[${String(i)}]`;
-    const { file, scope } = entry;
+    const { file } = entry;
     const fail = (problem: string): never => {
       throw new Error(`${at} (${JSON.stringify(file)}): ${problem}${called}`);
     };
     if (file === '.' || file === '..' || /[/\\]/.test(file)) {
-      fail("`file` must be a filename in the scope's directory, not a path");
+      fail('`file` must be a filename, not a path');
     }
     if (standard.has(file)) {
       fail(
         `${JSON.stringify(file)} is one of stackctl's own files for profile "${profile}", which load anyway`,
       );
     }
-    // Two entries clash when they name one file at a scope both are looked for at.
-    const clash = seen.find(
-      (other) =>
-        other.file === file &&
-        (other.scope === undefined || scope === undefined || other.scope === scope),
-    );
+    const clash = seen.find((other) => other.file === file);
     if (clash) {
       fail(`already listed as ${clash.at}`);
     }
-    seen.push({ file, scope, at });
+    seen.push({ file, at });
     return entry;
   });
 }
@@ -1847,15 +1844,15 @@ function packageContext(
 }
 
 /**
- * A service's directory when it sets no `relativeDir`: `<serviceRootDir>/<key>` (a trailing
+ * A service's directory when it sets no `targetDir`: `<serviceRootDir>/<key>` (a trailing
  * slash on the root tolerated). Without a `serviceRootDir` there is nothing to infer from — the
- * types require `relativeDir` then, and this is the backstop for a config that bypassed them.
+ * types require `targetDir` then, and this is the backstop for a config that bypassed them.
  */
-function inferredRelativeDir(serviceRootDir: string | undefined, name: string): string {
+function inferredTargetDir(serviceRootDir: string | undefined, name: string): string {
   if (serviceRootDir === undefined) {
     throw new Error(
-      `${name} has no \`relativeDir\`, and the config sets no \`serviceRootDir\` to infer it from. ` +
-        `Set \`serviceRootDir\` (e.g. 'apps') at the top level, or \`relativeDir\` on ${name}.`,
+      `${name} has no \`targetDir\`, and the config sets no \`serviceRootDir\` to infer it from. ` +
+        `Set \`serviceRootDir\` (e.g. 'apps') at the top level, or \`targetDir\` on ${name}.`,
     );
   }
   return `${serviceRootDir.replace(/\/+$/, '')}/${name}`;
@@ -2265,8 +2262,11 @@ export function defineConfig<
   }
   const parsed = result.output;
 
-  const workspaceDir = parsed.workspaceDir ?? recordedConfigDir() ?? process.cwd();
-  workspaceRoot = path.resolve(workspaceDir);
+  const resolvedWorkspaceDir = path.resolve(
+    recordedConfigDir() ?? process.cwd(),
+    parsed.workspaceDir ?? '.',
+  );
+  workspaceRoot = resolvedWorkspaceDir;
 
   // The key IS the service name. Everything downstream works on an array, so flatten here.
   const parsedPackages = Object.entries(parsed.services).map(([name, config]) => ({
@@ -2349,6 +2349,28 @@ export function defineConfig<
 
   const tokens = parsed.tokens ?? {};
 
+  /** A service's `targetDir`: as written, or inferred from `serviceRootDir`. */
+  const targetDirOf = (config: (typeof parsedPackages)[number]): string =>
+    config.targetDir ?? inferredTargetDir(parsed.serviceRootDir, config.name);
+  /** A service's directory, absolute. Throws for one outside the workspace. */
+  const resolvedTargetDirOf = (config: (typeof parsedPackages)[number]): string => {
+    const targetDir = targetDirOf(config);
+    const resolvedTargetDir = path.resolve(resolvedWorkspaceDir, targetDir);
+    try {
+      envDirs(resolvedWorkspaceDir, resolvedTargetDir);
+    } catch (error) {
+      if (error instanceof OutsideWorkspaceError) {
+        throw new Error(
+          `services.${config.name}.targetDir is "${targetDir}", which is outside the workspace ` +
+            `(${resolvedWorkspaceDir})`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+    return resolvedTargetDir;
+  };
+
   const envFiles = envFileOrder(
     currentProfile(),
     resolveAdditionalFiles(parsed.env?.additionalFiles, currentProfile()),
@@ -2363,29 +2385,27 @@ export function defineConfig<
     configEnvReader([
       ...new Set(
         [
-          '.',
+          resolvedWorkspaceDir,
           ...parsedPackages.flatMap((config) => {
             try {
-              return [
-                config.relativeDir ?? inferredRelativeDir(parsed.serviceRootDir, config.name),
-              ];
+              return [resolvedTargetDirOf(config)];
             } catch {
               return []; // reported as the service resolves
             }
           }),
-        ].flatMap((relativeDir) =>
-          envCandidatePaths({ cwd: workspaceDir, relativeDir, files: envFiles }),
+        ].flatMap((resolvedTargetDir) =>
+          envCandidatePaths({ resolvedWorkspaceDir, resolvedTargetDir, files: envFiles }),
         ),
       ),
-      ...(envDecrypt ? [envKeysFile(workspaceDir)] : []),
+      ...(envDecrypt ? [envKeysFile(resolvedWorkspaceDir)] : []),
     ]),
   );
-  const loadEnv = (relativeDir: string, vars?: Record<string, string>) =>
+  const loadEnv = (resolvedTargetDir: string, vars?: Record<string, string>) =>
     once(() =>
       resolveEnvFrom(
         {
-          cwd: workspaceDir,
-          relativeDir,
+          resolvedWorkspaceDir,
+          resolvedTargetDir,
           files: envFiles,
           override: envOverride,
           decrypt: envDecrypt,
@@ -2397,7 +2417,7 @@ export function defineConfig<
 
   // The config's own variables come first: every callback below finds them in its `envs`. Their
   // callback sees the workspace environment as it resolves without them.
-  const workspaceFiles = loadEnv('.');
+  const workspaceFiles = loadEnv(resolvedWorkspaceDir);
   const envVars = resolveEnvVars(
     parsed.env?.vars,
     () => ({ envs: Object.assign(baseEnv(), workspaceFiles().env), tokens }),
@@ -2405,19 +2425,19 @@ export function defineConfig<
   );
 
   /**
-   * The environment a callback sees: a scope's `.env` files, with the config's own variables
+   * The environment a callback sees: the `.env` files up to a directory, with the config's own variables
    * ranked as a file below them, merged over `process.env`.
    */
-  const envsFor = (relativeDir: string) => {
-    const load = loadEnv(relativeDir, envVars);
+  const envsFor = (resolvedTargetDir: string) => {
+    const load = loadEnv(resolvedTargetDir, envVars);
     return {
       envs: once(() => Object.assign(baseEnv(), load().env)),
       files: () => load().files,
     };
   };
 
-  // Workspace-wide urls belong to no service: workspace-scope env, and no `port` to offer.
-  const workspaceEnv = envsFor('.');
+  // Workspace-wide urls belong to no service: the workspace root's env, and no `port` to offer.
+  const workspaceEnv = envsFor(resolvedWorkspaceDir);
   const workspaceBase = once((): ConfigContext => ({ envs: workspaceEnv.envs(), tokens }));
 
   // The dev reverse proxy sees the workspace context, like the workspace-wide urls. Resolved
@@ -2436,8 +2456,9 @@ export function defineConfig<
   }
 
   const packages = parsedPackages.map((config) => {
-    const relativeDir = config.relativeDir ?? inferredRelativeDir(parsed.serviceRootDir, config.name); // oxfmt-ignore
-    const env = envsFor(relativeDir);
+    const targetDir = targetDirOf(config);
+    const resolvedTargetDir = resolvedTargetDirOf(config);
+    const env = envsFor(resolvedTargetDir);
     // The service's own tokens win over the config's, so a service can override a shared value.
     const pkgTokens = config.tokens ? { ...tokens, ...config.tokens } : tokens;
     const baseCtx = once((): ConfigContext => ({ envs: env.envs(), tokens: pkgTokens }));
@@ -2478,8 +2499,8 @@ export function defineConfig<
       // each service's tokens: `config.services.api.tokens`.
       tokens: pkgTokens,
       port,
-      relativeDir,
-      absoluteDir: path.resolve(workspaceDir, relativeDir),
+      targetDir,
+      resolvedTargetDir,
       urls: resolveUrls(config.urls, scope(`${config.name} urls`)),
       healthcheck:
         config.healthcheck === undefined
@@ -2527,10 +2548,11 @@ export function defineConfig<
   const compose = parsed.infra?.['docker-compose'];
   const infra: ResolvedInfra | undefined = compose && {
     'docker-compose': {
-      file: compose.file === undefined ? undefined : path.resolve(workspaceDir, compose.file),
+      file:
+        compose.file === undefined ? undefined : path.resolve(resolvedWorkspaceDir, compose.file),
       projectName: composeProjectName({
         envs: workspaceEnv.envs(),
-        workspaceDir,
+        workspaceDir: resolvedWorkspaceDir,
         profile: currentProfile(),
       }),
       readyTimeout: compose.readyTimeout ?? DEFAULT_READY_TIMEOUT_MS,

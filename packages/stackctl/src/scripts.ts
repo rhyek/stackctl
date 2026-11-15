@@ -14,7 +14,7 @@ type PackageJson = { name?: string; version?: string; scripts?: Record<string, s
 function readPackageJson(pkg: AnyServiceConfig): PackageJson | null {
   try {
     return JSON.parse(
-      fs.readFileSync(path.join(pkg.absoluteDir, 'package.json'), 'utf8'),
+      fs.readFileSync(path.join(pkg.resolvedTargetDir, 'package.json'), 'utf8'),
     ) as PackageJson;
   } catch {
     return null;
@@ -34,7 +34,7 @@ export function getScriptText(pkg: AnyServiceConfig, script: string): string | n
  * `/bin/sh` otherwise.
  */
 export function runnerOf(pkg: AnyServiceConfig): 'sh' | 'make' {
-  const present = (file: string) => fs.existsSync(path.join(pkg.absoluteDir, file));
+  const present = (file: string) => fs.existsSync(path.join(pkg.resolvedTargetDir, file));
   return !present('package.json') && present('Makefile') ? 'make' : 'sh';
 }
 
@@ -97,15 +97,17 @@ export function scriptExec(
     args: extraArgs.length > 0 ? ['-c', `${text} "$@"`, 'sh', ...extraArgs] : ['-c', text],
     env: {
       ...env,
-      PATH: [...binDirs(pkg.absoluteDir), ...(env.PATH ? [env.PATH] : [])].join(path.delimiter),
+      PATH: [...binDirs(pkg.resolvedTargetDir), ...(env.PATH ? [env.PATH] : [])].join(
+        path.delimiter,
+      ),
       // An absent name/version stays `undefined`, which leaves an inherited one out of the child.
       npm_package_name: packageJson?.name,
       npm_package_version: packageJson?.version,
-      npm_package_json: path.join(pkg.absoluteDir, 'package.json'),
+      npm_package_json: path.join(pkg.resolvedTargetDir, 'package.json'),
       npm_lifecycle_event: script,
       npm_lifecycle_script: text,
-      INIT_CWD: pkg.absoluteDir,
-      PNPM_SCRIPT_SRC_DIR: pkg.absoluteDir,
+      INIT_CWD: pkg.resolvedTargetDir,
+      PNPM_SCRIPT_SRC_DIR: pkg.resolvedTargetDir,
     },
   };
 }
@@ -140,7 +142,7 @@ export function definesDevScript(pkg: AnyServiceConfig): boolean {
 
 export function makeTargetsOf(pkg: AnyServiceConfig): string[] {
   try {
-    const mk = fs.readFileSync(path.join(pkg.absoluteDir, 'Makefile'), 'utf8');
+    const mk = fs.readFileSync(path.join(pkg.resolvedTargetDir, 'Makefile'), 'utf8');
     // Exclude make's special targets (`.PHONY`, `.DEFAULT`, …) — they start with `.` and aren't
     // runnable targets, so they must not surface as commands.
     return [...mk.matchAll(/^([a-zA-Z0-9_.-]+):/gm)]

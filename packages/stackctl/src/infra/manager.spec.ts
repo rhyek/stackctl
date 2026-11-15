@@ -112,8 +112,8 @@ describe('InfraManager', () => {
       serviceRootDir: 'packages',
       env: {
         additionalFiles: ({ profile }) => [
-          { file: `.env.${profile}.pre`, before: 'profile' },
-          { file: `.env.${profile}.pre.local`, before: 'profile' },
+          { file: `.env.${profile}.pre`, before: '.env.<profile>' },
+          { file: `.env.${profile}.pre.local`, before: '.env.<profile>' },
         ],
       },
       infra: {

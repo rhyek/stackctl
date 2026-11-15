@@ -55,7 +55,7 @@ import type {
   ReverseProxyTlsSchema,
   ServiceConfigSchema,
 } from './config-schema';
-import type { EnvAdditionalFile, EnvFileOrder, Envs, Profile } from './env';
+import type { EnvAdditionalFile, EnvFileAfter, EnvFileBefore, Envs, Profile } from './env';
 import {
   resolveEnv,
   type ControlClient,
@@ -1089,20 +1089,20 @@ describe('the removed build surface', () => {
 });
 
 describe('serviceRootDir', () => {
-  test('makes relativeDir optional when set, required otherwise', () => {
+  test('makes targetDir optional when set, required otherwise', () => {
     type WithRoot = Parameters<
       typeof defineConfig<Record<never, never>, { api: unknown }, 'api', 'packages'>
     >[0]['services']['api'];
     type WithoutRoot = Parameters<
       typeof defineConfig<Record<never, never>, { api: unknown }, 'api'>
     >[0]['services']['api'];
-    expectTypeOf<Pick<WithRoot, 'relativeDir'>>().toEqualTypeOf<{ relativeDir?: string }>();
-    expectTypeOf<Pick<WithoutRoot, 'relativeDir'>>().toEqualTypeOf<{ relativeDir: string }>();
+    expectTypeOf<Pick<WithRoot, 'targetDir'>>().toEqualTypeOf<{ targetDir?: string }>();
+    expectTypeOf<Pick<WithoutRoot, 'targetDir'>>().toEqualTypeOf<{ targetDir: string }>();
   });
 
-  test('infers from a literal serviceRootDir, and the resolved relativeDir is always a string', () => {
+  test('infers from a literal serviceRootDir, and the resolved targetDir is always a string', () => {
     const config = defineConfig({ serviceRootDir: 'packages', services: { api: {} } });
-    expectTypeOf(config.services.api.relativeDir).toEqualTypeOf<string>();
+    expectTypeOf(config.services.api.targetDir).toEqualTypeOf<string>();
     expectTypeOf(config.serviceRootDir).toEqualTypeOf<string | undefined>();
   });
 });
@@ -1247,21 +1247,25 @@ describe('env', () => {
         additionalFiles: (ctx) => {
           expectTypeOf(ctx.profile).toEqualTypeOf<Profile>();
           expectTypeOf(ctx).not.toHaveProperty('envs');
-          return [{ file: `.env.${ctx.profile}.pre`, before: 'profile' }];
+          return [{ file: `.env.${ctx.profile}.pre`, before: '.env.<profile>' }];
         },
       },
       services: { api: {} },
     });
-    expectTypeOf(config.envFiles).toEqualTypeOf<EnvFileOrder>();
+    expectTypeOf(config.envFiles).toEqualTypeOf<string[]>();
   });
 
   test('takes an additional file before or after one of the named anchors, never both', () => {
-    expectTypeOf<{ file: string; before: 'profile' }>().toExtend<EnvAdditionalFile>();
-    expectTypeOf<{ file: string; after: 'profileLocal'; scope: 'service' }>().toExtend<EnvAdditionalFile>(); // oxfmt-ignore
-    expectTypeOf<{ file: string; before: 'profile'; after: 'local' }>().not.toExtend<EnvAdditionalFile>(); // oxfmt-ignore
+    expectTypeOf<{ file: string; before: '.env.<profile>' }>().toExtend<EnvAdditionalFile>();
+    expectTypeOf<{ file: string; after: '.env.<profile>.local' }>().toExtend<EnvAdditionalFile>();
+    expectTypeOf<{ file: string; before: '.env.<profile>'; after: '.env.local' }>().not.toExtend<EnvAdditionalFile>(); // oxfmt-ignore
     expectTypeOf<{ file: string }>().not.toExtend<EnvAdditionalFile>();
-    expectTypeOf<{ file: string; before: '.env.local' }>().not.toExtend<EnvAdditionalFile>();
-    expectTypeOf<{ file: string; before: 'profile'; scope: 'root' }>().not.toExtend<EnvAdditionalFile>(); // oxfmt-ignore
+    expectTypeOf<{ file: string; before: '.env.local' }>().toExtend<EnvAdditionalFile>();
+    expectTypeOf<{ file: string; after: '.env' }>().toExtend<EnvAdditionalFile>();
+    expectTypeOf<{ file: string; before: 'local' }>().not.toExtend<EnvAdditionalFile>();
+    expectTypeOf<{ file: string; before: '.env.development' }>().not.toExtend<EnvAdditionalFile>();
+    expectTypeOf<EnvFileBefore>().not.toHaveProperty('scope');
+    expectTypeOf<EnvFileAfter>().not.toHaveProperty('scope');
     type Opts = Parameters<typeof defineConfig<Record<never, never>, { api: unknown }>>[0];
     type Files = Exclude<
       NonNullable<Opts['env']>,
@@ -1283,7 +1287,7 @@ type Shape<T> = T extends (...args: never[]) => unknown
     : T;
 
 // The input types at their widest — any service names, any tokens, with `serviceRootDir` set so
-// `relativeDir` is optional, as the schema has it.
+// `targetDir` is optional, as the schema has it.
 type WidestService = ServiceConfigInput<TokenRecord, TokenRecord, string, string>;
 type WidestConfig = DefineConfigOptions<TokenRecord, Record<string, TokenRecord>, string, string>;
 type SchemaService = v.InferInput<typeof ServiceConfigSchema>;
@@ -1322,7 +1326,7 @@ describe('the input types and the schemas', () => {
   });
 
   // The resolved type gives back some fields as the schema resolves them, and the rest settled by
-  // `defineConfig` (callbacks run, `relativeDir` inferred). The first kind must match the schema's
+  // `defineConfig` (callbacks run, `targetDir` inferred). The first kind must match the schema's
   // output, and no schema field may be missing from it.
   test('give back the fields the schema resolves as it resolves them', () => {
     type FromSchema = 'selectable' | 'color' | 'autostart' | 'command' | 'logs';
@@ -1617,8 +1621,8 @@ describe('config split across files', () => {
     expectTypeOf<ReverseProxyRoute<Names>[]>().toExtend<
       NonNullable<ReverseProxyInput<TokenRecord, Names>['routes']>
     >();
-    // `relativeDir` is left to `defineConfig`, which knows whether `serviceRootDir` infers it.
-    expectTypeOf<ServiceInput>().toHaveProperty('relativeDir').toEqualTypeOf<string | undefined>();
+    // `targetDir` is left to `defineConfig`, which knows whether `serviceRootDir` infers it.
+    expectTypeOf<ServiceInput>().toHaveProperty('targetDir').toEqualTypeOf<string | undefined>();
   });
 
   test('parts checked with satisfies keep the inference of an inline config', () => {
@@ -1642,7 +1646,7 @@ describe('config split across files', () => {
     });
     expectTypeOf(config.services.api).toEqualTypeOf<typeof inline.services.api>();
     // No `reverseProxy`: the part fits all the same.
-    defineConfig({ services: { db: { relativeDir: 'db' } }, infra: { 'docker-compose': { services: infraServices } } }); // oxfmt-ignore
+    defineConfig({ services: { db: { targetDir: 'db' } }, infra: { 'docker-compose': { services: infraServices } } }); // oxfmt-ignore
   });
 
   test('an annotation widens a part: its keys, which the routes are checked against, are lost', () => {

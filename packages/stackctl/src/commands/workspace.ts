@@ -3,6 +3,7 @@ import {
   type Config,
   getLoadedConfig,
   getRegisteredPackages,
+  getWorkspaceDir,
 } from '../config';
 import { envFileNames, workspaceEnvLayer } from '../env';
 import {
@@ -42,7 +43,8 @@ export function applyWorkspaceEnv(config: Config<string> | null): void {
   Object.assign(
     process.env,
     workspaceEnvLayer({
-      cwd: process.cwd(),
+      // The config's own root, which may not be the folder holding it (where the CLI anchored).
+      resolvedWorkspaceDir: config ? getWorkspaceDir() : process.cwd(),
       files: config?.envFiles ?? envFileNames(),
       override: config?.envOverride,
       decrypt: config?.envDecrypt,

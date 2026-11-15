@@ -191,7 +191,7 @@ describe('NODE_EXTRA_CA_CERTS', () => {
       reverseProxy: { port: 4000, tls: true, routes: [{ subdomain: 'web', service: 'web' }] },
       services: { web: { port: 3000 }, api: { port: 3001 } },
     });
-    const opts = { cwd: dir, extraCaCerts: '/trusted.pem' };
+    const opts = { resolvedWorkspaceDir: dir, extraCaCerts: '/trusted.pem' };
     expect(packageEnvLayer(cfg.services.web, opts)).toMatchObject({
       PORT: '3000',
       PUBLIC_ORIGIN: 'https://web.localhost:4000',

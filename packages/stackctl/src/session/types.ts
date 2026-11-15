@@ -1,5 +1,5 @@
 import type { AnyServiceConfig, ResolvedHealthcheck, UrlEntry, UrlLine } from '../config';
-import type { EnvFileOrder, EnvOverride } from '../env-base';
+import type { EnvOverride } from '../env-base';
 import type { InfraWatch } from '../infra/provider';
 import type { InfraServiceState } from '../infra/types';
 
@@ -23,8 +23,8 @@ export interface SessionPlan {
   menuCommands: Record<string, string[]>;
   /** The workspace-wide `urls`, normalized; absent when the config declares none. */
   topLevelUrls?: UrlLine[];
-  /** The `.env` files looked for at each scope; absent means the profile's own. */
-  envFiles?: EnvFileOrder;
+  /** The `.env` filenames looked for in each directory; absent means the profile's own. */
+  envFiles?: string[];
   /** Variables whose `.env` or `env.vars` value may beat the ambient environment. */
   envOverride?: EnvOverride;
   /** Whether dotenvx's encrypted values are decrypted (`env.decrypt`); absent means not. */
@@ -33,8 +33,14 @@ export interface SessionPlan {
   envVars?: Record<string, string>;
   /** Whether lines show their timestamp on screen when their service doesn't say; absent means on. */
   logTimestamps?: boolean;
-  /** The workspace root every service's `relativeDir` resolves against; absent means `process.cwd()`. */
+  /** The directory the CLI anchored in, the one holding the config; absent means `process.cwd()`. */
   cwd?: string;
+  /**
+   * The workspace root, absolute: what each service's `targetDir` resolved against, and where its
+   * `.env` files are walked up to. The config's `workspaceDir`, so not always `cwd`; absent means
+   * `cwd`.
+   */
+  resolvedWorkspaceDir?: string;
   /** The session's infra once it is up; absent when the config declares none. */
   infra?: SessionInfra;
 }

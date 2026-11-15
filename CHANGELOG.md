@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.0
+
+### Features
+
+- **`.env` files load from every directory between the workspace root and a service**, the
+  nearest winning. See [docs/guide/env.md](docs/guide/env.md#which-files-load).
+
+### Breaking changes
+
+- **A service's `relativeDir` is now `targetDir`**, and the resolved service's `relativeDir` and
+  `absoluteDir` are `targetDir` and `resolvedTargetDir`: rename them in `stackctl.config.ts` and
+  wherever you read `show-config`, the control API or the exported config.
+- **`.env` files in a directory between the root and a service now load**: move any a service
+  shouldn't read.
+- **`env.additionalFiles` entries take no `scope`**: drop it; each file is looked for in every
+  directory.
+- **`env.additionalFiles` names the file it loads next to**: replace `before`/`after` values
+  `'base'`, `'local'`, `'profile'` and `'profileLocal'` with `'.env'`, `'.env.local'`,
+  `'.env.<profile>'` and `'.env.<profile>.local'`.
+- **A service's `targetDir` must be inside the workspace**: move a service that lives outside it.
+- **`config.envFiles` is one list of filenames**: read it in place of `.workspace` and
+  `.service`; the `EnvFileOrder` and `EnvFileScope` types are gone.
+- **`envCandidatePaths` is no longer exported**: read `candidates` from `resolveEnv()` instead.
+
 ## 0.8.1
 
 ### Fixes

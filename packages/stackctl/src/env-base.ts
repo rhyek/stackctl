@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { findPassthrough } from './infra/argv';
 
 // What stackctl's environment handling needs without reading a file: the profile, the names and
@@ -166,7 +168,7 @@ export function resolveProfile(
 }
 
 /**
- * The `.env` filenames for a profile, in ascending precedence *within a scope*: a base `.env`, the
+ * The `.env` filenames for a profile, in ascending precedence *within a directory*: a base `.env`, the
  * developer's `.env.local`, then the profile's `.env.<profile>` and `.env.<profile>.local`. This is
  * Vite's order — a profile file outranks `.env.local`.
  *
@@ -178,89 +180,77 @@ export function envFileNames(profile: string = currentProfile()): string[] {
 }
 
 /**
- * One of stackctl's own `.env` files, as an additional file names it to say where it goes:
- * `'base'` is `.env`, `'local'` is `.env.local`, `'profile'` is `.env.<profile>` and
- * `'profileLocal'` is `.env.<profile>.local`.
+ * One of stackctl's own `.env` files, as an additional file names it to say where it goes. The
+ * profile's two are named as written here, `<profile>` and all, for whichever profile is active.
  */
-export type EnvFileAnchor = 'base' | 'local' | 'profile' | 'profileLocal';
+export type EnvFileAnchor = '.env' | '.env.local' | '.env.<profile>' | '.env.<profile>.local';
 
 /** The anchors, in the order their files load: the same order as {@link envFileNames}. */
 export const ENV_FILE_ANCHORS: readonly EnvFileAnchor[] = [
-  'base',
-  'local',
-  'profile',
-  'profileLocal',
+  '.env',
+  '.env.local',
+  '.env.<profile>',
+  '.env.<profile>.local',
 ];
-
-/** Where an additional `.env` file is looked for: the workspace root, or a service's directory. */
-export type EnvFileScope = 'workspace' | 'service';
 
 /** An additional `.env` file loaded just before one of stackctl's own. */
 export interface EnvFileBefore {
   /**
-   * The file's name, in the scope's directory: a name, not a path. Only a file that exists is
-   * read, like stackctl's own.
+   * The file's name, looked for in every directory stackctl's own are: a name, not a path. Only
+   * a file that exists is read, like stackctl's own.
    */
   file: string;
   /**
-   * The stackctl file this one loads just before. At each scope stackctl loads `.env`,
+   * The stackctl file this one loads just before. In each directory stackctl loads `.env`,
    * `.env.local`, `.env.<profile>` and `.env.<profile>.local`, in that order, and a later file
-   * wins, so this file is outranked by the one it names and everything after it. With
+   * wins, so this file is outranked by the one it names and everything after it. A profile's
+   * file is named as `'.env.<profile>'`, literally, whatever the profile. With
    * `--profile development` and `file: '.env.pre'`:
    *
-   * - `'base'`: before `.env`, first and weakest:
+   * - `'.env'`: first and weakest:
    *   `.env.pre`, `.env`, `.env.local`, `.env.development`, `.env.development.local`.
-   * - `'local'`: before `.env.local`:
+   * - `'.env.local'`:
    *   `.env`, `.env.pre`, `.env.local`, `.env.development`, `.env.development.local`.
-   * - `'profile'`: before `.env.<profile>`:
+   * - `'.env.<profile>'`:
    *   `.env`, `.env.local`, `.env.pre`, `.env.development`, `.env.development.local`.
-   * - `'profileLocal'`: before `.env.<profile>.local`:
+   * - `'.env.<profile>.local'`:
    *   `.env`, `.env.local`, `.env.development`, `.env.pre`, `.env.development.local`.
    *
-   * Files on the same anchor load in array order. The workspace's files all load before a
-   * service's own (see `scope`).
+   * Files on the same anchor load in array order. Each directory's files all load before those
+   * of the directory below it.
    */
   before: EnvFileAnchor;
   after?: never;
-  /**
-   * Where the file is looked for: `'workspace'` (the root only) or `'service'` (a service's own
-   * directory only). Unset, it is looked for at both, like stackctl's own files.
-   */
-  scope?: EnvFileScope;
 }
 
 /** An additional `.env` file loaded just after one of stackctl's own. */
 export interface EnvFileAfter {
   /**
-   * The file's name, in the scope's directory: a name, not a path. Only a file that exists is
-   * read, like stackctl's own.
+   * The file's name, looked for in every directory stackctl's own are: a name, not a path. Only
+   * a file that exists is read, like stackctl's own.
    */
   file: string;
   /**
-   * The stackctl file this one loads just after. At each scope stackctl loads `.env`,
+   * The stackctl file this one loads just after. In each directory stackctl loads `.env`,
    * `.env.local`, `.env.<profile>` and `.env.<profile>.local`, in that order, and a later file
-   * wins, so this file outranks the one it names and everything before it. With
+   * wins, so this file outranks the one it names and everything before it. A profile's file is
+   * named as `'.env.<profile>'`, literally, whatever the profile. With
    * `--profile development` and `file: '.env.post'`:
    *
-   * - `'base'`: after `.env`:
+   * - `'.env'`:
    *   `.env`, `.env.post`, `.env.local`, `.env.development`, `.env.development.local`.
-   * - `'local'`: after `.env.local`:
+   * - `'.env.local'`:
    *   `.env`, `.env.local`, `.env.post`, `.env.development`, `.env.development.local`.
-   * - `'profile'`: after `.env.<profile>`:
+   * - `'.env.<profile>'`:
    *   `.env`, `.env.local`, `.env.development`, `.env.post`, `.env.development.local`.
-   * - `'profileLocal'`: after `.env.<profile>.local`, last and strongest:
+   * - `'.env.<profile>.local'`: last and strongest:
    *   `.env`, `.env.local`, `.env.development`, `.env.development.local`, `.env.post`.
    *
-   * Files on the same anchor load in array order. The workspace's files all load before a
-   * service's own (see `scope`).
+   * Files on the same anchor load in array order. Each directory's files all load before those
+   * of the directory below it.
    */
   after: EnvFileAnchor;
   before?: never;
-  /**
-   * Where the file is looked for: `'workspace'` (the root only) or `'service'` (a service's own
-   * directory only). Unset, it is looked for at both, like stackctl's own files.
-   */
-  scope?: EnvFileScope;
 }
 
 /**
@@ -270,38 +260,69 @@ export interface EnvFileAfter {
 export type EnvAdditionalFile = EnvFileBefore | EnvFileAfter;
 
 /**
- * The `.env` files looked for at each scope, ascending precedence: stackctl's own four for the
- * profile, with a project's additional files placed around them. A service whose directory is the
- * workspace root has no scope of its own: it reads the `workspace` files.
- */
-export interface EnvFileOrder {
-  /** The files looked for at the workspace root. */
-  workspace: string[];
-  /** The files looked for in a service's own directory. */
-  service: string[];
-}
-
-/**
- * The {@link EnvFileOrder} for a profile: at each scope, stackctl's own files in their order, each
- * with the additional files that name it placed around it — those `before` it just ahead of it,
- * those `after` it just behind it, each group in `additional`'s order. So between two of
- * stackctl's files come the files `after` the first, then the files `before` the second.
+ * The `.env` filenames looked for in each directory, ascending precedence: stackctl's own files in
+ * their order, each with the additional files that name it placed around it — those `before` it
+ * just ahead of it, those `after` it just behind it, each group in `additional`'s order. So between
+ * two of stackctl's files come the files `after` the first, then the files `before` the second.
  * `additional` is taken as already checked: see `defineConfig`.
  */
 export function envFileOrder(
   profile: string = currentProfile(),
   additional: readonly EnvAdditionalFile[] = [],
-): EnvFileOrder {
+): string[] {
   const standard = envFileNames(profile);
-  const at = (scope: EnvFileScope): string[] => {
-    const here = additional.filter((entry) => (entry.scope ?? scope) === scope);
-    return ENV_FILE_ANCHORS.flatMap((anchor, i) => [
-      ...here.filter((entry) => entry.before === anchor).map((entry) => entry.file),
-      standard[i] ?? '',
-      ...here.filter((entry) => entry.after === anchor).map((entry) => entry.file),
-    ]);
-  };
-  return { workspace: at('workspace'), service: at('service') };
+  return ENV_FILE_ANCHORS.flatMap((anchor, i) => [
+    ...additional.filter((entry) => entry.before === anchor).map((entry) => entry.file),
+    standard[i] ?? '',
+    ...additional.filter((entry) => entry.after === anchor).map((entry) => entry.file),
+  ]);
+}
+
+/** A target directory that is not the workspace root nor inside it. */
+export class OutsideWorkspaceError extends Error {}
+
+/**
+ * The directories whose `.env` files a target reads, ascending precedence: the workspace root,
+ * each directory between, and the target's own, last. Both must be absolute. They are compared as
+ * written, so the result is rooted at `resolvedWorkspaceDir` as given; when one is reached through
+ * a symlink and the other isn't, they are compared again by their real paths, and the directories
+ * in between are named under `resolvedWorkspaceDir` all the same. Throws
+ * {@link OutsideWorkspaceError} for a target outside the workspace.
+ */
+export function envDirs(resolvedWorkspaceDir: string, resolvedTargetDir: string): string[] {
+  assertAbsolute('resolvedWorkspaceDir', resolvedWorkspaceDir);
+  assertAbsolute('resolvedTargetDir', resolvedTargetDir);
+  const root = path.resolve(resolvedWorkspaceDir);
+  let rel = path.relative(root, path.resolve(resolvedTargetDir));
+  if (isOutside(rel)) {
+    rel = path.relative(realpathOr(root), realpathOr(resolvedTargetDir));
+    if (isOutside(rel)) {
+      throw new OutsideWorkspaceError(
+        `${resolvedTargetDir} is outside the workspace (${resolvedWorkspaceDir})`,
+      );
+    }
+  }
+  const parts = rel === '' ? [] : rel.split(path.sep);
+  return [root, ...parts.map((_part, i) => path.join(root, ...parts.slice(0, i + 1)))];
+}
+
+function isOutside(rel: string): boolean {
+  return rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+}
+
+function realpathOr(dir: string): string {
+  try {
+    return fs.realpathSync.native(dir);
+  } catch {
+    return path.resolve(dir);
+  }
+}
+
+/** Throws unless `dir` is an absolute path: what every resolved directory is. */
+export function assertAbsolute(name: string, dir: string): void {
+  if (!path.isAbsolute(dir)) {
+    throw new Error(`stackctl: ${name} must be an absolute path, got "${dir}"`);
+  }
 }
 
 /** Variables whose file value may beat the ambient environment; `true` means all of them. */

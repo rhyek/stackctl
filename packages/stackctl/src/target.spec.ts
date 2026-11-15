@@ -12,8 +12,8 @@ let services: AnyServiceConfig[];
 function svc(name: string, rel: string): AnyServiceConfig {
   return {
     name,
-    relativeDir: rel,
-    absoluteDir: path.join(root, rel),
+    targetDir: rel,
+    resolvedTargetDir: path.join(root, rel),
   } as AnyServiceConfig;
 }
 
@@ -78,7 +78,6 @@ describe('resolveTarget', () => {
     expect(t).toEqual({
       kind: 'directory',
       dir: path.join(root, 'apps/api-v2/x'),
-      relativeDir: path.join('apps', 'api-v2', 'x'),
     });
   });
 
@@ -86,7 +85,6 @@ describe('resolveTarget', () => {
     expect(resolveTarget('./api', ctx())).toEqual({
       kind: 'directory',
       dir: path.join(root, 'api'),
-      relativeDir: 'api',
     });
   });
 
@@ -94,7 +92,6 @@ describe('resolveTarget', () => {
     expect(resolveTarget('scripts', ctx())).toEqual({
       kind: 'directory',
       dir: path.join(root, 'scripts'),
-      relativeDir: 'scripts',
     });
   });
 
@@ -140,7 +137,9 @@ describe('resolveTarget', () => {
   test('resolves a service whose directory is reached through a symlink', () => {
     const link = path.join(tmp, 'svc-link');
     fs.symlinkSync(path.join(root, 'apps/api'), link);
-    services = [{ name: 'api', relativeDir: 'apps/api', absoluteDir: link } as AnyServiceConfig];
+    services = [
+      { name: 'api', targetDir: 'apps/api', resolvedTargetDir: link } as AnyServiceConfig,
+    ];
     const t = resolveTarget('apps/api/src', ctx());
     expect(t.kind === 'service' && t.service.name).toBe('api');
     expect(t.dir).toBe(path.join(root, 'apps/api'));

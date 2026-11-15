@@ -23,7 +23,7 @@ and a running one is not touched.
 
 ## Targets
 
-A target is a service's name or a directory:
+A target is a service's name or a directory, relative or absolute:
 
 ```bash
 sctl exec api -- node src/migrate.ts        # the service named api
@@ -34,8 +34,8 @@ sctl exec libs/db -- node src/migrate.ts    # a directory that isn't a service
 - **A path anywhere inside a service is that service**, and the command runs in the service's
   own directory.
 - **`./api` is always the directory.** A bare `api` is the service.
-- **A directory outside every service** gets the workspace's `.env` files, then its own, and no
-  `PORT`.
+- **A directory outside every service** gets the `.env` files of every directory from the root
+  down to it, and no `PORT`.
 - **No target** means the current directory.
 
 ## Profiles

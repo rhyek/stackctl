@@ -26,7 +26,9 @@ import type { LogLine, SessionPlan } from './types';
 const HC = 'http://127.0.0.1:1/health';
 
 /** Every `.env` watch the Supervisor opens: the directories it covers, and whether it was closed. */
-const watches = vi.hoisted(() => [] as { dirs: string[]; disposed: boolean }[]);
+const watches = vi.hoisted(
+  () => [] as { dirs: string[]; targets: WatchTarget[]; disposed: boolean }[],
+);
 
 vi.mock('../env-watch', async (importOriginal) => {
   const actual = await importOriginal<{
@@ -36,7 +38,11 @@ vi.mock('../env-watch', async (importOriginal) => {
     ...actual,
     watchEnvFiles: (opts: { targets: WatchTarget[] }) => {
       const watch = actual.watchEnvFiles(opts);
-      const entry = { dirs: opts.targets.map((target) => target.dir), disposed: false };
+      const entry = {
+        dirs: opts.targets.map((target) => target.dir),
+        targets: opts.targets,
+        disposed: false,
+      };
       watches.push(entry);
       return Object.assign(
         () => {
@@ -237,10 +243,13 @@ function setup(opts: {
    * starts feeding it.
    */
   held?: string;
+  /** The plan's `cwd`, relative to the workspace, when it isn't the workspace root itself. */
+  cwd?: string;
 }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-sup-')));
-  for (const name of Object.keys(opts.services)) {
-    const dir = path.join(root, 'packages', name);
+  for (const [name, service] of Object.entries(opts.services)) {
+    const own = (service as { targetDir?: string }).targetDir;
+    const dir = path.join(root, own ?? path.join('packages', name));
     fs.mkdirSync(dir, { recursive: true });
     const scripts: Record<string, string> = { lint: 'echo lint' };
     if (!opts.noDev?.includes(name)) {
@@ -249,6 +258,7 @@ function setup(opts: {
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name, scripts }));
   }
   for (const [file, text] of Object.entries(opts.files ?? {})) {
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.writeFileSync(path.join(root, file), text);
   }
   const held = opts.held ? holdReads(path.join(root, opts.held)) : null;
@@ -264,8 +274,9 @@ function setup(opts: {
   );
   const plan: SessionPlan = {
     ...buildSessionPlan(selected.map((s) => s.name)),
-    cwd: root,
-    envFiles: { workspace: ['.env'], service: ['.env'] },
+    cwd: opts.cwd === undefined ? root : path.join(root, opts.cwd),
+    resolvedWorkspaceDir: root,
+    envFiles: ['.env'],
     envDecrypt: opts.decrypt,
   };
   const logs = new LogStore({ logFile: path.join(root, 'session.log') });
@@ -395,6 +406,43 @@ describe('starting the session', () => {
     expect(opts.env.PORT).toBe('21001');
     expect(opts.env.npm_lifecycle_event).toBe('dev');
     expect(opts.records).toBe(t.supervisor.records);
+  });
+
+  test("starts a service with every directory's .env files up to it, the nearest winning", async () => {
+    const t = setup({
+      services: { api: {} },
+      files: {
+        '.env': 'A=root\nB=root\nC=root\n',
+        'packages/.env': 'B=packages\nC=packages\n',
+        'packages/api/.env': 'C=api\n',
+      },
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.procs).toHaveLength(1));
+    const { env } = t.proc('api').opts;
+    expect([env.A, env.B, env.C]).toEqual(['root', 'packages', 'api']);
+  });
+
+  test('keeps the injected PORT over a PORT set in a directory between', async () => {
+    const t = setup({
+      services: { api: { port: 21001 } },
+      files: { 'packages/.env': 'PORT=9999\n' },
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.procs).toHaveLength(1));
+    expect(t.proc('api').opts.env.PORT).toBe('21001');
+  });
+
+  test("resolves the .env files from the config's root when the CLI anchored elsewhere", async () => {
+    const t = setup({
+      services: { api: {} },
+      cwd: 'cfg',
+      files: { '.env': 'A=root\n', 'cfg/.env': 'A=cfg\n', 'packages/.env': 'B=packages\n' },
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.procs).toHaveLength(1));
+    const { env } = t.proc('api').opts;
+    expect([env.A, env.B]).toEqual(['root', 'packages']);
   });
 
   test('autostart false is stopped, not waiting', async () => {
@@ -1276,7 +1324,11 @@ describe('the .env watch', () => {
     const mine = () => watches.filter((w) => w.dirs[0] === t.root);
     t.supervisor.launchAll();
     await until(() => expect(mine()).toHaveLength(1));
-    expect(mine()[0]!.dirs).toEqual([t.root, path.join(t.root, 'packages/api')]);
+    expect(mine()[0]!.dirs).toEqual([
+      t.root,
+      path.join(t.root, 'packages'),
+      path.join(t.root, 'packages/api'),
+    ]);
     await t.supervisor.add('worker');
     expect(mine()).toHaveLength(2);
     expect(mine()[0]!.disposed).toBe(true);
@@ -1288,6 +1340,80 @@ describe('the .env watch', () => {
       proc.exit({ code: null, signal: 'SIGTERM' });
     }
     await stopping;
+  });
+
+  test('watches each directory once, with every service at or below it', async () => {
+    const t = setup({ services: { api: {}, worker: {}, tool: { targetDir: 'tools/tool' } } });
+    const mine = () => watches.filter((w) => w.dirs[0] === t.root);
+    t.supervisor.launchAll();
+    await until(() => expect(mine()).toHaveLength(1));
+    const at = (rel: string) => path.join(t.root, rel);
+    expect(mine()[0]!.dirs.toSorted()).toEqual(
+      [t.root, at('packages'), at('packages/api'), at('packages/worker'), at('tools'), at('tools/tool')].toSorted(), // oxfmt-ignore
+    );
+    for (const proc of t.procs) {
+      proc.exit({ code: null, signal: 'SIGTERM' });
+    }
+    await t.supervisor.stopAll();
+  });
+
+  test('a change in a directory between restarts the services below it, and no other', async () => {
+    const t = setup({ services: { api: {}, worker: {}, tool: { targetDir: 'tools/tool' } } });
+    const mine = () => watches.filter((w) => w.dirs[0] === t.root);
+    t.supervisor.launchAll();
+    await until(() => expect(mine()).toHaveLength(1));
+    await until(() => expect(t.of('tool')).toHaveLength(1));
+    const packages = mine()[0]!.targets.find((x) => x.dir === path.join(t.root, 'packages'))!;
+    packages.onChange();
+    await until(() => expect(t.of('api')[0]!.stops).toBe(1));
+    await until(() => expect(t.of('worker')[0]!.stops).toBe(1));
+    expect(t.of('tool')[0]!.stops).toBe(0);
+  });
+
+  test('a change at the root restarts every service', async () => {
+    const t = setup({ services: { api: {}, tool: { targetDir: 'tools/tool' } } });
+    const mine = () => watches.filter((w) => w.dirs[0] === t.root);
+    t.supervisor.launchAll();
+    await until(() => expect(mine()).toHaveLength(1));
+    await until(() => expect(t.of('tool')).toHaveLength(1));
+    mine()[0]!
+      .targets.find((x) => x.dir === t.root)!
+      .onChange();
+    await until(() => expect(t.of('api')[0]!.stops).toBe(1));
+    await until(() => expect(t.of('tool')[0]!.stops).toBe(1));
+  });
+
+  test('editing the .env of a directory between restarts the services below it', async () => {
+    const t = setup({ services: { api: {}, worker: {} } });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    await until(() => expect(t.of('worker')).toHaveLength(1));
+    const stopped = () => t.of('api')[0]!.stops > 0 && t.of('worker')[0]!.stops > 0;
+    for (let attempt = 1; attempt <= 8 && !stopped(); attempt++) {
+      fs.writeFileSync(path.join(t.root, 'packages/.env'), `GREETING=edit-${attempt}\n`);
+      for (let waited = 0; waited < 2000 && !stopped(); waited += 20) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    expect(t.of('api')[0]!.stops).toBe(1);
+    expect(t.of('worker')[0]!.stops).toBe(1);
+  }, 30_000);
+
+  test('a change in a directory between restarts a service with its new values', async () => {
+    const t = setup({ services: { api: {} }, files: { 'packages/.env': 'MID=before\n' } });
+    const mine = () => watches.filter((w) => w.dirs[0] === t.root);
+    t.supervisor.launchAll();
+    await until(() => expect(mine()).toHaveLength(1));
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    expect(t.proc('api').opts.env.MID).toBe('before');
+    fs.writeFileSync(path.join(t.root, 'packages/.env'), 'MID=after\n');
+    mine()[0]!
+      .targets.find((x) => x.dir === path.join(t.root, 'packages'))!
+      .onChange();
+    await until(() => expect(t.of('api')[0]!.stops).toBe(1));
+    t.of('api')[0]!.exit({ code: null, signal: 'SIGTERM' });
+    await until(() => expect(t.of('api')).toHaveLength(2));
+    expect(t.of('api')[1]!.opts.env.MID).toBe('after');
   });
 
   test("editing an added service's .env file restarts it", async () => {

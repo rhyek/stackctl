@@ -28,7 +28,7 @@ repo.
 | Option           | What it is                                                                                         |
 | ---------------- | -------------------------------------------------------------------------------------------------- |
 | `services`       | Your application services, keyed by name. **Required.** See [Services](./services.md).              |
-| `serviceRootDir` | The directory services live under, e.g. `'apps'`: each service is at `<serviceRootDir>/<name>`. **Recommended.** Without it, every service sets `relativeDir`. |
+| `serviceRootDir` | The directory services live under, e.g. `'apps'`: each service is at `<serviceRootDir>/<name>`. **Recommended.** Without it, every service sets `targetDir`. |
 | `env`            | Variables of the config's own, and how `.env` files load. See [Environment](./env.md).              |
 | `logs`           | On-screen timestamps. See [Logs](./logs.md).                                                        |
 | `infra`          | Databases, caches and other Docker Compose services. See [Infra](./infra.md).                       |
@@ -36,7 +36,7 @@ repo.
 | `urls`           | Workspace-wide footer links, not tied to a service. See [URLs and origins](./urls.md#links-in-the-footer). |
 | `tokens`         | Values of your own, handed to every callback. See [Tokens](#tokens).                                |
 | `apiPort`        | Pins the [control API](../reference/control-api.md)'s port. By default a free one is picked. A pinned port serves one profile's session at a time. |
-| `workspaceDir`   | The root that service directories resolve against. Defaults to the config file's directory, and is rarely set. |
+| `workspaceDir`   | The root that service directories resolve against: relative to the config file's directory, or absolute. Defaults to the config file's directory, and is rarely set. |
 
 ## Callbacks
 
@@ -230,5 +230,6 @@ stackctl.config.ts(4,24): error TS2322: Type 'string' is not assignable to type 
 ## `--workspace-dir`
 
 The `--workspace-dir <dir>` flag (and `workspaceDir` in the [SDK](../reference/sdk.md))
-names the directory holding the config, to run stackctl against a workspace from outside it.
+names the directory holding the config, relative to the current directory or absolute, to run
+stackctl against a workspace from outside it.
 It is not the config's `workspaceDir` option above.

@@ -113,7 +113,7 @@ describe('the config type check', () => {
         "import { defineConfig } from 'stackctl';",
         // A type error only tsc sees: the config itself is valid.
         "export const label: number = 'x';",
-        "export default defineConfig({ services: { api: { relativeDir: '.' } } });",
+        "export default defineConfig({ services: { api: { targetDir: '.' } } });",
         '',
       ].join('\n'),
     );
@@ -424,6 +424,127 @@ describe('exec and run take a target', () => {
   });
 });
 
+describe("a config whose workspaceDir isn't its own folder", () => {
+  // outer/config/stackctl.config.ts sets `workspaceDir: '..'`: the workspace is outer/, where the
+  // services and the walked-up .env files are, and config/'s own .env file is no workspace's.
+  let outer: string;
+  let config: string;
+  beforeAll(() => {
+    outer = path.join(ws, 'outer');
+    config = path.join(outer, 'config');
+    fs.mkdirSync(config, { recursive: true });
+    fs.mkdirSync(path.join(outer, 'packages', 'svc'), { recursive: true });
+    fs.writeFileSync(
+      path.join(config, 'stackctl.config.ts'),
+      [
+        "import { defineConfig } from 'stackctl';",
+        "export default defineConfig({ workspaceDir: '..', serviceRootDir: 'packages', services: { svc: {} } });", // oxfmt-ignore
+        '',
+      ].join('\n'),
+    );
+    fs.writeFileSync(
+      path.join(outer, 'packages', 'svc', 'package.json'),
+      JSON.stringify({ name: 'svc', scripts: { dev: 'true' } }),
+    );
+    fs.writeFileSync(path.join(outer, '.env.development'), 'ROOT_VAR=outer\n');
+    fs.writeFileSync(path.join(outer, 'packages', '.env.development'), 'MID_VAR=packages\n');
+    fs.writeFileSync(path.join(outer, 'packages', 'svc', '.env.development'), 'OWN_VAR=svc\n');
+    fs.writeFileSync(path.join(config, '.env.development'), 'CFG_VAR=config\n');
+  });
+  afterAll(() => fs.rmSync(outer, { recursive: true, force: true }));
+
+  const print = ['sh', '-c', 'echo "$ROOT_VAR|$MID_VAR|$OWN_VAR|$CFG_VAR"'];
+
+  test('exec gives a service the files from the workspace down to it', async () => {
+    const result = await stackctl(['--workspace-dir', config, 'exec', 'svc', '--', ...print]);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toBe('outer|packages|svc|');
+  });
+
+  test('exec runs a service in its own directory', async () => {
+    const result = await stackctl(['--workspace-dir', config, 'exec', 'svc', '--', 'pwd']);
+    expect(result.stdout).toBe(path.join(outer, 'packages', 'svc'));
+  });
+
+  test("exec with no target gets the workspace's files, not the config folder's", async () => {
+    const result = await stackctl(['exec', '--', ...print], { cwd: config });
+    expect(result.stdout).toBe('outer|||');
+  });
+
+  test('resolveEnv() resolves the same files as exec', async () => {
+    const { resolveEnv } = (await import(
+      pathToFileURL(path.join(buildDir, 'index.js')).href
+    )) as typeof import('../index');
+    const { env, files } = resolveEnv({ workspaceDir: config, target: 'svc' });
+    expect(env).toMatchObject({ ROOT_VAR: 'outer', MID_VAR: 'packages', OWN_VAR: 'svc' });
+    expect(env.CFG_VAR).toBeUndefined();
+    expect(files).toEqual([
+      path.join(outer, '.env.development'),
+      path.join(outer, 'packages', '.env.development'),
+      path.join(outer, 'packages', 'svc', '.env.development'),
+    ]);
+  });
+
+  test('show-config resolves the service against the workspace', async () => {
+    const result = await stackctl(['--workspace-dir', config, 'show-config']);
+    const shown = JSON.parse(result.stdout) as {
+      services: Record<string, { targetDir: string; resolvedTargetDir: string }>;
+    };
+    expect(shown.services.svc).toMatchObject({
+      targetDir: 'packages/svc',
+      resolvedTargetDir: path.join(outer, 'packages', 'svc'),
+    });
+  });
+});
+
+describe('.env files walked up from the target', () => {
+  const print = (...names: string[]) => [
+    'sh',
+    '-c',
+    `echo "${names.map((name) => `$${name}`).join('|')}"`,
+  ];
+
+  test('gives a service the files of the directory its folder is in', async () => {
+    const result = await stackctl(['exec', 'app', '--', ...print('MID_VAR', 'APP_VAR')]);
+    expect(result.stdout).toBe('from-packages|from-app-env-file');
+  });
+
+  test("gives run's script the same", async () => {
+    const result = await stackctl(['run', 'app', 'mid']);
+    expect(lastLine(result.stdout)).toBe('from-packages');
+  });
+
+  test('gives a nested directory inside no service every directory up to the root', async () => {
+    const result = await stackctl(['exec', './scripts/db', '--', ...print('SCRIPTS_VAR', 'DB_VAR', 'MID_VAR')]); // oxfmt-ignore
+    expect(result.stdout).toBe('from-scripts|from-db|');
+  });
+
+  test('takes an absolute target path', async () => {
+    const result = await stackctl(['exec', path.join(ws, 'scripts', 'db'), '--', ...print('DB_VAR', 'SCRIPTS_VAR')]); // oxfmt-ignore
+    expect(result.stdout).toBe('from-db|from-scripts');
+  });
+
+  test('takes a relative target from a directory below the root', async () => {
+    const result = await stackctl(['exec', 'db', '--', ...print('DB_VAR')], {
+      cwd: path.join(ws, 'scripts'),
+    });
+    expect(result.stdout).toBe('from-db');
+  });
+
+  test("gives the services' folder itself, a directory inside no service, its own files", async () => {
+    const result = await stackctl(['exec', './packages', '--', ...print('MID_VAR', 'APP_VAR')]);
+    expect(result.stdout).toBe('from-packages|');
+  });
+
+  test('takes a relative --workspace-dir', async () => {
+    const result = await stackctl(
+      ['--workspace-dir', path.basename(ws), 'exec', 'app', '--', ...print('MID_VAR')],
+      { cwd: path.dirname(ws) },
+    );
+    expect(result.stdout).toBe('from-packages');
+  });
+});
+
 describe('environment variables', () => {
   test('a stackctl started by a stackctl child drops what the outer one added, not the shell', async () => {
     const result = await stackctl(['run', 'app', 'nested'], {
@@ -533,20 +654,16 @@ describe('env.additionalFiles', () => {
     expect(result.stdout).toBe('t:21100');
   });
 
-  test('show-config prints the files looked for at each scope', async () => {
+  test('show-config prints the files looked for in each directory', async () => {
     const result = await stackctl(['show-config']);
-    const files = [
+    expect((JSON.parse(result.stdout) as { envFiles: unknown }).envFiles).toEqual([
       '.env',
       '.env.local',
       '.env.development.pre',
       '.env.development.pre.local',
       '.env.development',
       '.env.development.local',
-    ];
-    expect((JSON.parse(result.stdout) as { envFiles: unknown }).envFiles).toEqual({
-      workspace: files,
-      service: files,
-    });
+    ]);
   });
 });
 
@@ -599,6 +716,31 @@ describe('resolveEnv()', () => {
     expect(env.PRE_URL).toBe('t:21100');
     expect(env.STACKCTL_PROFILE).toBe('test');
     expect(files).toEqual([path.join(ws, '.env.test.pre'), path.join(ws, '.env.test')]);
+  });
+
+  test("lists a service's files root first, the directory between next, its own last", async () => {
+    const { resolveEnv } = await load();
+    const { env, files, packageNames } = resolveEnv({ workspaceDir: ws, target: 'app' });
+    expect(env.MID_VAR).toBe('from-packages');
+    const mid = files.indexOf(path.join(ws, 'packages', '.env.development'));
+    const own = files.indexOf(path.join(app, '.env.development'));
+    expect(mid).toBeGreaterThan(files.indexOf(path.join(ws, '.env.development')));
+    expect(own).toBeGreaterThan(mid);
+    expect(packageNames.has('APP_VAR')).toBe(true);
+    expect(packageNames.has('MID_VAR')).toBe(false);
+  });
+
+  test('takes a relative workspaceDir, from the current directory', async () => {
+    const { resolveEnv } = await load();
+    const { env } = resolveEnv({ workspaceDir: path.relative(process.cwd(), ws), target: 'app' });
+    expect(env.MID_VAR).toBe('from-packages');
+  });
+
+  test('takes an absolute directory target', async () => {
+    const { resolveEnv } = await load();
+    const { env } = resolveEnv({ workspaceDir: ws, target: path.join(ws, 'scripts', 'db') });
+    expect(env).toMatchObject({ DB_VAR: 'from-db', SCRIPTS_VAR: 'from-scripts' });
+    expect(env.MID_VAR).toBeUndefined();
   });
 
   test('finds the service from a directory target, as exec finds it', async () => {
@@ -711,9 +853,9 @@ describe('finding the workspace', () => {
       });
       expect(result.exitCode).toBe(0);
       const config = JSON.parse(result.stdout) as {
-        services: Record<string, { absoluteDir: string }>;
+        services: Record<string, { resolvedTargetDir: string }>;
       };
-      expect(config.services.web?.absoluteDir).toBe(path.join(root, 'apps', 'web'));
+      expect(config.services.web?.resolvedTargetDir).toBe(path.join(root, 'apps', 'web'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

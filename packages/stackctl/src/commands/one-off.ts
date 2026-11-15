@@ -57,7 +57,7 @@ async function loadForOneOff(): Promise<string> {
 /** Where a one-off command running in `cwd` runs, for its event-log lines: a service, or a directory. */
 function whereOf(root: string, cwd: string): OneOffWhere {
   const service = getRegisteredPackages().find(
-    (pkg) => path.resolve(pkg.absoluteDir) === path.resolve(cwd),
+    (pkg) => path.resolve(pkg.resolvedTargetDir) === path.resolve(cwd),
   )?.name;
   return service ? { service } : { dir: path.relative(root, cwd) || '.' };
 }

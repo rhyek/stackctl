@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { type AnyServiceConfig, defineConfig } from '../config';
+import { type AnyServiceConfig, defineConfig, getWorkspaceDir } from '../config';
 import { buildSessionPlan, waitsFor } from './plan';
 
 let root: string;
@@ -70,6 +70,7 @@ describe('buildSessionPlan', () => {
     expect(plan.envFiles).toBeDefined();
     expect(plan.logTimestamps).toBe(false);
     expect(plan.cwd).toBe(process.cwd());
+    expect(plan.resolvedWorkspaceDir).toBe(getWorkspaceDir());
     load();
     expect(buildSessionPlan(['web']).logTimestamps).toBe(true);
   });

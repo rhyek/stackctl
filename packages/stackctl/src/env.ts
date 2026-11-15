@@ -10,10 +10,10 @@ import {
   assertOutsideCli,
   assertValidProfile,
   currentProfile,
+  envDirs,
   envFileNames,
   rejectUnknownOptions,
   shellEnvironment,
-  type EnvFileOrder,
   type EnvOverride,
   type Profile,
 } from './env-base';
@@ -38,30 +38,31 @@ export interface EnvResolution {
   /** Every candidate path (whether or not it exists), ascending precedence. */
   candidates: string[];
   /**
-   * The names the service's own files assign, as against the workspace's. When `relativeDir`
-   * is the workspace root the one scope is the service's, so this is every file's names.
+   * The names the target directory's own files assign, as against those of the directories above
+   * it. When the target is the workspace root, its own are the root's: every file's names.
    */
   packageNames: Set<string>;
 }
 
 interface ResolveEnvOptions {
-  /** Workspace root. */
-  cwd: string;
+  /** The workspace root, absolute. */
+  resolvedWorkspaceDir: string;
   /**
-   * Service directory relative to `cwd`. Defaults to `'.'`, which collapses service scope onto
-   * the workspace, so only the workspace's files are read.
+   * The target's directory, absolute: a service's, or any other inside the workspace. Its files,
+   * and those of every directory up to the workspace root, are read (see {@link envDirs}).
+   * Defaults to `resolvedWorkspaceDir`, which reads the workspace's files only.
    */
-  relativeDir?: string;
+  resolvedTargetDir?: string;
   /**
-   * The profile whose {@link envFileNames} to look for at each scope. Defaults to the active
+   * The profile whose {@link envFileNames} to look for in each directory. Defaults to the active
    * profile ({@link currentProfile}). Ignored when `files` is given.
    */
   profile?: Profile;
   /**
-   * Filenames to look for, ascending precedence: one list for both scopes, or one per scope (a
-   * config's `envFiles`). Takes precedence over `profile`.
+   * Filenames to look for in each directory, ascending precedence (a config's `envFiles`). Takes
+   * precedence over `profile`.
    */
-  files?: string[] | EnvFileOrder;
+  files?: string[];
   /** Variables the files may override the ambient environment for. */
   override?: EnvOverride;
   /**
@@ -218,27 +219,24 @@ export class EnvFileSnapshot {
 }
 
 /**
- * Every candidate `.env` path, ascending precedence: all workspace-scope files (in
- * `files` order), then all service-scope files (in `files` order). Service scope always
- * outranks workspace scope. When `relativeDir` resolves to `cwd`, the two scopes collapse
- * into one, which reads the workspace's files.
+ * Every candidate `.env` path, ascending precedence: each of {@link envDirs}, from the workspace
+ * root down to the target's own directory, with all of `files` in it, in `files` order. A nearer
+ * directory's files outrank a farther one's.
  */
 export function envCandidatePaths({
-  cwd,
-  relativeDir = '.',
+  resolvedWorkspaceDir,
+  resolvedTargetDir = resolvedWorkspaceDir,
   profile,
   files,
-}: Pick<ResolveEnvOptions, 'cwd' | 'relativeDir' | 'profile' | 'files'>): string[] {
-  const order =
+}: Pick<
+  ResolveEnvOptions,
+  'resolvedWorkspaceDir' | 'resolvedTargetDir' | 'profile' | 'files'
+>): string[] {
+  const names =
     files ?? envFileNames(profile === undefined ? currentProfile() : assertValidProfile(profile));
-  const workspaceNames = Array.isArray(order) ? order : order.workspace;
-  const serviceNames = Array.isArray(order) ? order : order.service;
-  const workspaceDir = path.resolve(cwd);
-  const pkgDir = path.resolve(cwd, relativeDir);
-  const inWorkspace = workspaceNames.map((f) => path.join(workspaceDir, f));
-  return pkgDir === workspaceDir
-    ? inWorkspace
-    : [...inWorkspace, ...serviceNames.map((f) => path.join(pkgDir, f))];
+  return envDirs(resolvedWorkspaceDir, resolvedTargetDir).flatMap((dir) =>
+    names.map((name) => path.join(dir, name)),
+  );
 }
 
 /**
@@ -606,9 +604,9 @@ function privateKeys(text: string | null): Record<string, string> {
 }
 
 /**
- * Resolves the `.env` files for a service into a flat, expanded variable map without touching
- * `process.env`. Only files that exist are loaded; a later file (or a service-scope file)
- * overrides an earlier one, and every file overrides the config's own `vars`.
+ * Resolves the `.env` files for a target into a flat, expanded variable map without touching
+ * `process.env`. Only files that exist are loaded; a later file (one in a nearer directory, or
+ * later in `files`) overrides an earlier one, and every file overrides the config's own `vars`.
  *
  * The **ambient environment wins** over the files — matching Next.js, Vite, dotenv-flow and
  * `node --env-file`, so `FOO=bar stackctl` overrides a file for one run. `override` names the
@@ -623,6 +621,10 @@ function privateKeys(text: string | null): Record<string, string> {
  * Each candidate file is read by `read`, and {@link envKeysFile} with `decrypt`; with no `read`,
  * from disk, synchronously. A value dotenvx encrypted stays as written unless `decrypt` is on.
  */
+function targetDirOf(opts: ResolveEnvOptions): string {
+  return opts.resolvedTargetDir ?? opts.resolvedWorkspaceDir;
+}
+
 export function resolveEnvFrom(opts: ResolveEnvOptions, given?: EnvFileReader): EnvResolution {
   const read = given ?? readEnvFileSync;
   const candidates = envCandidatePaths(opts);
@@ -638,9 +640,10 @@ export function resolveEnvFrom(opts: ResolveEnvOptions, given?: EnvFileReader): 
 
   const ambient = opts.ambient ?? shellEnvironment();
   const vars = opts.vars ?? {};
-  const pkgDir = path.resolve(opts.cwd, opts.relativeDir ?? '.');
+  // The target's own directory, as `envDirs` names it: the last of them.
+  const ownDir = envDirs(opts.resolvedWorkspaceDir, targetDirOf(opts)).at(-1);
   const packageNames = assignedNames(
-    texts.filter((_text, i) => path.dirname(files[i] ?? '') === pkgDir).join('\n'),
+    texts.filter((_text, i) => path.dirname(files[i] ?? '') === ownDir).join('\n'),
   );
   if (Object.keys(vars).length === 0 && !texts.join('').trim()) {
     return { env: {}, files, candidates, packageNames };
@@ -676,12 +679,15 @@ export function resolveEnvFrom(opts: ResolveEnvOptions, given?: EnvFileReader): 
   // the files, each under a name of its own, so they can't shadow a variable; without it, nothing
   // is decrypted. A value the ambient environment wins over needs no decrypting. The patch in
   // `patches/` loads dotenvx's crypto code only once a value is decrypted, and keeps a key and a
-  // decrypted value for the process, since a config's env is resolved once per scope. It is why
+  // decrypted value for the process, since a config's env is resolved once per directory. It is why
   // the version is pinned: a new one needs the patch made again (`pnpm patch`).
   if (opts.decrypt) {
     decryptDefinitions(
       fileDefs.filter((def) => !Object.hasOwn(winning, def.name)),
-      { ...ambientPrivateKeys(ambient), ...privateKeys(read(envKeysFile(opts.cwd))) },
+      {
+        ...ambientPrivateKeys(ambient),
+        ...privateKeys(read(envKeysFile(opts.resolvedWorkspaceDir))),
+      },
     );
   }
 
@@ -692,13 +698,13 @@ export function resolveEnvFrom(opts: ResolveEnvOptions, given?: EnvFileReader): 
 
 /** What an environment layer is built from; see {@link packageEnvLayer}. */
 interface EnvLayerOptions {
-  /** Workspace root. */
-  cwd: string;
+  /** The workspace root, absolute. */
+  resolvedWorkspaceDir: string;
   /**
-   * Filenames to look for, one list for both scopes or one per scope (defaults to the active
-   * profile's {@link envFileNames}).
+   * Filenames to look for in each directory (defaults to the active profile's
+   * {@link envFileNames}).
    */
-  files?: string[] | EnvFileOrder;
+  files?: string[];
   /** Variables the files may override the ambient environment for. */
   override?: EnvOverride;
   /** The config's own variables (`env.vars`, resolved); see {@link ResolveEnvOptions.vars}. */
@@ -732,7 +738,10 @@ export function packageEnvLayer(
   opts: EnvLayerOptions,
 ): Record<string, string> {
   const { read, extraCaCerts, ...rest } = opts;
-  const { env, packageNames } = resolveEnvFrom({ ...rest, relativeDir: pkg.relativeDir }, read);
+  const { env, packageNames } = resolveEnvFrom(
+    { ...rest, resolvedTargetDir: pkg.resolvedTargetDir },
+    read,
+  );
   const injected: Record<string, string> = {};
   if (pkg.port !== undefined) {
     injected.PORT = String(pkg.port);
@@ -753,13 +762,16 @@ export function packageEnvLayer(
 
 /**
  * The environment layer for what belongs to no service — infra, and `stackctl exec` / `run`
- * outside every service: the config's own variables and the workspace-scope `.env` files,
+ * outside every service: the config's own variables and the workspace root's `.env` files,
  * resolved together, with `extraCaCerts` as `NODE_EXTRA_CA_CERTS` unless a file sets it.
  * Excludes `process.env`, like {@link packageEnvLayer}.
  */
 export function workspaceEnvLayer(opts: EnvLayerOptions): Record<string, string> {
   const { read, extraCaCerts, ...rest } = opts;
-  const { env, packageNames } = resolveEnvFrom({ ...rest, relativeDir: '.' }, read);
+  const { env, packageNames } = resolveEnvFrom(
+    { ...rest, resolvedTargetDir: rest.resolvedWorkspaceDir },
+    read,
+  );
   if (extraCaCerts !== undefined && !packageNames.has('NODE_EXTRA_CA_CERTS')) {
     env.NODE_EXTRA_CA_CERTS = extraCaCerts;
   }
@@ -768,16 +780,16 @@ export function workspaceEnvLayer(opts: EnvLayerOptions): Record<string, string>
 
 /**
  * The environment layer for a directory that is no service: the config's own variables and the
- * `.env` files of the workspace and of `relativeDir`, resolved together — service-scoped
- * additional files included — with `extraCaCerts` as `NODE_EXTRA_CA_CERTS` unless a file sets it.
+ * `.env` files of `resolvedTargetDir` and of every directory up to the workspace root, resolved
+ * together, with `extraCaCerts` as `NODE_EXTRA_CA_CERTS` unless a file sets it.
  * No `PORT` and no `PUBLIC_ORIGIN`. Excludes `process.env`, like {@link packageEnvLayer}.
  */
 export function directoryEnvLayer(
-  relativeDir: string,
+  resolvedTargetDir: string,
   opts: EnvLayerOptions,
 ): Record<string, string> {
   const { read, extraCaCerts, ...rest } = opts;
-  const { env, packageNames } = resolveEnvFrom({ ...rest, relativeDir }, read);
+  const { env, packageNames } = resolveEnvFrom({ ...rest, resolvedTargetDir }, read);
   if (extraCaCerts !== undefined && !packageNames.has('NODE_EXTRA_CA_CERTS')) {
     env.NODE_EXTRA_CA_CERTS = extraCaCerts;
   }
@@ -795,6 +807,6 @@ export function targetEnvLayer(
     case 'root':
       return workspaceEnvLayer(opts);
     case 'directory':
-      return directoryEnvLayer(target.relativeDir, opts);
+      return directoryEnvLayer(target.dir, opts);
   }
 }

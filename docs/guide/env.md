@@ -1,5 +1,5 @@
 ---
-description: How stackctl loads .env files per workspace, service and profile, which value wins, the variables it sets itself, and how profiles keep sessions apart.
+description: How stackctl loads .env files directory by directory, from the workspace root down to each service, which value wins, the variables it sets itself, how edits restart services, and how profiles keep sessions apart.
 ---
 
 # Environment and profiles
@@ -10,48 +10,60 @@ process. You don't call `dotenv` anywhere. Parsing is done by
 
 ## Which files load
 
-Files are read at two scopes, the workspace root and the service's own directory:
+Here is what `api` reads with `--profile development`, in order. Each file overrides the ones
+before it:
 
 ```
 your-monorepo/
-├── .env                     # workspace: every service
-├── .env.local
-├── .env.development
+├── .env                          1
+├── .env.local                    2
+├── .env.development              3
+├── stackctl.config.ts
 └── apps/
-    └── api/
-        ├── .env             # service: only api, overrides the workspace's
-        └── .env.local
+    ├── .env                      4
+    ├── .env.development.local    5
+    ├── api/                      ← the service
+    │   ├── .env                  6
+    │   └── .env.local            7
+    └── web/
+        └── .env                  not read: another service's folder
 ```
 
-At each scope, in this order, each overriding the one before:
+stackctl goes **directory by directory**, from the workspace root down to the service's own,
+and in each directory looks for the same four names, in this order:
 
 1. `.env`
 2. `.env.local`
 3. `.env.<profile>`
 4. `.env.<profile>.local`
 
-So a profile's files win over the generic ones, `.env.local` included, and each `.local` file
-wins over the same file without it. This is
+So the **nearest directory wins**, whatever the file: `apps/api/.env` (6) overrides
+`apps/.env.development.local` (5). Within one directory, a profile's files win over the generic
+ones, and each `.local` file wins over the same file without it. This is
 [Vite's order](https://vite.dev/guide/env-and-mode#env-files).
 
-Only files that exist are read. Commit `.env` and `.env.<profile>`, and keep `.env*.local` out
-of git for personal overrides. To commit secrets too, encrypt them with dotenvx and turn on
-[`env.decrypt`](../config/env.md#envdecrypt).
+- **Only files that exist are read.**
+- **Nothing outside the walk is read**: not above the workspace root, not below the service's
+  folder, not in a sibling folder.
+- **A service inside another's folder** gets the outer one's files too, before its own.
+- **A directory you hand to [`exec` or `run`](./commands.md#targets)** is walked the same way.
+
+Commit `.env` and `.env.<profile>`, and keep `.env*.local` out of git for personal overrides.
+To commit secrets too, encrypt them with dotenvx and turn on
+[`env.decrypt`](../config/env.md#envdecrypt). To load files of your own between stackctl's, use
+[`env.additionalFiles`](../config/env.md#envadditionalfiles).
 
 ## Which value wins
 
 From lowest to highest:
 
 1. [`env.vars`](../config/env.md#envvars), variables set in the config.
-2. The workspace's files.
-3. The service's files.
-4. **The environment stackctl was started with.** `LOG_LEVEL=debug sctl` overrides every
+2. The `.env` files, in the order [above](#which-files-load).
+3. **The environment stackctl was started with.** `LOG_LEVEL=debug sctl` overrides every
    file for one run, as in Vite, Next.js and `node --env-file`.
 
 To let a file win over the shell for some variables (a `NODE_OPTIONS` that extends the
-inherited one, say), name them in [`env.override`](../config/env.md#envoverride). To load
-files of your own between stackctl's, use
-[`env.additionalFiles`](../config/env.md#envadditionalfiles).
+inherited one, say), name them in [`env.override`](../config/env.md#envoverride).
 
 ## Profiles
 
@@ -90,8 +102,8 @@ Every process stackctl starts gets these:
 | `STACKCTL_CWD`           | The directory stackctl was invoked in.                                        |
 | `NODE_EXTRA_CA_CERTS`    | With the proxy's [`tls: true`](../config/reverse-proxy.md#tls): its certificates. |
 
-`PORT` and `PUBLIC_ORIGIN` win over a value set workspace-wide. Only the service's own `.env`
-file overrides them.
+`PORT` and `PUBLIC_ORIGIN` win over a value set by `env.vars` or a `.env` file above the
+service's directory. Only a `.env` file in the service's own directory overrides them.
 
 The three `STACKCTL_*` variables are set before the config loads, so a `.env` file can
 reference them (`UPLOADS=${STACKCTL_WORKSPACE_DIR}/.data`), and config callbacks find them in
@@ -100,8 +112,15 @@ reference them (`UPLOADS=${STACKCTL_WORKSPACE_DIR}/.data`), and config callbacks
 ## Live reload
 
 While a session runs, stackctl watches the `.env` files, and the places new ones would appear.
-When a file's content changes, the services that read it restart: a workspace file restarts
-every running service, a service's file only that one. Symlinked files are followed. A write
+When a file's content changes, the services that read it restart:
+
+| The file is in              | What restarts                         |
+| --------------------------- | ------------------------------------- |
+| the workspace root          | every running service                 |
+| a folder such as `apps/`    | every running service below it        |
+| a service's own folder      | that service                          |
+
+Symlinked files are followed. A write
 that changes nothing (a `touch`) restarts nothing.
 
 Values the config computed are the exception: `env.vars` and callbacks such as `port` run once,

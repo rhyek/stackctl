@@ -63,7 +63,7 @@ export default defineConfig({
       },
     },
   },
-  // Each service lives at apps/<key> unless it sets `relativeDir` itself. (The libraries the
+  // Each service lives at apps/<key> unless it sets `targetDir` itself. (The libraries the
   // services import, in libs/, are plain pnpm `workspace:*` dependencies run as source, and not
   // part of this config.)
   serviceRootDir: 'apps',

@@ -1,5 +1,5 @@
 ---
-description: The env option of stackctl.config.ts - env.vars for variables set in the config, env.override to let files win over the shell, env.additionalFiles for extra .env files, and env.decrypt for values encrypted with dotenvx.
+description: The env option of stackctl.config.ts - env.vars for variables set in the config, env.override to let files win over the shell, env.additionalFiles for extra .env files loaded before or after stackctl's own, and env.decrypt for values encrypted with dotenvx.
 ---
 
 # Environment
@@ -17,7 +17,7 @@ export default defineConfig({
     }),
     override: ['NODE_OPTIONS'],
     additionalFiles: ({ profile }) => [
-      { file: `.env.${profile}.generated`, after: 'profile' },
+      { file: `.env.${profile}.generated`, after: '.env.<profile>' },
     ],
   },
   services: {/* … */},
@@ -54,7 +54,7 @@ With nothing else under `env`, a callback can stand in for the whole option:
   `.env`: any `.env` file that defines it wins, and so does the shell.
 - **It runs first.** The callback runs once when the config loads, before any other callback,
   so `port`, `urls` and the rest find its result in their `envs`. Its own `envs` is the
-  workspace's `.env` files and the shell.
+  workspace root's `.env` files and the shell.
 - **A `.env` file can reference it**: `${UPLOADS_DIR}` expands.
 - **Values are literal strings.** A `$` is a `$`. `undefined` leaves the variable out.
 - **It keeps its value until stackctl restarts**, even when a `.env` file it read changes.
@@ -94,36 +94,72 @@ higher-ranked one always wins. With `LOG_LEVEL=info` in the workspace's `.env` a
 
 ## `env.additionalFiles`
 
-- **Type:** `Array<{ file, before | after, scope? }> | ({ profile }) => Array<…>`
+- **Type:** `Array<{ file, before | after }> | ({ profile }) => Array<…>`
 
-Extra `.env` files, each loaded just before or after one of stackctl's four.
+Extra `.env` files, each loaded right before or right after one of stackctl's four:
 
-A file a setup script writes, say, which your own `.env.<profile>.local` can still override:
+```ts
+env: {
+  additionalFiles: [{ file: '.env.worktree', before: '.env.local' }],
+},
+```
+
+That gives each directory this order, later files winning:
+
+```
+.env
+.env.worktree           ← before: '.env.local'
+.env.local
+.env.<profile>
+.env.<profile>.local
+```
+
+Every one of stackctl's files has a slot on each side. Top to bottom is load order, so a file
+lower down wins:
+
+```
+    before: '.env'                  first, weakest
+.env
+    after: '.env'
+    before: '.env.local'
+.env.local
+    after: '.env.local'
+    before: '.env.<profile>'
+.env.<profile>
+    after: '.env.<profile>'
+    before: '.env.<profile>.local'
+.env.<profile>.local
+    after: '.env.<profile>.local'   last, strongest
+```
+
+**`'.env.<profile>'` is written just like that**, `<profile>` and all: it stands for the active
+profile's file, whichever profile that is. `'.env.development'` is an error. To put the profile
+in a file's *name*, use the callback form:
 
 ```ts
 env: {
   additionalFiles: ({ profile }) => [
-    { file: `.env.${profile}.generated`, after: 'profile' },
+    { file: `.env.${profile}.generated`, after: '.env.<profile>' },
   ],
 },
 ```
 
-With `--profile development`, each scope then loads `.env`, `.env.local`, `.env.development`,
-`.env.development.generated`, `.env.development.local`.
+With `--profile development`, each directory then loads `.env`, `.env.local`,
+`.env.development`, `.env.development.generated`, `.env.development.local`.
 
-| Field              | Value                                                                                       |
-| ------------------ | ------------------------------------------------------------------------------------------- |
-| `file`             | The file's name: a name, not a path. Only a file that exists is read.                       |
-| `before` / `after` | Exactly one. The stackctl file it loads next to: `'base'` (`.env`), `'local'` (`.env.local`), `'profile'` (`.env.<profile>`) or `'profileLocal'` (`.env.<profile>.local`). |
-| `scope`            | `'workspace'` or `'service'` to look in one place only. Unset: both, like stackctl's own.   |
+| Field              | Value                                                                  |
+| ------------------ | ---------------------------------------------------------------------- |
+| `file`             | The file's name, not a path. Only a file that exists is read.          |
+| `before` / `after` | Exactly one of the two: the stackctl file it loads next to.            |
 
-- **It is an ordinary `.env` file at its place.** It wins over the files before it and loses
-  to the files after it.
-- **Files on the same anchor load in array order.**
-- **They are read everywhere stackctl's own are**, and watched the same way: creating, editing
-  or removing one restarts the services that read it.
+- **It is an ordinary `.env` file in its slot.** It wins over the files above it and loses to
+  the files below.
+- **Files in the same slot load in array order.**
+- **They are looked for in every directory stackctl's own are**, from the workspace root down
+  to the service (see [Which files load](../guide/env.md#which-files-load)), and watched the
+  same way: creating, editing or removing one restarts the services that read it.
 - **Mistakes fail at load**: both or neither of `before` and `after`, a path for `file`, one of
-  stackctl's own names, or a duplicate.
+  stackctl's own names, or the same file listed twice.
 
 ## `env.decrypt`
 
@@ -146,5 +182,5 @@ DATABASE_URL="encrypted:BDqD…"
   and from any `DOTENV_PRIVATE_KEY*` variable stackctl is started with, which is how CI gets
   one.
 - **A value with no key to decrypt it** stays as written, and stackctl prints which one.
-- **Editing `.env.keys` restarts every service**, as a workspace `.env` file does.
+- **Editing `.env.keys` restarts every service**, as a `.env` file at the workspace root does.
 - **Without it, `encrypted:…` is an ordinary string**, passed on as written.

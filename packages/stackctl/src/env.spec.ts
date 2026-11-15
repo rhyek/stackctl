@@ -13,11 +13,13 @@ import {
   currentProfileSource,
   dropInjectedEnv,
   envCandidatePaths,
+  envDirs,
   EnvFileSnapshot,
   envFileNames,
   envFileOrder,
   envKeysFile,
   hideDollars,
+  OutsideWorkspaceError,
   packageEnvLayer,
   publishProfileSource,
   resolveEnvFrom,
@@ -33,15 +35,15 @@ function withoutList(layer: Record<string, string>): Record<string, string> {
   return vars;
 }
 
-let cwd: string;
+let workspaceDir: string;
 beforeEach(() => {
-  cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-env-'));
-  fs.mkdirSync(path.join(cwd, 'packages', 'api'), { recursive: true });
+  workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-env-'));
+  fs.mkdirSync(path.join(workspaceDir, 'packages', 'api'), { recursive: true });
 });
-afterEach(() => fs.rmSync(cwd, { recursive: true, force: true }));
+afterEach(() => fs.rmSync(workspaceDir, { recursive: true, force: true }));
 
 function write(rel: string, contents: string): void {
-  const p = path.join(cwd, rel);
+  const p = path.join(workspaceDir, rel);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, contents);
 }
@@ -197,64 +199,356 @@ describe('resolveProfile', () => {
   });
 });
 
+describe('envDirs', () => {
+  const at = (...parts: string[]) => path.join(workspaceDir, ...parts);
+
+  test('is the workspace root alone for a target at the root', () => {
+    expect(envDirs(workspaceDir, workspaceDir)).toEqual([workspaceDir]);
+  });
+
+  test('is the root, then the target, one level down', () => {
+    expect(envDirs(workspaceDir, at('packages'))).toEqual([workspaceDir, at('packages')]);
+  });
+
+  test('names every directory between the root and the target, root first', () => {
+    expect(envDirs(workspaceDir, at('apps/web/client/src'))).toEqual([
+      workspaceDir,
+      at('apps'),
+      at('apps/web'),
+      at('apps/web/client'),
+      at('apps/web/client/src'),
+    ]);
+  });
+
+  test('normalizes a target written with `.`, `..` or a trailing slash', () => {
+    expect(envDirs(workspaceDir, `${at('apps')}/./web/../web/`)).toEqual([
+      workspaceDir,
+      at('apps'),
+      at('apps/web'),
+    ]);
+    expect(envDirs(`${workspaceDir}/`, at('apps'))).toEqual([workspaceDir, at('apps')]);
+  });
+
+  test("needs no directory to exist: the walk is the paths' own", () => {
+    expect(envDirs(workspaceDir, at('not/made/yet'))).toEqual([
+      workspaceDir,
+      at('not'),
+      at('not/made'),
+      at('not/made/yet'),
+    ]);
+  });
+
+  test('throws for a target above the root', () => {
+    expect(() => envDirs(workspaceDir, path.dirname(workspaceDir))).toThrow(OutsideWorkspaceError);
+  });
+
+  test('throws for a sibling of the root', () => {
+    expect(() => envDirs(at('packages'), at('other'))).toThrow(OutsideWorkspaceError);
+    expect(() => envDirs(at('packages'), at('other'))).toThrow(
+      `${at('other')} is outside the workspace (${at('packages')})`,
+    );
+  });
+
+  test('throws for a target whose path only starts with the root', () => {
+    expect(() => envDirs(at('app'), at('app-v2'))).toThrow(OutsideWorkspaceError);
+  });
+
+  test('throws for a relative path on either side', () => {
+    expect(() => envDirs('ws', workspaceDir)).toThrow(
+      'resolvedWorkspaceDir must be an absolute path, got "ws"',
+    );
+    expect(() => envDirs(workspaceDir, 'packages/api')).toThrow(
+      'resolvedTargetDir must be an absolute path, got "packages/api"',
+    );
+  });
+
+  describe('through symlinks', () => {
+    let real: string;
+    let link: string;
+    beforeEach(() => {
+      real = at('real-ws');
+      link = at('link-ws');
+      fs.mkdirSync(path.join(real, 'apps', 'api'), { recursive: true });
+      fs.symlinkSync(real, link);
+    });
+
+    test('roots the walk at the workspace as given, the target reached by its real path', () => {
+      expect(envDirs(link, path.join(fs.realpathSync(real), 'apps', 'api'))).toEqual([
+        link,
+        path.join(link, 'apps'),
+        path.join(link, 'apps', 'api'),
+      ]);
+    });
+
+    test('roots it at the real workspace, the target reached through the link', () => {
+      expect(envDirs(fs.realpathSync(real), path.join(link, 'apps', 'api'))).toEqual([
+        fs.realpathSync(real),
+        path.join(fs.realpathSync(real), 'apps'),
+        path.join(fs.realpathSync(real), 'apps', 'api'),
+      ]);
+    });
+
+    test('walks a link inside the workspace as written, wherever it points', () => {
+      const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-env-outside-'));
+      try {
+        fs.symlinkSync(outside, path.join(real, 'linked'));
+        expect(envDirs(real, path.join(real, 'linked'))).toEqual([real, path.join(real, 'linked')]);
+      } finally {
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    test('still throws for a target outside both forms', () => {
+      expect(() => envDirs(link, path.dirname(workspaceDir))).toThrow(OutsideWorkspaceError);
+    });
+  });
+});
+
 describe('envCandidatePaths', () => {
-  test('lists all workspace-scope files first, then package-scope files (ascending precedence)', () => {
+  test("lists each directory's files, root first, each in `files` order", () => {
     const paths = envCandidatePaths({
-      cwd,
-      relativeDir: 'packages/api',
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
       files: ['.env', '.env.local'],
     });
     expect(paths).toEqual([
-      path.join(cwd, '.env'),
-      path.join(cwd, '.env.local'),
-      path.join(cwd, 'packages/api', '.env'),
-      path.join(cwd, 'packages/api', '.env.local'),
+      path.join(workspaceDir, '.env'),
+      path.join(workspaceDir, '.env.local'),
+      path.join(workspaceDir, 'packages', '.env'),
+      path.join(workspaceDir, 'packages', '.env.local'),
+      path.join(workspaceDir, 'packages/api', '.env'),
+      path.join(workspaceDir, 'packages/api', '.env.local'),
     ]);
   });
 
-  test("collapses to a single scope when relativeDir is '.'", () => {
-    const paths = envCandidatePaths({ cwd, relativeDir: '.', files: ['.env', '.env.local'] });
-    expect(paths).toEqual([path.join(cwd, '.env'), path.join(cwd, '.env.local')]);
+  test("is the root's files alone for a target at the root", () => {
+    const paths = envCandidatePaths({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
+      files: ['.env', '.env.local'],
+    });
+    expect(paths).toEqual([path.join(workspaceDir, '.env'), path.join(workspaceDir, '.env.local')]);
   });
 
-  test('produces the full eight-path order for a profile', () => {
+  test('defaults the target to the root', () => {
+    expect(envCandidatePaths({ resolvedWorkspaceDir: workspaceDir, files: ['.env'] })).toEqual([
+      path.join(workspaceDir, '.env'),
+    ]);
+  });
+
+  test("produces a profile's four files at every level", () => {
     const paths = envCandidatePaths({
-      cwd,
-      relativeDir: 'packages/api',
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
       files: envFileNames('test'),
     });
-    expect(paths.map((p) => path.relative(cwd, p))).toEqual([
-      '.env',
-      '.env.local',
-      '.env.test',
-      '.env.test.local',
-      path.join('packages/api', '.env'),
-      path.join('packages/api', '.env.local'),
-      path.join('packages/api', '.env.test'),
-      path.join('packages/api', '.env.test.local'),
+    const four = ['.env', '.env.local', '.env.test', '.env.test.local'];
+    expect(paths.map((p) => path.relative(workspaceDir, p))).toEqual([
+      ...four,
+      ...four.map((f) => path.join('packages', f)),
+      ...four.map((f) => path.join('packages/api', f)),
     ]);
+  });
+
+  test("takes a profile's files when no `files` are given", () => {
+    const paths = envCandidatePaths({ resolvedWorkspaceDir: workspaceDir, profile: 'staging' });
+    expect(paths).toEqual(envFileNames('staging').map((f) => path.join(workspaceDir, f)));
+  });
+
+  test('throws for a target outside the workspace', () => {
+    expect(() =>
+      envCandidatePaths({
+        resolvedWorkspaceDir: path.join(workspaceDir, 'packages'),
+        resolvedTargetDir: workspaceDir,
+      }),
+    ).toThrow(OutsideWorkspaceError);
+  });
+});
+
+describe('resolveEnvFrom walking up from the target', () => {
+  const api = () => path.join(workspaceDir, 'packages/api');
+
+  test('a nearer directory wins over a farther one, the target over all', () => {
+    write('.env', 'A=root\nB=root\nC=root\n');
+    write('packages/.env', 'B=packages\nC=packages\n');
+    write('packages/api/.env', 'C=api\n');
+    const { env, files } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: api(),
+    });
+    expect(env).toEqual({ A: 'root', B: 'packages', C: 'api' });
+    expect(files).toEqual([
+      path.join(workspaceDir, '.env'),
+      path.join(workspaceDir, 'packages', '.env'),
+      path.join(api(), '.env'),
+    ]);
+  });
+
+  test("a nearer directory's .env beats a farther one's .env.<profile>.local", () => {
+    write('packages/.env.development.local', 'KEY=packages-profile-local\n');
+    write('packages/api/.env', 'KEY=api-base\n');
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: api(),
+    });
+    expect(env.KEY).toBe('api-base');
+  });
+
+  test('a directory between is read with no files at the root or the target', () => {
+    write('packages/.env', 'ONLY=packages\n');
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: api(),
+    });
+    expect(env).toEqual({ ONLY: 'packages' });
+  });
+
+  test('ranks the files within a directory between as anywhere: .env.<profile>.local last', () => {
+    write('packages/.env', 'KEY=base\n');
+    write('packages/.env.local', 'KEY=local\n');
+    write('packages/.env.development', 'KEY=profile\n');
+    write('packages/.env.development.local', 'KEY=profile-local\n');
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: api(),
+    });
+    expect(env.KEY).toBe('profile-local');
+  });
+
+  test("expands a target's ${VAR} against a directory between", () => {
+    write('.env', 'HOST=localhost\n');
+    write('packages/.env', 'URL=http://${HOST}:3000\n');
+    write('packages/api/.env', 'API_URL=${URL}/api\n');
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: api(),
+    });
+    expect(env.API_URL).toBe('http://localhost:3000/api');
+  });
+
+  test('does not read a sibling directory', () => {
+    write('packages/web/.env', 'WEB=yes\n');
+    write('apps/.env', 'APPS=yes\n');
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: api(),
+    });
+    expect(env).toEqual({});
+  });
+
+  test('does not read below the target, nor above the root', () => {
+    write('packages/api/src/.env', 'BELOW=yes\n');
+    fs.writeFileSync(path.join(path.dirname(workspaceDir), `.env.stackctl-spec-above`), 'X=1\n');
+    try {
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: path.join(workspaceDir, 'packages'),
+        resolvedTargetDir: api(),
+        files: ['.env', '.env.stackctl-spec-above'],
+      });
+      expect(env).toEqual({});
+    } finally {
+      fs.rmSync(path.join(path.dirname(workspaceDir), `.env.stackctl-spec-above`));
+    }
+  });
+
+  test('the ambient environment wins over a directory between, unless overridden', () => {
+    write('packages/.env', 'STACKCTL_SPEC_MID=file\n');
+    withAmbient({ STACKCTL_SPEC_MID: 'shell' }, () => {
+      const opts = { resolvedWorkspaceDir: workspaceDir, resolvedTargetDir: api() };
+      expect(resolveEnvFrom(opts).env.STACKCTL_SPEC_MID).toBe('shell');
+      expect(
+        resolveEnvFrom({ ...opts, override: ['STACKCTL_SPEC_MID'] }).env.STACKCTL_SPEC_MID,
+      ).toBe('file');
+    });
+  });
+
+  test("counts only the target's own files as its own, not a directory between", () => {
+    write('.env', 'ROOT=1\n');
+    write('packages/.env', 'MID=1\n');
+    write('packages/api/.env', 'OWN=1\n');
+    const { packageNames } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: api(),
+    });
+    expect([...packageNames]).toEqual(['OWN']);
+  });
+
+  test("counts the root's files as a root target's own", () => {
+    write('.env', 'ROOT=1\n');
+    const { packageNames } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
+    });
+    expect([...packageNames]).toEqual(['ROOT']);
+  });
+
+  test('reads .env.keys at the root only', () => {
+    const reads: string[] = [];
+    resolveEnvFrom(
+      { resolvedWorkspaceDir: workspaceDir, resolvedTargetDir: api(), decrypt: true },
+      (file) => {
+        reads.push(file);
+        return file.endsWith('.env') ? 'A=1\n' : null;
+      },
+    );
+    expect(reads.filter((f) => path.basename(f) === '.env.keys')).toEqual([
+      path.join(workspaceDir, '.env.keys'),
+    ]);
+  });
+
+  test('resolves the same files for a target given by its real path under a linked root', () => {
+    const real = path.join(workspaceDir, 'real-ws');
+    const link = path.join(workspaceDir, 'link-ws');
+    fs.mkdirSync(path.join(real, 'apps', 'api'), { recursive: true });
+    fs.symlinkSync(real, link);
+    fs.writeFileSync(path.join(real, '.env'), 'A=root\n');
+    fs.writeFileSync(path.join(real, 'apps', '.env'), 'B=apps\n');
+    const { env, files } = resolveEnvFrom({
+      resolvedWorkspaceDir: link,
+      resolvedTargetDir: path.join(fs.realpathSync(real), 'apps', 'api'),
+    });
+    expect(env).toEqual({ A: 'root', B: 'apps' });
+    expect(files).toEqual([path.join(link, '.env'), path.join(link, 'apps', '.env')]);
+  });
+
+  test('throws for a target outside the workspace', () => {
+    expect(() =>
+      resolveEnvFrom({
+        resolvedWorkspaceDir: api(),
+        resolvedTargetDir: workspaceDir,
+      }),
+    ).toThrow(OutsideWorkspaceError);
   });
 });
 
 describe('resolveEnvFrom', () => {
   test('loads only files that exist', () => {
     write('.env', 'A=1\n');
-    const { env, files } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+    const { env, files } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+    });
     expect(env).toEqual({ A: '1' });
-    expect(files).toEqual([path.join(cwd, '.env')]);
+    expect(files).toEqual([path.join(workspaceDir, '.env')]);
   });
 
   test('package scope overrides workspace scope regardless of file rank', () => {
     write('.env.development', 'KEY=root\n');
     write('packages/api/.env', 'KEY=pkg\n');
-    const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+    });
     expect(env.KEY).toBe('pkg');
   });
 
   test('a profile file outranks .env.local within a scope (Vite order)', () => {
     write('.env.local', 'KEY=local\n');
     write('.env.development', 'KEY=profile\n');
-    const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+    });
     expect(env.KEY).toBe('profile');
   });
 
@@ -263,14 +557,20 @@ describe('resolveEnvFrom', () => {
     write('.env.local', 'KEY=local\n');
     write('.env.development', 'KEY=profile\n');
     write('.env.development.local', 'KEY=modelocal\n');
-    const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+    });
     expect(env.KEY).toBe('modelocal');
   });
 
   test('package-scope .env.local outranks a workspace-scope profile file (scope beats profile)', () => {
     write('.env.development', 'KEY=wsmode\n');
     write('packages/api/.env.local', 'KEY=pkglocal\n');
-    const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+    });
     expect(env.KEY).toBe('pkglocal');
   });
 
@@ -279,8 +579,8 @@ describe('resolveEnvFrom', () => {
     write('.env.development', 'KEY=dev\nDEV_ONLY=yes\n');
     write('.env.test', 'KEY=test\n');
     const { env } = resolveEnvFrom({
-      cwd,
-      relativeDir: 'packages/api',
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
       files: envFileNames('test'),
     });
     expect(env.KEY).toBe('test');
@@ -290,8 +590,8 @@ describe('resolveEnvFrom', () => {
   test('loads a custom profile', () => {
     write('.env.apple', 'KEY=apple\n');
     const { env } = resolveEnvFrom({
-      cwd,
-      relativeDir: 'packages/api',
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
       files: envFileNames('apple'),
     });
     expect(env.KEY).toBe('apple');
@@ -301,7 +601,10 @@ describe('resolveEnvFrom', () => {
     withAmbient({ STACKCTL_ENV_SPEC: 'fromproc' }, () => {
       write('.env', 'BASE=hello\n');
       write('packages/api/.env.local', 'GREETING=${BASE} world\nECHO=${STACKCTL_ENV_SPEC}\n');
-      const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      });
       expect(env.GREETING).toBe('hello world');
       expect(env.ECHO).toBe('fromproc');
     });
@@ -312,7 +615,10 @@ describe('resolveEnvFrom', () => {
       '.env',
       'SET=yes\nA=${SET:-fallback}\nB=${MISSING:-fallback}\nC=${SET:+present}\nD=${MISSING:+present}\n',
     );
-    const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+    });
     expect(env.A).toBe('yes');
     expect(env.B).toBe('fallback');
     expect(env.C).toBe('present');
@@ -322,7 +628,10 @@ describe('resolveEnvFrom', () => {
   test('returns only file-defined keys and does not mutate process.env', () => {
     write('.env', 'STACKCTL_ENV_SPEC_ONLY=x\n');
     const before = { ...process.env };
-    const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+    });
     expect(Object.keys(env)).toEqual(['STACKCTL_ENV_SPEC_ONLY']);
     expect(process.env.STACKCTL_ENV_SPEC_ONLY).toBeUndefined();
     expect(process.env).toEqual(before);
@@ -339,55 +648,65 @@ describe('resolveEnvFrom with a profile', () => {
 
   test("loads the given profile's files", () => {
     withAmbient({ STACKCTL_PROFILE: 'development' }, () => {
-      const { env, files } = resolveEnvFrom({ cwd, profile: 'test' });
+      const { env, files } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        profile: 'test',
+      });
       expect(env).toEqual({ BASE: 'yes', KEY: 'test' });
-      expect(files).toEqual([path.join(cwd, '.env'), path.join(cwd, '.env.test')]);
+      expect(files).toEqual([
+        path.join(workspaceDir, '.env'),
+        path.join(workspaceDir, '.env.test'),
+      ]);
     });
   });
 
   test('files take precedence over profile', () => {
     const { env, candidates } = resolveEnvFrom({
-      cwd,
+      resolvedWorkspaceDir: workspaceDir,
       profile: 'test',
       files: envFileNames('apple'),
     });
     expect(env.KEY).toBe('apple');
-    expect(candidates).toEqual(envFileNames('apple').map((f) => path.join(cwd, f)));
+    expect(candidates).toEqual(envFileNames('apple').map((f) => path.join(workspaceDir, f)));
   });
 
   test('without a profile, follows STACKCTL_PROFILE', () => {
     withAmbient({ STACKCTL_PROFILE: 'test' }, () => {
-      expect(resolveEnvFrom({ cwd }).env.KEY).toBe('test');
+      expect(resolveEnvFrom({ resolvedWorkspaceDir: workspaceDir }).env.KEY).toBe('test');
     });
     withAmbient({ STACKCTL_PROFILE: 'apple' }, () => {
-      expect(resolveEnvFrom({ cwd }).env.KEY).toBe('apple');
+      expect(resolveEnvFrom({ resolvedWorkspaceDir: workspaceDir }).env.KEY).toBe('apple');
     });
   });
 
-  test("without a relativeDir, reads only the workspace's files", () => {
+  test("without a targetDir, reads only the workspace's files", () => {
     write('packages/api/.env.test', 'KEY=pkg\n');
-    const { env, candidates } = resolveEnvFrom({ cwd, profile: 'test' });
+    const { env, candidates } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      profile: 'test',
+    });
     expect(env.KEY).toBe('test');
-    expect(candidates).toEqual(envFileNames('test').map((f) => path.join(cwd, f)));
+    expect(candidates).toEqual(envFileNames('test').map((f) => path.join(workspaceDir, f)));
   });
 
   test('rejects a profile that is not a plain name', () => {
-    expect(() => resolveEnvFrom({ cwd, profile: '../x' })).toThrow(/invalid --profile/);
+    expect(() => resolveEnvFrom({ resolvedWorkspaceDir: workspaceDir, profile: '../x' })).toThrow(
+      /invalid --profile/,
+    );
   });
 });
 
 describe('envFileOrder', () => {
-  test("is stackctl's own four files at each scope with nothing added", () => {
-    const own = envFileNames('development');
-    expect(envFileOrder('development')).toEqual({ workspace: own, service: own });
+  test("is stackctl's own four files with nothing added", () => {
+    expect(envFileOrder('development')).toEqual(envFileNames('development'));
   });
 
-  test("places a file before 'profile' and one after 'local' where they belong", () => {
+  test("places a file before '.env.<profile>' and one after '.env.local' where they belong", () => {
     const order = envFileOrder('development', [
-      { file: '.env.shared', after: 'local' },
-      { file: '.env.development.pre', before: 'profile' },
+      { file: '.env.shared', after: '.env.local' },
+      { file: '.env.development.pre', before: '.env.<profile>' },
     ]);
-    expect(order.workspace).toEqual([
+    expect(order).toEqual([
       '.env',
       '.env.local',
       '.env.shared',
@@ -395,17 +714,16 @@ describe('envFileOrder', () => {
       '.env.development',
       '.env.development.local',
     ]);
-    expect(order.service).toEqual(order.workspace);
   });
 
   test('keeps the array order of files on one anchor', () => {
     const order = envFileOrder('test', [
-      { file: '.env.test.pre', before: 'profile' },
-      { file: '.env.test.pre.local', before: 'profile' },
-      { file: '.env.first', before: 'base' },
-      { file: '.env.last', after: 'profileLocal' },
+      { file: '.env.test.pre', before: '.env.<profile>' },
+      { file: '.env.test.pre.local', before: '.env.<profile>' },
+      { file: '.env.first', before: '.env' },
+      { file: '.env.last', after: '.env.<profile>.local' },
     ]);
-    expect(order.workspace).toEqual([
+    expect(order).toEqual([
       '.env.first',
       '.env',
       '.env.local',
@@ -417,74 +735,110 @@ describe('envFileOrder', () => {
     ]);
   });
 
-  test('puts a file at only the scope it names', () => {
-    const order = envFileOrder('development', [
-      { file: '.env.ports', before: 'profile', scope: 'workspace' },
-      { file: '.env.secrets', after: 'profileLocal', scope: 'service' },
+  test('puts files on every anchor, before and after, in one list', () => {
+    expect(
+      envFileOrder('development', [
+        { file: '.env.a', after: '.env.<profile>.local' },
+        { file: '.env.b', before: '.env' },
+        { file: '.env.c', after: '.env' },
+        { file: '.env.d', before: '.env.local' },
+        { file: '.env.e', after: '.env.local' },
+        { file: '.env.f', before: '.env.<profile>.local' },
+        { file: '.env.g', after: '.env.<profile>' },
+      ]),
+    ).toEqual([
+      '.env.b',
+      '.env',
+      '.env.c',
+      '.env.d',
+      '.env.local',
+      '.env.e',
+      '.env.development',
+      '.env.g',
+      '.env.f',
+      '.env.development.local',
+      '.env.a',
     ]);
-    expect(order.workspace).toContain('.env.ports');
-    expect(order.workspace).not.toContain('.env.secrets');
-    expect(order.service).toContain('.env.secrets');
-    expect(order.service).not.toContain('.env.ports');
   });
 });
 
 describe('resolveEnvFrom with additional files', () => {
   const pre = envFileOrder('development', [
-    { file: '.env.development.pre', before: 'profile' },
-    { file: '.env.development.pre.local', before: 'profile' },
+    { file: '.env.development.pre', before: '.env.<profile>' },
+    { file: '.env.development.pre.local', before: '.env.<profile>' },
   ]);
 
   test('expands a value derived from an input read in an additional file before it', () => {
     write('.env.development.pre', 'P=1\n');
     write('.env.development.pre.local', 'P=2\n');
     write('.env.development', 'URL=x:${P}\n');
-    expect(resolveEnvFrom({ cwd, files: pre }).env).toEqual({ P: '2', URL: 'x:2' });
+    expect(resolveEnvFrom({ resolvedWorkspaceDir: workspaceDir, files: pre }).env).toEqual({
+      P: '2',
+      URL: 'x:2',
+    });
   });
 
   test("gives a variable a later file of stackctl's own sets that file's value", () => {
     write('.env.development.pre', 'KEY=pre\n');
     write('.env.development.local', 'KEY=profile-local\n');
-    expect(resolveEnvFrom({ cwd, files: pre }).env.KEY).toBe('profile-local');
+    expect(resolveEnvFrom({ resolvedWorkspaceDir: workspaceDir, files: pre }).env.KEY).toBe(
+      'profile-local',
+    );
   });
 
-  test('loads them in their place, at both scopes', () => {
+  test('loads them in their place, in every directory of the walk', () => {
     write('.env.development', 'A=1\n');
     write('.env.development.pre', 'A=0\n');
+    write('packages/.env.development.pre', 'M=1\n');
     write('packages/api/.env.development.pre', 'B=1\n');
-    const { files } = resolveEnvFrom({ cwd, relativeDir: 'packages/api', files: pre });
-    expect(files.map((f) => path.relative(cwd, f))).toEqual([
+    const { files } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      files: pre,
+    });
+    expect(files.map((f) => path.relative(workspaceDir, f))).toEqual([
       '.env.development.pre',
       '.env.development',
+      path.join('packages', '.env.development.pre'),
       path.join('packages/api', '.env.development.pre'),
     ]);
   });
 
-  test("does not look for a workspace-scope file in a service's directory", () => {
-    const files = envFileOrder('development', [
-      { file: '.env.ports', before: 'profile', scope: 'workspace' },
-    ]);
-    write('.env.ports', 'P=root\n');
-    write('packages/api/.env.ports', 'P=pkg\n');
-    const { env, candidates } = resolveEnvFrom({ cwd, relativeDir: 'packages/api', files });
-    expect(env.P).toBe('root');
-    expect(candidates).not.toContain(path.join(cwd, 'packages/api', '.env.ports'));
+  test('looks for an additional file in every directory, the nearest winning', () => {
+    const files = envFileOrder('development', [{ file: '.env.ports', before: '.env.<profile>' }]);
+    write('.env.ports', 'P=root\nR=root\n');
+    write('packages/.env.ports', 'P=packages\nQ=packages\n');
+    write('packages/api/.env.ports', 'P=api\n');
+    const { env, candidates } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      files,
+    });
+    expect(env).toEqual({ P: 'api', Q: 'packages', R: 'root' });
+    expect(candidates).toContain(path.join(workspaceDir, '.env.ports'));
+    expect(candidates).toContain(path.join(workspaceDir, 'packages', '.env.ports'));
+    expect(candidates).toContain(path.join(workspaceDir, 'packages/api', '.env.ports'));
   });
 
-  test("reads the workspace's files for a service at the workspace root", () => {
-    const files = envFileOrder('development', [
-      { file: '.env.ports', before: 'profile', scope: 'workspace' },
-      { file: '.env.secrets', before: 'profile', scope: 'service' },
-    ]);
-    const { candidates } = resolveEnvFrom({ cwd, relativeDir: '.', files });
-    expect(candidates).toContain(path.join(cwd, '.env.ports'));
-    expect(candidates).not.toContain(path.join(cwd, '.env.secrets'));
+  test('reads each file once for a target at the workspace root', () => {
+    const files = envFileOrder('development', [{ file: '.env.ports', before: '.env.<profile>' }]);
+    const { candidates } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
+      files,
+    });
+    expect(candidates).toEqual(files.map((f) => path.join(workspaceDir, f)));
   });
 });
 
 describe('resolveEnvFrom expands references against the final values', () => {
   const resolve = (opts: { override?: string[]; ambient?: Record<string, string> } = {}) =>
-    resolveEnvFrom({ cwd, relativeDir: 'packages/api', ambient: {}, ...opts }).env;
+    resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      ambient: {},
+      ...opts,
+    }).env;
 
   test('a reference sees the value a higher-ranked file gives the variable (Vite order)', () => {
     write('.env', 'URL=http://localhost:${PORT}\n');
@@ -530,8 +884,8 @@ describe('resolveEnvFrom expands references against the final values', () => {
     write('.env', 'B=${A}/b\n');
     write('.env.local', 'A=file\n');
     const { env } = resolveEnvFrom({
-      cwd,
-      relativeDir: 'packages/api',
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
       ambient: {},
       vars: { A: 'config' },
     });
@@ -545,7 +899,7 @@ describe('resolveEnvFrom expands references against the final values', () => {
   });
 
   test('a command substitution sees the final values, and only the winning line runs', () => {
-    const counter = path.join(cwd, 'counter');
+    const counter = path.join(workspaceDir, 'counter');
     write('.env', `V=$(echo lost >> ${counter})\nW=$(echo $P)\n`);
     write('.env.local', `V=$(echo won >> ${counter}; echo ran)\nP=final\n`);
     expect(resolve()).toMatchObject({ V: 'ran', W: 'final' });
@@ -609,7 +963,13 @@ describe('resolveEnvFrom expands references against the final values', () => {
       fk: [],
       ek: '*',
     });
-    expect(resolveEnvFrom({ cwd, relativeDir: '.', ambient }).env).toEqual(parsed);
+    expect(
+      resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: workspaceDir,
+        ambient,
+      }).env,
+    ).toEqual(parsed);
   });
 });
 
@@ -617,7 +977,10 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
   test('the ambient environment wins over a file var of the same name', () => {
     withAmbient({ STACKCTL_ENV_OVERRIDE: 'ambient' }, () => {
       write('.env', 'STACKCTL_ENV_OVERRIDE=fromfile\n');
-      const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      });
       expect(env.STACKCTL_ENV_OVERRIDE).toBe('ambient');
     });
   });
@@ -625,7 +988,10 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
   test('a cross-reference resolves against the ambient value the file lost to', () => {
     withAmbient({ STACKCTL_ENV_CROSS: 'ambient' }, () => {
       write('.env', 'STACKCTL_ENV_CROSS=fromfile\nDERIVED=${STACKCTL_ENV_CROSS}-x\n');
-      const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      });
       expect(env.STACKCTL_ENV_CROSS).toBe('ambient');
       expect(env.DERIVED).toBe('ambient-x');
     });
@@ -633,7 +999,10 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
 
   test('a file var still wins where the ambient has none', () => {
     write('.env', 'STACKCTL_ENV_FILE_ONLY=fromfile\n');
-    const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+    });
     expect(env.STACKCTL_ENV_FILE_ONLY).toBe('fromfile');
   });
 
@@ -641,8 +1010,8 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
     withAmbient({ STACKCTL_ENV_A: 'ambientA', STACKCTL_ENV_B: 'ambientB' }, () => {
       write('.env', 'STACKCTL_ENV_A=fileA\nSTACKCTL_ENV_B=fileB\n');
       const { env } = resolveEnvFrom({
-        cwd,
-        relativeDir: 'packages/api',
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
         override: ['STACKCTL_ENV_A'],
       });
       expect(env.STACKCTL_ENV_A).toBe('fileA');
@@ -653,7 +1022,11 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
   test('override: true restores blanket file-wins', () => {
     withAmbient({ STACKCTL_ENV_A: 'ambientA', STACKCTL_ENV_B: 'ambientB' }, () => {
       write('.env', 'STACKCTL_ENV_A=fileA\nSTACKCTL_ENV_B=fileB\n');
-      const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api', override: true });
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        override: true,
+      });
       expect(env.STACKCTL_ENV_A).toBe('fileA');
       expect(env.STACKCTL_ENV_B).toBe('fileB');
     });
@@ -663,8 +1036,8 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
     withAmbient({ STACKCTL_ENV_APPEND: '--import /tmp/boot.js' }, () => {
       write('.env', 'STACKCTL_ENV_APPEND=$STACKCTL_ENV_APPEND --disable-warning=Experimental\n');
       const { env } = resolveEnvFrom({
-        cwd,
-        relativeDir: 'packages/api',
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
         override: ['STACKCTL_ENV_APPEND'],
       });
       expect(env.STACKCTL_ENV_APPEND).toBe('--import /tmp/boot.js --disable-warning=Experimental');
@@ -674,7 +1047,12 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
 
 describe('resolveEnvFrom references to an overridden variable', () => {
   const resolve = (override: boolean | string[] | undefined, vars?: Record<string, string>) =>
-    resolveEnvFrom({ cwd, relativeDir: 'packages/api', override, vars }).env;
+    resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      override,
+      vars,
+    }).env;
 
   test("expand to the file's value, not the shell's, in a later file", () => {
     write('.env', 'STACKCTL_ENV_A=/file\n');
@@ -741,7 +1119,11 @@ describe('resolveEnvFrom with an override in force', () => {
   test("expands an overridden variable's own references by the usual rule: the shell's value", () => {
     write('.env', 'STACKCTL_ENV_A=/file\nSTACKCTL_ENV_B=$STACKCTL_ENV_A/b\n');
     withAmbient({ STACKCTL_ENV_A: '/shell', STACKCTL_ENV_B: '/shell-b' }, () => {
-      const { env } = resolveEnvFrom({ cwd, relativeDir: '.', override: ['STACKCTL_ENV_B'] });
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: workspaceDir,
+        override: ['STACKCTL_ENV_B'],
+      });
       expect(env).toEqual({ STACKCTL_ENV_A: '/shell', STACKCTL_ENV_B: '/shell/b' });
     });
   });
@@ -749,15 +1131,23 @@ describe('resolveEnvFrom with an override in force', () => {
   test('leaves a variable the override names alone when no file sets it', () => {
     write('.env', 'STACKCTL_ENV_B=$STACKCTL_ENV_A/b\n');
     withAmbient({ STACKCTL_ENV_A: '/shell' }, () => {
-      const { env } = resolveEnvFrom({ cwd, relativeDir: '.', override: ['STACKCTL_ENV_A'] });
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: workspaceDir,
+        override: ['STACKCTL_ENV_A'],
+      });
       expect(env).toEqual({ STACKCTL_ENV_B: '/shell/b' });
     });
   });
 
   test('runs a command substitution once', () => {
-    const counter = path.join(cwd, 'counter');
+    const counter = path.join(workspaceDir, 'counter');
     write('.env', `STACKCTL_ENV_A=$(echo x >> ${counter}; echo ran)\n`);
-    const { env } = resolveEnvFrom({ cwd, relativeDir: '.', override: ['STACKCTL_ENV_B'] });
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
+      override: ['STACKCTL_ENV_B'],
+    });
     expect(env).toEqual({ STACKCTL_ENV_A: 'ran' });
     expect(fs.readFileSync(counter, 'utf8')).toBe('x\n');
   });
@@ -774,7 +1164,12 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
     fn: (shell: Record<string, string>) => void,
   ): void {
     const shell = ambientEnv();
-    const { env } = resolveEnvFrom({ cwd, relativeDir: '.', ambient: shell, override });
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
+      ambient: shell,
+      override,
+    });
     withAmbient(env, () => fn(shell));
   }
 
@@ -793,7 +1188,12 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
       write('packages/api/.env.development', 'STACKCTL_ENV_A=3\n');
       withAmbient(shell === undefined ? {} : { STACKCTL_ENV_A: shell }, () => {
         anchored(override, (ambient) => {
-          const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api', override, ambient });
+          const { env } = resolveEnvFrom({
+            resolvedWorkspaceDir: workspaceDir,
+            resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+            override,
+            ambient,
+          });
           expect(env.STACKCTL_ENV_A).toBe(expected);
         });
       });
@@ -806,8 +1206,8 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
     withAmbient({ STACKCTL_ENV_A: '1' }, () => {
       anchored(true, (ambient) => {
         const { env } = resolveEnvFrom({
-          cwd,
-          relativeDir: 'packages/api',
+          resolvedWorkspaceDir: workspaceDir,
+          resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
           override: true,
           ambient,
         });
@@ -823,7 +1223,11 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
     anchored(undefined, (ambient) => {
       expect(process.env.STACKCTL_ENV_A).toBe('before');
       write('.env', 'STACKCTL_ENV_A=after\n');
-      const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api', ambient });
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        ambient,
+      });
       expect(env.STACKCTL_ENV_A).toBe('after');
     });
   });
@@ -839,8 +1243,8 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
         expect(process.env.STACKCTL_ENV_TWOSTAGE).toBe('--import /boot.js --flag');
         // …and a package's is still built from the shell's, so the flag isn't appended again.
         const { env } = resolveEnvFrom({
-          cwd,
-          relativeDir: 'packages/api',
+          resolvedWorkspaceDir: workspaceDir,
+          resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
           override: ['STACKCTL_ENV_TWOSTAGE'],
           ambient,
         });
@@ -853,8 +1257,8 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
     write('.env', 'STACKCTL_ENV_TWOSTAGE="$STACKCTL_ENV_TWOSTAGE --flag"\n');
     anchored(['STACKCTL_ENV_TWOSTAGE'], (ambient) => {
       const { env } = resolveEnvFrom({
-        cwd,
-        relativeDir: 'packages/api',
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
         override: ['STACKCTL_ENV_TWOSTAGE'],
         ambient,
       });
@@ -872,11 +1276,17 @@ describe('captureShellEnv', () => {
     write('packages/api/.env', 'STACKCTL_ENV_A=3\n');
 
     fresh.captureShellEnv();
-    const merged = fresh.resolveEnvFrom({ cwd, relativeDir: '.' }).env;
+    const merged = fresh.resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
+    }).env;
     withAmbient(merged, () => {
-      expect(fresh.resolveEnvFrom({ cwd, relativeDir: 'packages/api' }).env.STACKCTL_ENV_A).toBe(
-        '3',
-      );
+      expect(
+        fresh.resolveEnvFrom({
+          resolvedWorkspaceDir: workspaceDir,
+          resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        }).env.STACKCTL_ENV_A,
+      ).toBe('3');
     });
   });
 
@@ -886,9 +1296,12 @@ describe('captureShellEnv', () => {
     write('packages/api/.env', 'STACKCTL_ENV_A=3\n');
     withAmbient({ STACKCTL_ENV_A: '1' }, () => {
       fresh.captureShellEnv();
-      expect(fresh.resolveEnvFrom({ cwd, relativeDir: 'packages/api' }).env.STACKCTL_ENV_A).toBe(
-        '1',
-      );
+      expect(
+        fresh.resolveEnvFrom({
+          resolvedWorkspaceDir: workspaceDir,
+          resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        }).env.STACKCTL_ENV_A,
+      ).toBe('1');
     });
   });
 });
@@ -930,8 +1343,8 @@ describe('resolveEnvFrom expansion safety', () => {
       withAmbient({ STACKCTL_ENV_POISON: '--import /boot.js ${STACKCTL_ENV_POISON}' }, () => {
         write('.env', 'STACKCTL_ENV_POISON=$STACKCTL_ENV_POISON --flag\n');
         const { env } = resolveEnvFrom({
-          cwd,
-          relativeDir: 'packages/api',
+          resolvedWorkspaceDir: workspaceDir,
+          resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
           override: ['STACKCTL_ENV_POISON'],
         });
         // The inner literal is preserved verbatim rather than expanded again.
@@ -943,7 +1356,10 @@ describe('resolveEnvFrom expansion safety', () => {
   test('does not hang when the poisoned var is not overridden', { timeout: 5000 }, () => {
     withAmbient({ STACKCTL_ENV_POISON2: 'x ${STACKCTL_ENV_POISON2}' }, () => {
       write('.env', 'STACKCTL_ENV_POISON2=$STACKCTL_ENV_POISON2 --flag\n');
-      const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      });
       // Ambient wins, and comes back as the real value — no stray escape backslash.
       expect(env.STACKCTL_ENV_POISON2).toBe('x ${STACKCTL_ENV_POISON2}');
     });
@@ -952,7 +1368,10 @@ describe('resolveEnvFrom expansion safety', () => {
   test('preserves a `$` inside an ambient value instead of expanding it away', () => {
     withAmbient({ STACKCTL_ENV_DOLLAR: 'hello$world' }, () => {
       write('.env', 'MSG=${STACKCTL_ENV_DOLLAR}!\n');
-      const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      });
       expect(env.MSG).toBe('hello$world!');
     });
   });
@@ -960,7 +1379,10 @@ describe('resolveEnvFrom expansion safety', () => {
   test('returns an ambient-won value without a stray escape backslash', () => {
     withAmbient({ STACKCTL_ENV_ESC: 'a$b' }, () => {
       write('.env', 'STACKCTL_ENV_ESC=fromfile\n');
-      const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      });
       expect(env.STACKCTL_ENV_ESC).toBe('a$b');
     });
   });
@@ -968,38 +1390,51 @@ describe('resolveEnvFrom expansion safety', () => {
   test('round-trips an ambient value that already contains an escaped dollar', () => {
     withAmbient({ STACKCTL_ENV_PREESC: 'lit\\$eral' }, () => {
       write('.env', 'OUT=${STACKCTL_ENV_PREESC}\n');
-      const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+      const { env } = resolveEnvFrom({
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      });
       expect(env.OUT).toBe('lit\\$eral');
     });
   });
 
   test('still expands file-to-file references (escaping is not over-applied)', () => {
     write('.env', 'A=one\nB=${A}/two\n');
-    const { env } = resolveEnvFrom({ cwd, relativeDir: 'packages/api' });
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+    });
     expect(env.B).toBe('one/two');
   });
 });
 
 describe('packageEnvLayer', () => {
   const mkPkg = (over: Partial<AnyServiceConfig>): AnyServiceConfig =>
-    ({ name: 'api', relativeDir: 'packages/api', path: '/x', ...over }) as AnyServiceConfig;
+    ({
+      name: 'api',
+      targetDir: 'packages/api',
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      ...over,
+    }) as AnyServiceConfig;
 
   test('injects the package port as PORT, below its resolved .env vars', () => {
     write('.env', 'A=1\n');
-    const layer = packageEnvLayer(mkPkg({ port: 3001 }), { cwd });
+    const layer = packageEnvLayer(mkPkg({ port: 3001 }), { resolvedWorkspaceDir: workspaceDir });
     expect(withoutList(layer)).toEqual({ PORT: '3001', A: '1' });
   });
 
   test('omits PORT when the package has no port, and an explicit .env PORT wins', () => {
     write('packages/api/.env', 'PORT=9999\n');
-    expect(packageEnvLayer(mkPkg({}), { cwd }).PORT).toBe('9999');
-    expect(packageEnvLayer(mkPkg({ port: 3001 }), { cwd }).PORT).toBe('9999');
+    expect(packageEnvLayer(mkPkg({}), { resolvedWorkspaceDir: workspaceDir }).PORT).toBe('9999');
+    expect(
+      packageEnvLayer(mkPkg({ port: 3001 }), { resolvedWorkspaceDir: workspaceDir }).PORT,
+    ).toBe('9999');
   });
 
   test("ranks the config's own vars as a file below the .env files", () => {
     write('.env', 'A=1\nB=file\n');
     const layer = packageEnvLayer(mkPkg({ port: 3001 }), {
-      cwd,
+      resolvedWorkspaceDir: workspaceDir,
       vars: { B: 'config', C: 'config' },
     });
     expect(withoutList(layer)).toEqual({ PORT: '3001', A: '1', B: 'file', C: 'config' });
@@ -1007,48 +1442,99 @@ describe('packageEnvLayer', () => {
 
   test("keeps the injected PORT over one set workspace-wide: in a .env file or the config's vars", () => {
     write('.env', 'PORT=9999\n');
-    expect(packageEnvLayer(mkPkg({ port: 3001 }), { cwd }).PORT).toBe('3001');
-    expect(packageEnvLayer(mkPkg({ port: 3001 }), { cwd, vars: { PORT: '4000' } }).PORT).toBe(
-      '3001',
+    expect(
+      packageEnvLayer(mkPkg({ port: 3001 }), { resolvedWorkspaceDir: workspaceDir }).PORT,
+    ).toBe('3001');
+    expect(
+      packageEnvLayer(mkPkg({ port: 3001 }), {
+        resolvedWorkspaceDir: workspaceDir,
+        vars: { PORT: '4000' },
+      }).PORT,
+    ).toBe('3001');
+  });
+
+  test('keeps the injected PORT and PUBLIC_ORIGIN over a directory between the root and it', () => {
+    write('packages/.env', 'PORT=9999\nPUBLIC_ORIGIN=https://mid.example\n');
+    const layer = packageEnvLayer(
+      mkPkg({ port: 3001, publicOrigin: 'http://api.localhost:4000' }),
+      { resolvedWorkspaceDir: workspaceDir },
+    );
+    expect(layer.PORT).toBe('3001');
+    expect(layer.PUBLIC_ORIGIN).toBe('http://api.localhost:4000');
+  });
+
+  test("gives a package its own directory's PORT over the injected one", () => {
+    write('packages/.env', 'PORT=9999\n');
+    write('packages/api/.env', 'PORT=4444\n');
+    expect(
+      packageEnvLayer(mkPkg({ port: 3001 }), { resolvedWorkspaceDir: workspaceDir }).PORT,
+    ).toBe('4444');
+  });
+
+  test('reads the directories between the root and a package', () => {
+    write('.env', 'A=root\n');
+    write('packages/.env', 'B=packages\n');
+    expect(withoutList(packageEnvLayer(mkPkg({}), { resolvedWorkspaceDir: workspaceDir }))).toEqual(
+      { A: 'root', B: 'packages' },
     );
   });
 
   test('passes a workspace-wide PORT on to a package that has no port of its own', () => {
     write('.env', 'PORT=9999\n');
-    expect(packageEnvLayer(mkPkg({}), { cwd }).PORT).toBe('9999');
+    expect(packageEnvLayer(mkPkg({}), { resolvedWorkspaceDir: workspaceDir }).PORT).toBe('9999');
   });
 
   test("treats PUBLIC_ORIGIN the same way: only the package's own .env file replaces it", () => {
     const pkg = mkPkg({ publicOrigin: 'http://api.localhost:4000' });
     write('.env', 'PUBLIC_ORIGIN=https://workspace.example\n');
-    expect(packageEnvLayer(pkg, { cwd }).PUBLIC_ORIGIN).toBe('http://api.localhost:4000');
+    expect(packageEnvLayer(pkg, { resolvedWorkspaceDir: workspaceDir }).PUBLIC_ORIGIN).toBe(
+      'http://api.localhost:4000',
+    );
     write('packages/api/.env', 'PUBLIC_ORIGIN=https://api.example\n');
-    expect(packageEnvLayer(pkg, { cwd }).PUBLIC_ORIGIN).toBe('https://api.example');
+    expect(packageEnvLayer(pkg, { resolvedWorkspaceDir: workspaceDir }).PUBLIC_ORIGIN).toBe(
+      'https://api.example',
+    );
   });
 
   test("counts the workspace's .env file as the package's own when the package is the workspace", () => {
     write('.env', 'PORT=9999\n');
-    expect(packageEnvLayer(mkPkg({ relativeDir: '.', port: 3001 }), { cwd }).PORT).toBe('9999');
+    expect(
+      packageEnvLayer(mkPkg({ targetDir: '.', resolvedTargetDir: workspaceDir, port: 3001 }), {
+        resolvedWorkspaceDir: workspaceDir,
+      }).PORT,
+    ).toBe('9999');
   });
 
   test("is not fooled by a PORT line inside another variable's quoted value", () => {
     write('packages/api/.env', 'NOTES="first line\nPORT=9999\nlast line"\n');
-    expect(packageEnvLayer(mkPkg({ port: 3001 }), { cwd }).PORT).toBe('3001');
+    expect(
+      packageEnvLayer(mkPkg({ port: 3001 }), { resolvedWorkspaceDir: workspaceDir }).PORT,
+    ).toBe('3001');
   });
 
   test('lets the shell win a PORT only where a file of the package sets one', () => {
     withAmbient({ PORT: '5000' }, () => {
-      expect(packageEnvLayer(mkPkg({ port: 3001 }), { cwd }).PORT).toBe('3001');
+      expect(
+        packageEnvLayer(mkPkg({ port: 3001 }), { resolvedWorkspaceDir: workspaceDir }).PORT,
+      ).toBe('3001');
       write('packages/api/.env', 'PORT=9999\n');
-      expect(packageEnvLayer(mkPkg({ port: 3001 }), { cwd }).PORT).toBe('5000');
+      expect(
+        packageEnvLayer(mkPkg({ port: 3001 }), { resolvedWorkspaceDir: workspaceDir }).PORT,
+      ).toBe('5000');
     });
   });
 
   test("lets the package's own .env file replace a config var the workspace's leaves alone", () => {
     write('packages/api/.env', 'B=package\n');
     const vars = { B: 'config' };
-    expect(withoutList(packageEnvLayer(mkPkg({}), { cwd, vars }))).toEqual({ B: 'package' });
-    expect(withoutList(workspaceEnvLayer({ cwd, vars }))).toEqual({ B: 'config' });
+    expect(
+      withoutList(packageEnvLayer(mkPkg({}), { resolvedWorkspaceDir: workspaceDir, vars })),
+    ).toEqual({
+      B: 'package',
+    });
+    expect(withoutList(workspaceEnvLayer({ resolvedWorkspaceDir: workspaceDir, vars }))).toEqual({
+      B: 'config',
+    });
   });
 });
 
@@ -1071,7 +1557,10 @@ describe('STACKCTL_INJECTED_ENV', () => {
     vi.stubEnv('FROM_SHELL', 'shell');
     vi.stubEnv('STACKCTL_PROFILE', 'test');
     write('.env', 'FROM_FILE=1\nFROM_SHELL=file\n');
-    const layer = workspaceEnvLayer({ cwd, vars: { FROM_CONFIG: 'x' } });
+    const layer = workspaceEnvLayer({
+      resolvedWorkspaceDir: workspaceDir,
+      vars: { FROM_CONFIG: 'x' },
+    });
     const listed = layer.STACKCTL_INJECTED_ENV!.split(',');
     expect(listed).toEqual(expect.arrayContaining(['FROM_FILE', 'FROM_CONFIG']));
     // The shell's own value wins over the file, so the child's is the shell's: not listed.
@@ -1080,8 +1569,12 @@ describe('STACKCTL_INJECTED_ENV', () => {
   });
 
   test("a service's layer lists its PORT", () => {
-    const pkg = { name: 'api', relativeDir: 'packages/api', path: '/x', port: 3001 } as unknown as AnyServiceConfig; // oxfmt-ignore
-    expect(packageEnvLayer(pkg, { cwd }).STACKCTL_INJECTED_ENV!.split(',')).toContain('PORT');
+    const pkg = { name: 'api', targetDir: 'packages/api', path: '/x', port: 3001 } as unknown as AnyServiceConfig; // oxfmt-ignore
+    expect(
+      packageEnvLayer(pkg, { resolvedWorkspaceDir: workspaceDir }).STACKCTL_INJECTED_ENV!.split(
+        ',',
+      ),
+    ).toContain('PORT');
   });
 
   test('dropInjectedEnv removes the listed variables and the list, keeping STACKCTL_PROFILE', () => {
@@ -1099,7 +1592,10 @@ describe('STACKCTL_INJECTED_ENV', () => {
   test("a layer carries the shell's value of each variable it replaces", () => {
     vi.stubEnv('STACKCTL_ENV_FLAGS', '--shell');
     write('.env', 'STACKCTL_ENV_FLAGS="${STACKCTL_ENV_FLAGS} --repo"\nFROM_FILE=1\n');
-    const layer = workspaceEnvLayer({ cwd, override: ['STACKCTL_ENV_FLAGS'] });
+    const layer = workspaceEnvLayer({
+      resolvedWorkspaceDir: workspaceDir,
+      override: ['STACKCTL_ENV_FLAGS'],
+    });
     expect(layer.STACKCTL_ENV_FLAGS).toBe('--shell --repo');
     // Only what the shell had set: FROM_FILE replaces nothing.
     expect(JSON.parse(layer.STACKCTL_REPLACED_ENV!)).toEqual({ STACKCTL_ENV_FLAGS: '--shell' });
@@ -1108,7 +1604,9 @@ describe('STACKCTL_INJECTED_ENV', () => {
 
   test('a layer that replaces nothing of the shell carries no STACKCTL_REPLACED_ENV', () => {
     write('.env', 'FROM_FILE=1\n');
-    expect(workspaceEnvLayer({ cwd })).not.toHaveProperty('STACKCTL_REPLACED_ENV');
+    expect(workspaceEnvLayer({ resolvedWorkspaceDir: workspaceDir })).not.toHaveProperty(
+      'STACKCTL_REPLACED_ENV',
+    );
   });
 
   test("dropInjectedEnv gives a replaced variable the shell's value back", () => {
@@ -1139,7 +1637,10 @@ describe('STACKCTL_INJECTED_ENV', () => {
     write('.env', 'STACKCTL_ENV_FLAGS="${STACKCTL_ENV_FLAGS} --repo"\nFROM_FILE=1\n');
     const child: NodeJS.ProcessEnv = {
       ...process.env,
-      ...workspaceEnvLayer({ cwd, override: ['STACKCTL_ENV_FLAGS'] }),
+      ...workspaceEnvLayer({
+        resolvedWorkspaceDir: workspaceDir,
+        override: ['STACKCTL_ENV_FLAGS'],
+      }),
     };
     dropInjectedEnv(child);
     expect(child).toEqual({ ...process.env });
@@ -1150,12 +1651,21 @@ describe('workspaceEnvLayer', () => {
   test("is the workspace-scope .env vars, never a package's", () => {
     write('.env', 'A=1\n');
     write('packages/api/.env', 'A=2\n');
-    expect(withoutList(workspaceEnvLayer({ cwd }))).toEqual({ A: '1' });
+    expect(withoutList(workspaceEnvLayer({ resolvedWorkspaceDir: workspaceDir }))).toEqual({
+      A: '1',
+    });
   });
 
   test("ranks the config's own vars below the .env files", () => {
     write('.env', 'A=1\nB=file\n');
-    expect(withoutList(workspaceEnvLayer({ cwd, vars: { B: 'config', C: 'config' } }))).toEqual({
+    expect(
+      withoutList(
+        workspaceEnvLayer({
+          resolvedWorkspaceDir: workspaceDir,
+          vars: { B: 'config', C: 'config' },
+        }),
+      ),
+    ).toEqual({
       A: '1',
       B: 'file',
       C: 'config',
@@ -1164,63 +1674,108 @@ describe('workspaceEnvLayer', () => {
 });
 
 describe('targetEnvLayer', () => {
-  const dirTarget: ResolvedTarget = {
+  const dirTarget = (): ResolvedTarget => ({
     kind: 'directory',
-    dir: '',
-    relativeDir: 'scripts',
-  };
+    dir: path.join(workspaceDir, 'scripts'),
+  });
 
   test("a directory target reads the workspace's files then its own", () => {
     write('.env', 'A=ws\nB=ws\n');
     write('scripts/.env', 'B=dir\n');
-    const layer = targetEnvLayer({ ...dirTarget, dir: path.join(cwd, 'scripts') }, { cwd });
+    const layer = targetEnvLayer(dirTarget(), { resolvedWorkspaceDir: workspaceDir });
     expect(withoutList(layer)).toEqual({ A: 'ws', B: 'dir' });
     expect(layer.PORT).toBeUndefined();
     expect(layer.PUBLIC_ORIGIN).toBeUndefined();
   });
 
-  test('a directory target gets service-scoped additional files', () => {
+  test('a nested directory target walks every directory up to the root', () => {
+    write('.env', 'A=ws\n');
+    write('tools/.env', 'B=tools\n');
+    write('tools/db/.env', 'C=db\n');
+    const target: ResolvedTarget = { kind: 'directory', dir: path.join(workspaceDir, 'tools/db') };
+    expect(withoutList(targetEnvLayer(target, { resolvedWorkspaceDir: workspaceDir }))).toEqual({
+      A: 'ws',
+      B: 'tools',
+      C: 'db',
+    });
+  });
+
+  test('a directory target given by its real path, under a linked root', () => {
+    const real = path.join(workspaceDir, 'real-ws');
+    const link = path.join(workspaceDir, 'link-ws');
+    fs.mkdirSync(path.join(real, 'tools', 'db'), { recursive: true });
+    fs.symlinkSync(real, link);
+    fs.writeFileSync(path.join(real, 'tools', '.env'), 'B=tools\n');
+    const target: ResolvedTarget = {
+      kind: 'directory',
+      dir: fs.realpathSync(path.join(real, 'tools', 'db')),
+    };
+    expect(withoutList(targetEnvLayer(target, { resolvedWorkspaceDir: link }))).toEqual({
+      B: 'tools',
+    });
+  });
+
+  test('a root target reads the root alone', () => {
+    write('.env', 'A=ws\n');
+    write('scripts/.env', 'B=dir\n');
+    const target: ResolvedTarget = { kind: 'root', dir: workspaceDir };
+    expect(withoutList(targetEnvLayer(target, { resolvedWorkspaceDir: workspaceDir }))).toEqual({
+      A: 'ws',
+    });
+  });
+
+  test('a directory target gets the additional files of every directory, its own winning', () => {
     write('scripts/.env.ports', 'P=dir\n');
-    write('.env.ports', 'P=ws\n');
-    const files = envFileOrder('development', [
-      { file: '.env.ports', before: 'profile', scope: 'service' },
-    ]);
-    expect(withoutList(targetEnvLayer(dirTarget, { cwd, files }))).toEqual({ P: 'dir' });
+    write('.env.ports', 'P=ws\nQ=ws\n');
+    const files = envFileOrder('development', [{ file: '.env.ports', before: '.env.<profile>' }]);
+    expect(
+      withoutList(targetEnvLayer(dirTarget(), { resolvedWorkspaceDir: workspaceDir, files })),
+    ).toEqual({ P: 'dir', Q: 'ws' });
   });
 
   test('a directory target gets the trust file unless a file sets it', () => {
-    expect(targetEnvLayer(dirTarget, { cwd, extraCaCerts: '/ca.pem' }).NODE_EXTRA_CA_CERTS).toBe(
-      '/ca.pem',
-    );
+    expect(
+      targetEnvLayer(dirTarget(), { resolvedWorkspaceDir: workspaceDir, extraCaCerts: '/ca.pem' })
+        .NODE_EXTRA_CA_CERTS,
+    ).toBe('/ca.pem');
     write('scripts/.env', 'NODE_EXTRA_CA_CERTS=/mine.pem\n');
-    expect(targetEnvLayer(dirTarget, { cwd, extraCaCerts: '/ca.pem' }).NODE_EXTRA_CA_CERTS).toBe(
-      '/mine.pem',
-    );
+    expect(
+      targetEnvLayer(dirTarget(), { resolvedWorkspaceDir: workspaceDir, extraCaCerts: '/ca.pem' })
+        .NODE_EXTRA_CA_CERTS,
+    ).toBe('/mine.pem');
   });
 
   test('a directory target lists what it injected', () => {
     write('scripts/.env', 'ZZ_ONLY_HERE=1\n');
-    expect(targetEnvLayer(dirTarget, { cwd }).STACKCTL_INJECTED_ENV!.split(',')).toContain(
-      'ZZ_ONLY_HERE',
-    );
+    expect(
+      targetEnvLayer(dirTarget(), {
+        resolvedWorkspaceDir: workspaceDir,
+      }).STACKCTL_INJECTED_ENV!.split(','),
+    ).toContain('ZZ_ONLY_HERE');
   });
 
   test('a root target is the workspace layer', () => {
     write('.env', 'A=1\n');
     write('packages/api/.env', 'A=2\n');
-    expect(withoutList(targetEnvLayer({ kind: 'root', dir: cwd }, { cwd }))).toEqual({ A: '1' });
+    expect(
+      withoutList(
+        targetEnvLayer({ kind: 'root', dir: workspaceDir }, { resolvedWorkspaceDir: workspaceDir }),
+      ),
+    ).toEqual({
+      A: '1',
+    });
   });
 
   test("a service target is the service's layer, with its port", () => {
     const service = {
       name: 'api',
-      relativeDir: 'packages/api',
+      targetDir: 'packages/api',
       path: '/x',
       port: 3001,
     } as unknown as AnyServiceConfig;
     const layer = targetEnvLayer(
-      { kind: 'service', dir: path.join(cwd, 'packages/api'), service },
-      { cwd },
+      { kind: 'service', dir: path.join(workspaceDir, 'packages/api'), service },
+      { resolvedWorkspaceDir: workspaceDir },
     );
     expect(layer.PORT).toBe('3001');
   });
@@ -1228,7 +1783,12 @@ describe('targetEnvLayer', () => {
 
 describe("resolveEnvFrom with the config's own vars", () => {
   const resolve = (vars: Record<string, string>, override?: boolean | string[]) =>
-    resolveEnvFrom({ cwd, relativeDir: 'packages/api', vars, override }).env;
+    resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      vars,
+      override,
+    }).env;
 
   test('is just the vars when no file exists', () => {
     expect(resolve({ A: 'config', B: '' })).toEqual({ A: 'config', B: '' });
@@ -1347,7 +1907,7 @@ describe('encrypted values', () => {
     return privateKey;
   };
   const encryptedSecret = () =>
-    /^SECRET="(.*)"$/m.exec(fs.readFileSync(path.join(cwd, '.env'), 'utf8'))?.[1];
+    /^SECRET="(.*)"$/m.exec(fs.readFileSync(path.join(workspaceDir, '.env'), 'utf8'))?.[1];
 
   test('stay as written without `decrypt`, with their key in the environment and in .env.keys', () => {
     const privateKey = secret();
@@ -1355,11 +1915,11 @@ describe('encrypted values', () => {
     const error = vi.spyOn(console, 'error');
     // In the workspace, where dotenvx would look for `.env.keys` itself.
     const before = process.cwd();
-    process.chdir(cwd);
+    process.chdir(workspaceDir);
     try {
       const { env } = resolveEnvFrom({
-        cwd,
-        relativeDir: '.',
+        resolvedWorkspaceDir: workspaceDir,
+        resolvedTargetDir: workspaceDir,
         ambient: { DOTENV_PRIVATE_KEY: privateKey },
       });
       expect(env).toMatchObject({ SECRET: encryptedSecret(), PLAIN: '1' });
@@ -1372,8 +1932,8 @@ describe('encrypted values', () => {
   test('decrypts a value whose private key is in the ambient environment', () => {
     const privateKey = secret();
     const { env } = resolveEnvFrom({
-      cwd,
-      relativeDir: '.',
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
       decrypt: true,
       ambient: { DOTENV_PRIVATE_KEY: privateKey },
     });
@@ -1385,8 +1945,15 @@ describe('encrypted values', () => {
     write('.env.keys', `DOTENV_PRIVATE_KEY="${secret()}"\n`);
     const readFileSync = vi.spyOn(fs, 'readFileSync');
     const files = new EnvFileSnapshot();
-    await files.refresh([envKeysFile(cwd), ...envCandidatePaths({ cwd, relativeDir: '.' })]);
-    const layer = workspaceEnvLayer({ cwd, decrypt: true, read: files.read });
+    await files.refresh([
+      envKeysFile(workspaceDir),
+      ...envCandidatePaths({ resolvedWorkspaceDir: workspaceDir, resolvedTargetDir: workspaceDir }),
+    ]);
+    const layer = workspaceEnvLayer({
+      resolvedWorkspaceDir: workspaceDir,
+      decrypt: true,
+      read: files.read,
+    });
     expect(layer).toMatchObject({ SECRET: 's3cret', PLAIN: '1' });
     expect(readFileSync.mock.calls.filter(([p]) => String(p).endsWith('.env.keys'))).toEqual([]);
   });
@@ -1397,8 +1964,8 @@ describe('encrypted values', () => {
     write('.env', `DOTENV_PUBLIC_KEY="${publicKey}"\nURL="${url}"\nLIT='${url}'\nOUT=$URL/x\n`);
     write('.env.local', 'PORT=5432\n');
     const { env } = resolveEnvFrom({
-      cwd,
-      relativeDir: '.',
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
       decrypt: true,
       ambient: { DOTENV_PRIVATE_KEY: privateKey },
     });
@@ -1413,8 +1980,8 @@ describe('encrypted values', () => {
     );
     write('.env.local', `SECRET="${primitives.encrypt(publicKey, 'local')}"\n`);
     const { env } = resolveEnvFrom({
-      cwd,
-      relativeDir: '.',
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
       decrypt: true,
       ambient: { DOTENV_PRIVATE_KEY: privateKey },
     });
@@ -1424,8 +1991,8 @@ describe('encrypted values', () => {
   test("decrypts a file's value for a variable env.override lets win over the shell", () => {
     const privateKey = secret();
     const { env } = resolveEnvFrom({
-      cwd,
-      relativeDir: '.',
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
       decrypt: true,
       override: ['SECRET'],
       ambient: { SECRET: 'from-shell', DOTENV_PRIVATE_KEY: privateKey },
@@ -1437,8 +2004,8 @@ describe('encrypted values', () => {
     secret();
     const error = vi.spyOn(console, 'error');
     const { env } = resolveEnvFrom({
-      cwd,
-      relativeDir: '.',
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
       decrypt: true,
       ambient: { SECRET: 'from-shell' },
     });
@@ -1452,7 +2019,12 @@ describe('encrypted values', () => {
     vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
       errors.push(args.join(' '));
     });
-    const { env } = resolveEnvFrom({ cwd, relativeDir: '.', decrypt: true, ambient: {} });
+    const { env } = resolveEnvFrom({
+      resolvedWorkspaceDir: workspaceDir,
+      resolvedTargetDir: workspaceDir,
+      decrypt: true,
+      ambient: {},
+    });
     expect(env).toMatchObject({ SECRET: encryptedSecret(), PLAIN: '1' });
     expect(errors.join('\n')).toContain('could not decrypt SECRET');
   });
@@ -1484,19 +2056,26 @@ describe('ambientEnv', () => {
 describe('configEnvReader', () => {
   test('reads plain files as they are asked for', () => {
     write('.env', 'A=1\n');
-    const read = configEnvReader([path.join(cwd, '.env'), path.join(cwd, '.env.local')]);
-    expect(read(path.join(cwd, '.env'))).toBe('A=1\n');
-    expect(read(path.join(cwd, '.env.local'))).toBeNull();
+    const read = configEnvReader([
+      path.join(workspaceDir, '.env'),
+      path.join(workspaceDir, '.env.local'),
+    ]);
+    expect(read(path.join(workspaceDir, '.env'))).toBe('A=1\n');
+    expect(read(path.join(workspaceDir, '.env.local'))).toBeNull();
   });
 
   test('reads them all at once when one is a link', () => {
     write('store/.env.local', 'B=2\n');
     write('.env', 'A=1\n');
-    fs.symlinkSync('store/.env.local', path.join(cwd, '.env.local'));
-    const files = [path.join(cwd, '.env'), path.join(cwd, '.env.local'), path.join(cwd, '.env.x')];
+    fs.symlinkSync('store/.env.local', path.join(workspaceDir, '.env.local'));
+    const files = [
+      path.join(workspaceDir, '.env'),
+      path.join(workspaceDir, '.env.local'),
+      path.join(workspaceDir, '.env.x'),
+    ];
     const read = configEnvReader(files);
     // Read already: changing them now changes nothing it answers.
-    fs.writeFileSync(path.join(cwd, '.env'), 'A=changed\n');
+    fs.writeFileSync(path.join(workspaceDir, '.env'), 'A=changed\n');
     expect(files.map(read)).toEqual(['A=1\n', 'B=2\n', null]);
   });
 
@@ -1504,12 +2083,12 @@ describe('configEnvReader', () => {
     "gives up on a linked file that doesn't read in time, naming it",
     () => {
       // A FIFO with no writer stands in for a file macOS holds until access is allowed.
-      fs.mkdirSync(path.join(cwd, 'store'));
-      execFileSync('mkfifo', [path.join(cwd, 'store', '.env.local')]);
-      fs.symlinkSync('store/.env.local', path.join(cwd, '.env.local'));
+      fs.mkdirSync(path.join(workspaceDir, 'store'));
+      execFileSync('mkfifo', [path.join(workspaceDir, 'store', '.env.local')]);
+      fs.symlinkSync('store/.env.local', path.join(workspaceDir, '.env.local'));
       const started = Date.now();
-      expect(() => configEnvReader([path.join(cwd, '.env.local')], 300)).toThrow(
-        new RegExp(`couldn't read ${path.join(cwd, '.env.local')} within 0\\.3s`),
+      expect(() => configEnvReader([path.join(workspaceDir, '.env.local')], 300)).toThrow(
+        new RegExp(`couldn't read ${path.join(workspaceDir, '.env.local')} within 0\\.3s`),
       );
       expect(Date.now() - started).toBeLessThan(3000);
     },
