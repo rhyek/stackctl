@@ -7,6 +7,8 @@ import {
   EnvFileSnapshot,
   envCandidatePaths,
   envDirs,
+  serviceEnvOptions,
+  withoutWorkspaceEnv,
   ENV_KEYS_FILENAME,
   envFileOrder,
   envKeysFile,
@@ -121,6 +123,9 @@ export type AddOutcome = 'done' | 'closing' | 'unknown';
 
 /** How long the first `.env` read may take before a `[stackctl]` warning names what it waits on. */
 const ENV_READ_WARN_MS = 3_000;
+
+/** How long the `.env` changes one directory's watch targets report count as one: see `watchEnv`. */
+const ENV_CHANGE_MERGE_MS = 50;
 
 /** The color names a service's `color` may be: chalk's foreground colors, nothing else. */
 const NAMED_COLORS = new Set([
@@ -781,14 +786,22 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     return envCandidatePaths({
       resolvedWorkspaceDir: this.resolvedWorkspaceDir,
       resolvedTargetDir: config.resolvedTargetDir,
-      files: this.envFiles,
+      files: this.envFilesOf(config),
     });
   }
 
-  /** The environment a service's processes get: this process's, with the service's layer over it. */
+  /** The `.env` filenames a service looks for in each directory: its own, or the session's. */
+  private envFilesOf(config: AnyServiceConfig): string[] {
+    return serviceEnvOptions(config).files ?? this.envFiles;
+  }
+
+  /**
+   * The environment a service's processes get: this process's, without the workspace's layer the
+   * CLI merged into it, with the service's own layer over it.
+   */
   private envFor(config: AnyServiceConfig): NodeJS.ProcessEnv {
     return {
-      ...process.env,
+      ...withoutWorkspaceEnv(),
       ...packageEnvLayer(config, {
         resolvedWorkspaceDir: this.resolvedWorkspaceDir,
         files: this.envFiles,
@@ -809,7 +822,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
    */
   private watchEnv(): void {
     this.watch?.();
-    const changed = (dir: string, names: string[]) => {
+    const apply = (dir: string, names: string[]) => {
       void this.snapshot.refresh();
       const restarting = names.filter((name) => {
         const state = this.services.get(name)?.state;
@@ -820,21 +833,49 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
         void this.envChanged(name);
       }
     };
+    // A directory's targets each see one edit to a file they share, a moment apart: what they
+    // report within ENV_CHANGE_MERGE_MS is one change, of every service any of them names.
+    const pending = new Map<string, Set<string>>();
+    const changed = (dir: string, names: string[]) => {
+      const merged = pending.get(dir);
+      if (merged) {
+        for (const name of names) {
+          merged.add(name);
+        }
+        return;
+      }
+      pending.set(dir, new Set(names));
+      setTimeout(() => {
+        const all = pending.get(dir);
+        pending.delete(dir);
+        if (all && this.watch) {
+          apply(dir, [...all]);
+        }
+      }, ENV_CHANGE_MERGE_MS);
+    };
     const root = path.resolve(this.resolvedWorkspaceDir);
     // Every directory some service reads `.env` files from, with the services that read them: the
     // root's are every service's, and one between the root and a service's every service below it.
-    const readers = new Map<string, string[]>([[root, []]]);
+    // Services that look for different names (an `env.additionalFiles` of their own) are a target
+    // each, so a file only some of them look for restarts only those. One directory's targets
+    // share its watcher.
+    const readers = new Map<string, { dir: string; names: string[]; filenames: string[] }>();
+    const readersOf = (dir: string, filenames: string[]) => {
+      const key = JSON.stringify([dir, filenames]);
+      const entry = readers.get(key) ?? { dir, names: [], filenames };
+      readers.set(key, entry);
+      return entry;
+    };
     for (const { config } of this.services.values()) {
+      const filenames = this.envFilesOf(config);
       for (const dir of envDirs(root, config.resolvedTargetDir)) {
-        readers.set(dir, [...(readers.get(dir) ?? []), config.name]);
+        readersOf(dir, filenames).names.push(config.name);
       }
     }
-    const targets: WatchTarget[] = [...readers].map(([dir, names]) => ({
+    const targets: WatchTarget[] = [...readers.values()].map(({ dir, names, filenames }) => ({
       dir,
       filenames:
-        dir === root && this.plan.envDecrypt
-          ? [...this.envFiles, ENV_KEYS_FILENAME]
-          : this.envFiles,
+        dir === root && this.plan.envDecrypt ? [...filenames, ENV_KEYS_FILENAME] : filenames,
       onChange: () => changed(dir, names),
     }));
     this.watch = watchEnvFiles({

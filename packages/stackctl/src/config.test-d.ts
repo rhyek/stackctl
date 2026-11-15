@@ -30,6 +30,7 @@ import {
   type ResolvedReverseProxyServiceRoute,
   type ResolvedReverseProxyPathsRoute,
   type ServiceConfigInput,
+  type ServiceEnvInput,
   type ServiceContext,
   type ServiceInput,
   type TokenRecord,
@@ -148,7 +149,7 @@ describe('package names', () => {
     type Names = 'api' | 'web' | 'worker';
 
     // the exact union, not just "some string" — this is what regressed in 0.7.0 before
-    type Deps = Opts['services']['api']['deps'];
+    type Deps = NonNullable<Opts['services']>['api']['deps'];
     expectTypeOf<Extract<Deps, unknown[]>>().toEqualTypeOf<DepInput<Names>[]>();
     // the callback form returns the same entries, checked against the same names
     expectTypeOf<ReturnType<Extract<Deps, (...args: never[]) => unknown>>>().toEqualTypeOf<
@@ -292,9 +293,11 @@ describe('key narrowing survives a config of nothing but callbacks', () => {
     // and the name references are still checked against those keys
     expectTypeOf<
       Extract<
-        Parameters<
-          typeof defineConfig<Record<never, never>, { api: unknown; web: unknown }, 'api' | 'web'>
-        >[0]['services']['api']['deps'],
+        NonNullable<
+          Parameters<
+            typeof defineConfig<Record<never, never>, { api: unknown; web: unknown }, 'api' | 'web'>
+          >[0]['services']
+        >['api']['deps'],
         unknown[]
       >
     >().toEqualTypeOf<DepInput<'api' | 'web'>[]>();
@@ -1090,12 +1093,14 @@ describe('the removed build surface', () => {
 
 describe('serviceRootDir', () => {
   test('makes targetDir optional when set, required otherwise', () => {
-    type WithRoot = Parameters<
-      typeof defineConfig<Record<never, never>, { api: unknown }, 'api', 'packages'>
-    >[0]['services']['api'];
-    type WithoutRoot = Parameters<
-      typeof defineConfig<Record<never, never>, { api: unknown }, 'api'>
-    >[0]['services']['api'];
+    type WithRoot = NonNullable<
+      Parameters<
+        typeof defineConfig<Record<never, never>, { api: unknown }, 'api', 'packages'>
+      >[0]['services']
+    >['api'];
+    type WithoutRoot = NonNullable<
+      Parameters<typeof defineConfig<Record<never, never>, { api: unknown }, 'api'>>[0]['services']
+    >['api'];
     expectTypeOf<Pick<WithRoot, 'targetDir'>>().toEqualTypeOf<{ targetDir?: string }>();
     expectTypeOf<Pick<WithoutRoot, 'targetDir'>>().toEqualTypeOf<{ targetDir: string }>();
   });
@@ -1333,8 +1338,12 @@ describe('the input types and the schemas', () => {
     expectTypeOf<Pick<ResolvedServiceConfig<string>, FromSchema>>().toEqualTypeOf<
       Pick<v.InferOutput<typeof ServiceConfigSchema>, FromSchema>
     >();
+    // `env` alone resolves into fields of other names: `envFiles`, `envOverride`, `envVars`.
     expectTypeOf<
-      Exclude<keyof v.InferOutput<typeof ServiceConfigSchema>, keyof ResolvedServiceConfig<string>>
+      Exclude<
+        keyof v.InferOutput<typeof ServiceConfigSchema>,
+        keyof ResolvedServiceConfig<string> | 'env'
+      >
     >().toEqualTypeOf<never>();
   });
 });
@@ -1672,5 +1681,68 @@ describe('config split across files', () => {
     void ({ command: 'dev', deps: ['wrker'] } satisfies ServiceInput<Names>);
     // @ts-expect-error -- `afterReadyy` is not an infra service option (TS2561).
     void ({ afterReadyy: async () => {} } satisfies InfraServiceInput);
+  });
+});
+
+describe('services, optional', () => {
+  test('a config with none has no service names', () => {
+    const cfg = defineConfig({ env: { vars: { A: '1' } } });
+    expectTypeOf<keyof typeof cfg.services>().toEqualTypeOf<never>();
+  });
+
+  test('an empty config compiles', () => {
+    expectTypeOf(defineConfig({}).services).toEqualTypeOf<Record<never, never>>();
+  });
+
+  test('names stay narrowed when services are present', () => {
+    const cfg = defineConfig({ serviceRootDir: 'apps', services: { api: {}, web: {} } });
+    expectTypeOf<keyof typeof cfg.services>().toEqualTypeOf<'api' | 'web'>();
+  });
+});
+
+describe('services.<name>.env', () => {
+  type Options = Exclude<ServiceEnvInput, (...args: never[]) => unknown>;
+
+  test('takes inherits, vars, override and additionalFiles, and no decrypt', () => {
+    expectTypeOf<Options['inherits']>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<Options>().toHaveProperty('vars');
+    expectTypeOf<Options>().toHaveProperty('override');
+    expectTypeOf<Options>().toHaveProperty('additionalFiles');
+    expectTypeOf<Options>().not.toHaveProperty('decrypt');
+  });
+
+  test('takes the callback form, as shorthand for vars', () => {
+    defineConfig({
+      serviceRootDir: 'apps',
+      services: { api: { env: ({ envs }) => ({ A: envs.B }) } },
+    });
+  });
+
+  test("gives its vars callback the service's tokens", () => {
+    defineConfig({
+      serviceRootDir: 'apps',
+      tokens: { region: 'top' },
+      services: {
+        api: {
+          tokens: { tier: 'gold' },
+          env: {
+            vars: ({ tokens }) => {
+              expectTypeOf(tokens.region).toEqualTypeOf<'top'>();
+              // A service's own tokens are strings unless written `as const`.
+              expectTypeOf(tokens.tier).toEqualTypeOf<string>();
+              return {};
+            },
+          },
+        },
+      },
+    });
+  });
+
+  test('carries the combined env on the resolved service', () => {
+    type Resolved = ResolvedServiceConfig<'api'>;
+    expectTypeOf<Resolved['envFiles']>().toEqualTypeOf<string[]>();
+    expectTypeOf<Resolved['envOverride']>().toEqualTypeOf<boolean | string[] | undefined>();
+    expectTypeOf<Resolved['envVars']>().toEqualTypeOf<Record<string, string> | undefined>();
+    expectTypeOf<Resolved>().not.toHaveProperty('env');
   });
 });

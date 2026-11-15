@@ -7,7 +7,9 @@ import {
   envCandidatePaths,
   envDirs,
   envFileNames,
+  serviceEnvOptions,
   targetEnvLayer,
+  withoutWorkspaceEnv,
 } from '../env';
 import { scriptExec, definesScript } from '../scripts';
 import { type ResolvedTarget, resolveTarget } from '../target';
@@ -82,7 +84,7 @@ export function oneOffSpecFor(
   request: { kind: 'exec'; command: [string, ...string[]] } | { kind: 'run'; script: string; args: string[] }, // oxfmt-ignore
   layer: Record<string, string> = oneOffEnvLayer(target, root),
 ): OneOffSpec {
-  const env: NodeJS.ProcessEnv = { ...process.env, ...layer };
+  const env: NodeJS.ProcessEnv = { ...withoutWorkspaceEnv(), ...layer };
   if (request.kind === 'exec') {
     const [command, ...args] = request.command;
     return { cwd: target.dir, command, args, env };
@@ -142,7 +144,10 @@ export function oneOffEnvResolution(
   const candidates = envCandidatePaths({
     resolvedWorkspaceDir,
     resolvedTargetDir,
-    files: config.envFiles,
+    files:
+      target.kind === 'service'
+        ? (serviceEnvOptions(target.service).files ?? config.envFiles)
+        : config.envFiles,
   });
   const files = candidates.filter((file) => fs.existsSync(file));
   // The target's own files, as against those of the directories above it. A target at the root

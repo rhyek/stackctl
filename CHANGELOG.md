@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.0
+
+### Features
+
+- **A service takes an `env` of its own**: `vars`, `override` and `additionalFiles` for it
+  alone, on top of the config's unless `inherits: false`. See
+  [docs/config/services.md](docs/config/services.md#env).
+- **`services` is optional in `stackctl.config.ts`**, for a config that only sets the
+  environment of `exec` and `run`.
+
 ## 0.9.0
 
 ### Features

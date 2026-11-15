@@ -6,7 +6,8 @@ description: The env option of stackctl.config.ts - env.vars for variables set i
 
 The `env` option adjusts how stackctl builds each process's environment.
 [Environment and profiles](../guide/env.md) explains what loads by default; this page is the
-option reference.
+option reference. A service can add `vars`, `override` and `additionalFiles` of its own on top:
+see [a service's `env`](./services.md#env).
 
 ```ts
 export default defineConfig({
@@ -36,7 +37,8 @@ export default defineConfig({
 - **Type:** `Record<string, string | undefined> | (ctx) => Record<…>`
 
 Variables for everything stackctl starts: every service, `stackctl exec` and `run`, and
-[infra](./infra.md) (Compose and its callbacks).
+[infra](./infra.md) (Compose and its callbacks). A service's own
+[`env.vars`](./services.md#env) merge over them.
 
 ```ts
 env: {

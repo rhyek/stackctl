@@ -114,6 +114,62 @@ export const DepEntrySchema = v.union([
   v.strictObject({ service: v.string(), wait: v.optional(v.boolean()) }),
 ]);
 
+const EnvFileAnchorSchema = v.picklist([
+  '.env',
+  '.env.local',
+  '.env.<profile>',
+  '.env.<profile>.local',
+]);
+
+// One `env.additionalFiles` entry, as written or as the callback returns it: `{ file, before }` or
+// `{ file, after }`. That `file` is a name, not a path, and that no two entries name one file, is
+// checked in `defineConfig`.
+export const EnvAdditionalFileSchema = v.union([
+  v.strictObject({
+    file: nonEmptyString(),
+    before: EnvFileAnchorSchema,
+    after: v.optional(v.never()),
+  }),
+  v.strictObject({
+    file: nonEmptyString(),
+    after: EnvFileAnchorSchema,
+    before: v.optional(v.never()),
+  }),
+]);
+
+// The `env` options. Strict, so a misspelled option fails at load.
+const EnvOptionsSchema = v.strictObject({
+  // The values are checked where a callback's result is, in `defineConfig`, so a bad one
+  // is reported the same way — by variable name — whichever form declared it. So is that the
+  // record is a plain object, an array not.
+  vars: v.optional(
+    v.union([v.record(v.string(), v.unknown()), callback<EnvVarsResolver>()]) as v.GenericSchema<
+      EnvVars | EnvVarsResolver
+    >,
+  ),
+  override: v.optional(v.union([v.boolean(), v.array(v.string())])),
+  // A callback's result is checked against `EnvAdditionalFileSchema` in `defineConfig`.
+  additionalFiles: v.optional(
+    v.union([v.array(EnvAdditionalFileSchema), callback<EnvAdditionalFilesResolver>()]),
+  ),
+  decrypt: v.optional(v.boolean()),
+});
+
+// A service's own `env`: the top level's options but `decrypt`, which is the workspace's, and
+// `inherits`, whether the top level's apply too. Strict, so a misspelled option fails at load.
+const ServiceEnvOptionsSchema = v.strictObject({
+  inherits: v.optional(v.boolean()),
+  vars: EnvOptionsSchema.entries.vars,
+  override: EnvOptionsSchema.entries.override,
+  additionalFiles: EnvOptionsSchema.entries.additionalFiles,
+});
+
+/** A service's `env`, the callback form stood in for by `{ vars: callback }`. */
+export const ServiceEnvSchema = v.pipe(
+  v.union([callback<EnvVarsResolver>(), ServiceEnvOptionsSchema]),
+  v.transform((env) => (typeof env === 'function' ? { vars: env } : env)),
+);
+
 // All per-service config is flat (no `run` nesting). The service's *name* is the key it's
 // declared under in `services` (injected by `defineConfig` after parsing), so it isn't a field
 // here; the rest describe how to run/select/link it. Strict, so a misspelled key fails at load
@@ -147,6 +203,7 @@ export const ServiceConfigSchema = v.strictObject({
       formatter: v.optional(callback<(line: string) => string>()),
     }),
   ),
+  env: v.optional(ServiceEnvSchema),
 });
 
 // `reverseProxy.publicAddress`, as written or as its callback returns it. Its domains' hostname
@@ -237,51 +294,10 @@ export const InfraSchema = v.pipe(
   ),
 );
 
-const EnvFileAnchorSchema = v.picklist([
-  '.env',
-  '.env.local',
-  '.env.<profile>',
-  '.env.<profile>.local',
-]);
-
-// One `env.additionalFiles` entry, as written or as the callback returns it: `{ file, before }` or
-// `{ file, after }`. That `file` is a name, not a path, and that no two entries name one file, is
-// checked in `defineConfig`.
-export const EnvAdditionalFileSchema = v.union([
-  v.strictObject({
-    file: nonEmptyString(),
-    before: EnvFileAnchorSchema,
-    after: v.optional(v.never()),
-  }),
-  v.strictObject({
-    file: nonEmptyString(),
-    after: EnvFileAnchorSchema,
-    before: v.optional(v.never()),
-  }),
-]);
-
-// The `env` options. Strict, so a misspelled option fails at load.
-const EnvOptionsSchema = v.strictObject({
-  // The values are checked where a callback's result is, in `defineConfig`, so a bad one
-  // is reported the same way — by variable name — whichever form declared it. So is that the
-  // record is a plain object, an array not.
-  vars: v.optional(
-    v.union([v.record(v.string(), v.unknown()), callback<EnvVarsResolver>()]) as v.GenericSchema<
-      EnvVars | EnvVarsResolver
-    >,
-  ),
-  override: v.optional(v.union([v.boolean(), v.array(v.string())])),
-  // A callback's result is checked against `EnvAdditionalFileSchema` in `defineConfig`.
-  additionalFiles: v.optional(
-    v.union([v.array(EnvAdditionalFileSchema), callback<EnvAdditionalFilesResolver>()]),
-  ),
-  decrypt: v.optional(v.boolean()),
-});
-
 export const DefineConfigSchema = v.strictObject({
   apiPort: v.optional(finiteNumber()),
   // Keyed by service name; the key becomes the service's `name`.
-  services: v.record(nonEmptyString(), ServiceConfigSchema),
+  services: v.optional(v.record(nonEmptyString(), ServiceConfigSchema)),
   serviceRootDir: v.optional(v.string()),
   urls: v.optional(UrlsSchema),
   reverseProxy: v.optional(ReverseProxySchema),

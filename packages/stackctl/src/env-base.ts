@@ -517,6 +517,38 @@ export function dropInjectedEnv(env: NodeJS.ProcessEnv = process.env): void {
   }
 }
 
+/**
+ * What the workspace's environment layer replaced in this process's `process.env` when the CLI
+ * merged it in ({@link recordWorkspaceEnv}): each name it set, with the value it had before.
+ */
+let workspaceEnvBefore: Record<string, string | undefined> = {};
+
+/**
+ * Records what merging the workspace's environment into `process.env` is about to replace: each
+ * of `names`, as it is now. The CLI calls this just before the merge.
+ */
+export function recordWorkspaceEnv(names: readonly string[]): void {
+  workspaceEnvBefore = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+}
+
+/**
+ * `env` (this process's own by default) as it was before the CLI merged the workspace's
+ * environment into it: what a target's own layer goes over. A target's layer resolves the
+ * workspace's files and `env.vars` again when they are its, so a service that doesn't inherit
+ * them gets none of them through `process.env`.
+ */
+export function withoutWorkspaceEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const [name, value] of Object.entries(workspaceEnvBefore)) {
+    if (value === undefined) {
+      delete out[name];
+    } else {
+      out[name] = value;
+    }
+  }
+  return out;
+}
+
 /** The environment stackctl was started with, once {@link captureShellEnv} has recorded it. */
 let shellEnv: Record<string, string> | undefined;
 

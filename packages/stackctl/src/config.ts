@@ -293,8 +293,9 @@ export type EnvInput<T = TokenRecord> =
   | EnvVarsResolver<T>
   | {
       /**
-       * Environment variables of the config's own, for every service stackctl runs, `stackctl
-       * exec` / `run`, and infra. A record, or a callback over the workspace context
+       * Environment variables of the config's own, for every service stackctl runs (merged under
+       * a service's own `env.vars`, unless it says `inherits: false`), `stackctl exec` / `run`,
+       * and infra. A record, or a callback over the workspace context
        * `{ envs, tokens }` invoked once at load, before anything else in the config resolves —
        * so every other callback finds the result in its `envs`. They rank as a `.env` file read
        * before every real one, under the same rules: any file replaces them, the ambient
@@ -329,6 +330,44 @@ export type EnvInput<T = TokenRecord> =
        * @see https://github.com/dotenvx/dotenvx#encryption
        */
       decrypt?: boolean;
+    };
+
+/**
+ * A service's own `env`: its options, or the `vars` callback on its own. It takes the config's
+ * `env` options but `decrypt`, which applies to the whole workspace, and adds `inherits`.
+ */
+export type ServiceEnvInput<T = TokenRecord> =
+  | EnvVarsResolver<T>
+  | {
+      /**
+       * Whether the config's top-level `env` applies to this service too (default `true`). Then
+       * this service's `vars` merge over the top level's, winning on a clash; its `override`
+       * adds to the top level's (`true` on either side means all); and its `additionalFiles`
+       * load after the top level's. With `false` the top level's `vars`, `override` and
+       * `additionalFiles` don't apply to this service at all: only what is set here does.
+       * `env.decrypt` applies either way.
+       */
+      inherits?: boolean;
+      /**
+       * Environment variables for this service alone: its process, its config callbacks, and
+       * `stackctl exec` / `run` with it as the target. A record, or a callback over the
+       * service's context `{ envs, tokens }`, whose `envs` holds the service's `.env` files and,
+       * when it inherits, the top-level `vars`. They rank as a `.env` file read before every real
+       * one, as the top-level `vars` do.
+       */
+      vars?: EnvVars | EnvVarsResolver<T>;
+      /**
+       * Variables whose `.env` or `vars` value may beat the ambient environment for this
+       * service (`true` for all), on top of the top level's when it inherits.
+       */
+      override?: EnvOverride;
+      /**
+       * Extra `.env` files for this service alone, placed `before` or `after` one of stackctl's
+       * own as the top-level `env.additionalFiles` are, and loading after those when it
+       * inherits. Looked for in every directory from the workspace root down to the service. A
+       * file the top level already lists is an error.
+       */
+      additionalFiles?: EnvAdditionalFile[] | EnvAdditionalFilesResolver;
     };
 
 /** What an `env.additionalFiles` callback is given. */
@@ -564,6 +603,12 @@ export type ServiceConfigInput<
        */
       formatter?: (line: string) => string;
     };
+    /**
+     * This service's own environment options: extra `.env` files, variables and overrides for
+     * it alone, on top of the config's `env` unless `inherits: false`. Shorthand: a callback
+     * stands for `vars`. See {@link ServiceEnvInput}.
+     */
+    env?: ServiceEnvInput<ServiceTokens<Top, Own>>;
     /**
      * The service's dev port. Injected into its dev process as `PORT` (only a `PORT` in the
      * service's own `.env` file overrides it), handed to this service's `healthcheck`/`urls`
@@ -1063,7 +1108,8 @@ export type DefineConfigOptions<
   /**
    * Your application services, **keyed by service name**. The key is the service's name —
    * what `-s` takes, what `deps` reference, and what `targetDir` defaults from
-   * (`<serviceRootDir>/<key>`).
+   * (`<serviceRootDir>/<key>`). Optional: a config with none still sets the environment of
+   * `stackctl exec` and `run`, and its infra.
    */
   // `& Record<K, unknown>` is a second, **key-only** inference channel, and it is what keeps the
   // service names narrowed. The mapped type infers `P` from each service's `tokens`, but a
@@ -1072,7 +1118,7 @@ export type DefineConfigOptions<
   // service declares nothing but callbacks inferred no keys at all and `K` widened to `string`
   // (dropping the `deps` checks). `Record<K, unknown>` has `unknown` values, so it
   // needs no contextual typing and infers the keys regardless — without competing with `P`.
-  services: { [Q in keyof P]: ServiceConfigInput<P[Q], Top, K, RootDir> } & Record<K, unknown>;
+  services?: { [Q in keyof P]: ServiceConfigInput<P[Q], Top, K, RootDir> } & Record<K, unknown>;
   /**
    * Values of your own, handed to every callback as `tokens` (merged under each service's own
    * `tokens`) and typed from what you declare here.
@@ -1134,6 +1180,16 @@ export type ResolvedServiceConfig<N extends string, T = TokenRecord> = {
   targetDir: string;
   /** The service directory, absolute: `targetDir` resolved against the workspace root. */
   resolvedTargetDir: string;
+  /**
+   * The `.env` filenames looked for in each directory of this service's walk, ascending
+   * precedence: stackctl's own, with the config's `env.additionalFiles` (when it inherits) and
+   * its own placed among them.
+   */
+  envFiles: string[];
+  /** The variables its `.env` files may override the ambient environment for, combined. */
+  envOverride?: EnvOverride;
+  /** Its variables: the config's `env.vars` (when it inherits) with its own merged over them. */
+  envVars?: Record<string, string>;
   /** The service's dev port, with any `port` callback already resolved. */
   port?: number;
   /** Footer links, with every callback already resolved to a string. */
@@ -1512,24 +1568,21 @@ function envFilesNote(files: string[]): string {
 function resolveAdditionalFiles(
   input: EnvAdditionalFile[] | ((ctx: { profile: Profile }) => EnvAdditionalFile[]) | undefined,
   profile: Profile,
+  /** Where the option is written, for its errors. */
+  where = 'env.additionalFiles',
+  /** Files already listed elsewhere, with where: a file here must name none of them. */
+  listed: { file: string; at: string }[] = [],
 ): EnvAdditionalFile[] {
   if (input === undefined) {
     return [];
   }
   const computed = typeof input === 'function';
-  const called = computed
-    ? `\n  (returned by the env.additionalFiles callback for profile "${profile}")`
-    : '';
-  const result = parseAt(
-    v.array(EnvAdditionalFileSchema),
-    computed ? input({ profile }) : input,
-    'env.additionalFiles',
-    called,
-  );
+  const called = computed ? `\n  (returned by the ${where} callback for profile "${profile}")` : '';
+  const result = parseAt(v.array(EnvAdditionalFileSchema), computed ? input({ profile }) : input, where, called); // oxfmt-ignore
   const standard = new Set(envFileNames(profile));
-  const seen: { file: string; at: string }[] = [];
+  const seen: { file: string; at: string }[] = [...listed];
   return result.map((entry, i): EnvAdditionalFile => {
-    const at = `env.additionalFiles[${String(i)}]`;
+    const at = `${where}[${String(i)}]`;
     const { file } = entry;
     const fail = (problem: string): never => {
       throw new Error(`${at} (${JSON.stringify(file)}): ${problem}${called}`);
@@ -1556,10 +1609,30 @@ function resolveAdditionalFiles(
  * isn't a string is an error naming the variable — and, for a callback, the env files loaded,
  * in the style of a service `port`. An `undefined` one is left out.
  */
+/**
+ * Two `override`s as one: `true` if either is, else every name either lists, or `undefined`
+ * when neither says anything.
+ */
+function combineOverrides(
+  inherited: EnvOverride | undefined,
+  own: EnvOverride | undefined,
+): EnvOverride | undefined {
+  if (inherited === true || own === true) {
+    return true;
+  }
+  if (inherited === undefined && own === undefined) {
+    return undefined;
+  }
+  const names = [...(inherited || []), ...(own || [])];
+  return [...new Set(names)];
+}
+
 function resolveEnvVars(
   vars: NonNullable<v.InferOutput<typeof DefineConfigSchema>['env']>['vars'],
   ctx: () => ConfigContext,
   envFilesLoaded: () => string[],
+  /** Where the option is written, for its errors. */
+  option = 'env.vars',
 ): Record<string, string> | undefined {
   if (vars === undefined) {
     return undefined;
@@ -1567,7 +1640,7 @@ function resolveEnvVars(
   const computed = typeof vars === 'function';
   const fail = (problem: string): never => {
     const where = computed ? `\n  ${envFilesNote(envFilesLoaded())}` : '';
-    throw new Error(`env.vars: ${problem}${where}`);
+    throw new Error(`${option}: ${problem}${where}`);
   };
   const result: unknown = typeof vars === 'function' ? vars(ctx()) : vars;
   // A plain object only: a promise (an `async` callback) or a `Map` has no entries to read, and
@@ -1584,7 +1657,7 @@ function resolveEnvVars(
   for (const [key, value] of Object.entries(result as Record<string, unknown>)) {
     if (!ENV_NAME_RE.test(key)) {
       throw new Error(
-        `env.vars: ${JSON.stringify(key)} is not a valid environment variable name ` +
+        `${option}: ${JSON.stringify(key)} is not a valid environment variable name ` +
           '(letters, digits, "_", "." and "-")',
       );
     }
@@ -2248,7 +2321,9 @@ export function proxyHostsFor(
 export function defineConfig<
   const Top extends TokenRecord,
   P extends Record<string, unknown>,
-  K extends string = Extract<keyof P, string>,
+  // With no `services` there is nothing to infer `P` from, which leaves it its constraint: no
+  // service names then, rather than every string.
+  K extends string = string extends Extract<keyof P, string> ? never : Extract<keyof P, string>,
   RootDir extends string | undefined = undefined,
   I extends string = never,
 >(
@@ -2269,7 +2344,7 @@ export function defineConfig<
   workspaceRoot = resolvedWorkspaceDir;
 
   // The key IS the service name. Everything downstream works on an array, so flatten here.
-  const parsedPackages = Object.entries(parsed.services).map(([name, config]) => ({
+  const parsedPackages = Object.entries(parsed.services ?? {}).map(([name, config]) => ({
     ...config,
     name,
   }));
@@ -2371,12 +2446,37 @@ export function defineConfig<
     return resolvedTargetDir;
   };
 
-  const envFiles = envFileOrder(
-    currentProfile(),
-    resolveAdditionalFiles(parsed.env?.additionalFiles, currentProfile()),
-  );
+  const topAdditional = resolveAdditionalFiles(parsed.env?.additionalFiles, currentProfile());
+  const envFiles = envFileOrder(currentProfile(), topAdditional);
   const envOverride = parsed.env?.override;
   const envDecrypt = parsed.env?.decrypt ?? false;
+
+  // Each service's own `env` options but `vars`, which resolve with the rest of the service: the
+  // files it looks for and the variables it overrides, on top of the config's unless it says
+  // `inherits: false`.
+  const topListed = topAdditional.map((entry, i) => ({
+    file: entry.file,
+    at: `env.additionalFiles[${String(i)}]`,
+  }));
+  const serviceEnvOptions = new Map(
+    parsedPackages.map((config) => {
+      const own = config.env;
+      const inherits = own?.inherits ?? true;
+      const additional = resolveAdditionalFiles(
+        own?.additionalFiles,
+        currentProfile(),
+        `services.${config.name}.env.additionalFiles`,
+        inherits ? topListed : [],
+      );
+      const files = envFileOrder(
+        currentProfile(),
+        inherits ? [...topAdditional, ...additional] : additional,
+      );
+      const override = combineOverrides(inherits ? envOverride : undefined, own?.override);
+      return [config.name, { inherits, files, override }] as const;
+    }),
+  );
+  const envOptionsOf = (name: string) => serviceEnvOptions.get(name)!;
 
   const baseEnv = () => baseEnvs(workspaceRoot);
 
@@ -2385,29 +2485,38 @@ export function defineConfig<
     configEnvReader([
       ...new Set(
         [
-          resolvedWorkspaceDir,
-          ...parsedPackages.flatMap((config) => {
+          envCandidatePaths({ resolvedWorkspaceDir, files: envFiles }),
+          ...parsedPackages.map((config) => {
             try {
-              return [resolvedTargetDirOf(config)];
+              return envCandidatePaths({
+                resolvedWorkspaceDir,
+                resolvedTargetDir: resolvedTargetDirOf(config),
+                files: envOptionsOf(config.name).files,
+              });
             } catch {
               return []; // reported as the service resolves
             }
           }),
-        ].flatMap((resolvedTargetDir) =>
-          envCandidatePaths({ resolvedWorkspaceDir, resolvedTargetDir, files: envFiles }),
-        ),
+        ].flat(),
       ),
       ...(envDecrypt ? [envKeysFile(resolvedWorkspaceDir)] : []),
     ]),
   );
-  const loadEnv = (resolvedTargetDir: string, vars?: Record<string, string>) =>
+  /** The `.env` files a target reads, and the variables they may override. */
+  type EnvOptions = { files: string[]; override?: EnvOverride };
+  const workspaceEnvOptions: EnvOptions = { files: envFiles, override: envOverride };
+  const loadEnv = (
+    resolvedTargetDir: string,
+    vars?: Record<string, string>,
+    options: EnvOptions = workspaceEnvOptions,
+  ) =>
     once(() =>
       resolveEnvFrom(
         {
           resolvedWorkspaceDir,
           resolvedTargetDir,
-          files: envFiles,
-          override: envOverride,
+          files: options.files,
+          override: options.override,
           decrypt: envDecrypt,
           vars,
         },
@@ -2428,8 +2537,12 @@ export function defineConfig<
    * The environment a callback sees: the `.env` files up to a directory, with the config's own variables
    * ranked as a file below them, merged over `process.env`.
    */
-  const envsFor = (resolvedTargetDir: string) => {
-    const load = loadEnv(resolvedTargetDir, envVars);
+  const envsFor = (
+    resolvedTargetDir: string,
+    vars: Record<string, string> | undefined,
+    options: EnvOptions = workspaceEnvOptions,
+  ) => {
+    const load = loadEnv(resolvedTargetDir, vars, options);
     return {
       envs: once(() => Object.assign(baseEnv(), load().env)),
       files: () => load().files,
@@ -2437,7 +2550,7 @@ export function defineConfig<
   };
 
   // Workspace-wide urls belong to no service: the workspace root's env, and no `port` to offer.
-  const workspaceEnv = envsFor(resolvedWorkspaceDir);
+  const workspaceEnv = envsFor(resolvedWorkspaceDir, envVars);
   const workspaceBase = once((): ConfigContext => ({ envs: workspaceEnv.envs(), tokens }));
 
   // The dev reverse proxy sees the workspace context, like the workspace-wide urls. Resolved
@@ -2456,11 +2569,25 @@ export function defineConfig<
   }
 
   const packages = parsedPackages.map((config) => {
+    const { env: ownEnv, ...declared } = config;
     const targetDir = targetDirOf(config);
     const resolvedTargetDir = resolvedTargetDirOf(config);
-    const env = envsFor(resolvedTargetDir);
     // The service's own tokens win over the config's, so a service can override a shared value.
     const pkgTokens = config.tokens ? { ...tokens, ...config.tokens } : tokens;
+    // Its own `vars` resolve against its files and the config's `vars` it inherits, then merge
+    // over those: what every callback below, and its process, sees.
+    const envOptions = envOptionsOf(config.name);
+    const inheritedVars = envOptions.inherits ? envVars : undefined;
+    const beforeOwnVars = envsFor(resolvedTargetDir, inheritedVars, envOptions);
+    const ownVars = resolveEnvVars(
+      ownEnv?.vars,
+      () => ({ envs: beforeOwnVars.envs(), tokens: pkgTokens }),
+      beforeOwnVars.files,
+      `services.${config.name}.env.vars`,
+    );
+    const serviceVars = ownVars === undefined ? inheritedVars : { ...inheritedVars, ...ownVars };
+    const env =
+      ownVars === undefined ? beforeOwnVars : envsFor(resolvedTargetDir, serviceVars, envOptions);
     const baseCtx = once((): ConfigContext => ({ envs: env.envs(), tokens: pkgTokens }));
     const identity: ServiceIdentity = { name: config.name, kind: 'service' };
     // Resolved first so the `healthcheck`/`urls` callbacks below can read it, and stored on the
@@ -2490,7 +2617,7 @@ export function defineConfig<
     const noPublicOrigin = reach.routed && publicOrigin === undefined;
     const scope = (where: string): UrlScope => ({ ctx, port, publicOrigin, where, noPublicOrigin });
     return {
-      ...config,
+      ...declared,
       deps: resolveDeps(config.name, config.deps, () => ({
         ...baseCtx(),
         profile: currentProfile(),
@@ -2501,6 +2628,9 @@ export function defineConfig<
       port,
       targetDir,
       resolvedTargetDir,
+      envFiles: envOptions.files,
+      envOverride: envOptions.override,
+      envVars: serviceVars,
       urls: resolveUrls(config.urls, scope(`${config.name} urls`)),
       healthcheck:
         config.healthcheck === undefined

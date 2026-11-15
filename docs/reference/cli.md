@@ -261,7 +261,7 @@ session's, else the latest one's. It never asks the session anything.
 stackctl show-config
 stackctl show-config --profile test
 stackctl show-config | jq '.services | map_values({ port, publicOrigin })'
-stackctl show-config | jq '.envFiles.workspace'
+stackctl show-config | jq '.services.api.envFiles'
 ```
 
 Prints the fully resolved config as JSON, with no session: callbacks have run and defaults
@@ -270,10 +270,10 @@ are applied. It is the same object a session reports as `config` on
 
 | Field           | What it holds                                                                          |
 | --------------- | -------------------------------------------------------------------------------------- |
-| `services`      | Each service's `port`, `publicOrigin`, `urls`, `healthcheck`, `deps`, `command`, `targetDir` (as written) and `resolvedTargetDir` (absolute). |
+| `services`      | Each service's `port`, `publicOrigin`, `urls`, `healthcheck`, `deps`, `command`, `targetDir` (as written), `resolvedTargetDir` (absolute), and its [`env`](../config/services.md#env) combined with the config's: `envFiles`, `envOverride` and `envVars`. |
 | `infra`         | Per provider: the compose `file`, the profile's `projectName`, and each service's `enabled`, `port`, `urls` and `publicOrigin`. |
 | `reverseProxy`  | Its `port`, `tls`, `publicAddress` and `routes`.                                       |
-| `envFiles`      | The `.env` filenames the profile looks for in each directory, in load order.          |
+| `envFiles`      | The `.env` filenames the profile looks for in each directory, in load order. A service's own are on the service. |
 
 Functions (`logs.formatter`, infra callbacks) have no JSON form and are left out.
 
