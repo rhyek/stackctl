@@ -1,13 +1,13 @@
 import sliceAnsi from 'slice-ansi';
 import { describe, test, expect } from 'vitest';
-import { stripAnsi } from './format.js';
+import { stripAnsi } from './format';
 import {
   DOUBLE_CLICK_MS,
   trackClick,
   wordSelectionAt,
   wordSpanAt,
   type ClickState,
-} from './word-select.js';
+} from './word-select';
 
 const ESC = String.fromCharCode(27);
 const red = (s: string) => `${ESC}[31m${s}${ESC}[0m`;

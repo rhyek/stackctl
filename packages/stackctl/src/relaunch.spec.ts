@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { relaunchArgv } from './relaunch.js';
+import { relaunchArgv } from './relaunch';
 
 describe('relaunchArgv', () => {
   test('adds the cap ahead of the flags and arguments stackctl was started with', () => {

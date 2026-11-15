@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AnyServiceConfig } from './config.js';
-import { getDevScript } from './config.js';
+import type { AnyServiceConfig } from './config';
+import { getDevScript } from './config';
 
 // A service's scripts (its package.json scripts, or its Makefile's targets) and how to run one.
 

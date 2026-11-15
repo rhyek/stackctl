@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildDir, packageDir } from './cli.js';
+import { buildDir, packageDir } from './cli';
 
 /**
  * The ports the fixture uses, from stackctl's block in the port registry (21050–21099): 21080–21089,

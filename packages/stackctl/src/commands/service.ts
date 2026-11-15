@@ -1,11 +1,11 @@
-import { type AnyServiceConfig, getLoadedConfig, getRegisteredPackages } from '../config.js';
-import type { ControlClient, SessionStatus } from '../control-client.js';
-import { type FoundSession, findSession, unresponsiveMessage } from '../find-session.js';
-import { definesDevScript } from '../scripts.js';
-import { waitUntilHealthy } from '../stack.js';
-import { findConfigPath } from '../workspace-root.js';
-import { type StopTarget, activeTarget, noSessionLine, otherSessionLines } from './stop.js';
-import { loadedConfigOrExit } from './workspace.js';
+import { type AnyServiceConfig, getLoadedConfig, getRegisteredPackages } from '../config';
+import type { ControlClient, SessionStatus } from '../control-client';
+import { type FoundSession, findSession, unresponsiveMessage } from '../find-session';
+import { definesDevScript } from '../scripts';
+import { waitUntilHealthy } from '../stack';
+import { findConfigPath } from '../workspace-root';
+import { type StopTarget, activeTarget, noSessionLine, otherSessionLines } from './stop';
+import { loadedConfigOrExit } from './workspace';
 
 // `stackctl service start|stop|restart -s <name>…`: drives application services of the profile's
 // running session through its control API. It never starts a session of its own.

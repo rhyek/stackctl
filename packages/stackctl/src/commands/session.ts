@@ -1,16 +1,16 @@
 import path from 'node:path';
-import { getLoadedConfig } from '../config.js';
-import { currentProfile } from '../env-base.js';
-import { findSession, unresponsiveMessage } from '../find-session.js';
-import { findConfigPath } from '../load-config.js';
-import { renderAppInProduction } from '../render-app-production.js';
-import { sessionId } from '../running.js';
-import { sessionLogPath } from '../session-files.js';
-import { runHeadless } from '../session/headless.js';
-import { buildSessionPlan } from '../session/plan.js';
-import { Session } from '../session/session.js';
-import { preflightTakeover } from '../takeover.js';
-import { type StartOptions, resolveSelectedNamesOrExit } from './default.js';
+import { getLoadedConfig } from '../config';
+import { currentProfile } from '../env-base';
+import { findSession, unresponsiveMessage } from '../find-session';
+import { findConfigPath } from '../load-config';
+import { renderAppInProduction } from '../render-app-production';
+import { sessionId } from '../running';
+import { sessionLogPath } from '../session-files';
+import { runHeadless } from '../session/headless';
+import { buildSessionPlan } from '../session/plan';
+import { Session } from '../session/session';
+import { preflightTakeover } from '../takeover';
+import { type StartOptions, resolveSelectedNamesOrExit } from './default';
 
 // A dev session: `--headless`, streaming to stdout, or the TUI.
 

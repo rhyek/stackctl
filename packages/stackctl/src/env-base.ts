@@ -1,4 +1,4 @@
-import { findPassthrough } from './infra/argv.js';
+import { findPassthrough } from './infra/argv';
 
 // What stackctl's environment handling needs without reading a file: the profile, the names and
 // order of the `.env` files, the environment stackctl was started with, and what an outer stackctl

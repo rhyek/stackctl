@@ -1,8 +1,8 @@
 import type { DOMElement } from 'ink';
-import type { ToastTarget } from '../components/ToastStack.js';
-import type { Rect, Target } from './hit-test.js';
-import type { FooterLayout, MenuLayout } from './layout.js';
-import { type ClickTarget, elementRect } from './use-mouse.js';
+import type { ToastTarget } from '../components/ToastStack';
+import type { Rect, Target } from './hit-test';
+import type { FooterLayout, MenuLayout } from './layout';
+import { type ClickTarget, elementRect } from './use-mouse';
 
 /**
  * Every click target on the run screen, in screen cells, drawn-last last (`hitTest` is last-wins):

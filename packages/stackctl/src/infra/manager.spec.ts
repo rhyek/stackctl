@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { defineConfig } from '../config.js';
-import { type Exec, execLines } from '../spawn.js';
-import { InfraManager } from './manager.js';
-import { type InfraInput, InfraError } from './types.js';
+import { defineConfig } from '../config';
+import { type Exec, execLines } from '../spawn';
+import { InfraManager } from './manager';
+import { type InfraInput, InfraError } from './types';
 
 let ws: string;
 beforeEach(() => {

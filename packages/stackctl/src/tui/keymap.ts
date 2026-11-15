@@ -1,5 +1,5 @@
-import type { SessionInfraState, SessionSnapshot } from '../session/session.js';
-import type { ServiceState } from '../session/supervisor.js';
+import type { SessionInfraState, SessionSnapshot } from '../session/session';
+import type { ServiceState } from '../session/supervisor';
 
 /**
  * The run screen's key table: which key does what, in which mode and for which focused entry.

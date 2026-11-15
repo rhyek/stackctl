@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from 'react';
-import type { Session, SessionSnapshot } from '../session/session.js';
+import type { Session, SessionSnapshot } from '../session/session';
 
 /**
  * The session's state snapshot, re-rendering when it changes. It subscribes, and never polls: the

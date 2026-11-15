@@ -13,7 +13,7 @@ import {
   renderRules,
   rulesInstallPath,
   writeAgentsBlock,
-} from './agent-rules.js';
+} from './agent-rules';
 
 let cwd: string;
 beforeEach(() => {

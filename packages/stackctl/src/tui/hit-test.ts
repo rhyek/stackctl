@@ -1,4 +1,4 @@
-import type { Action } from './keymap.js';
+import type { Action } from './keymap';
 
 /**
  * Click targets: each selectable thing's screen area and what a click on it dispatches. Pure,

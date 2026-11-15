@@ -12,7 +12,7 @@ import type {
   ReverseProxyTls,
   UrlResolver,
   UrlsResolver,
-} from './config.js';
+} from './config';
 
 // The valibot schemas: the config's shape, defaults and validation. They hold no docs. The types a
 // config is written against — `ServiceConfigInput` and `DefineConfigOptions` in config.ts — are

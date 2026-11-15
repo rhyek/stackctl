@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text, type DOMElement } from 'ink';
-import { LINK_COLOR } from '../colors.js';
-import { ToastStack, type Toasts } from './ToastStack.js';
+import { LINK_COLOR } from '../colors';
+import { ToastStack, type Toasts } from './ToastStack';
 
 export type BottomChromeProps = {
   /**

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import type { KeyFlags } from './keymap.js';
-import { pickerLayout } from './picker-layout.js';
+import type { KeyFlags } from './keymap';
+import { pickerLayout } from './picker-layout';
 import {
   type PickerAction,
   type PickerEffect,
@@ -16,7 +16,7 @@ import {
   visibleRows,
   willStart,
   windowTop,
-} from './picker-state.js';
+} from './picker-state';
 
 /** The example's app services, in the order the rows appear. */
 const EXAMPLE: PickerService[] = [

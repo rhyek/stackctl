@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { startedByAgent } from '../agent-detection.js';
-import { getRegisteredPackages } from '../config.js';
-import { currentProfile, isNested } from '../env-base.js';
-import { RESOLVE_ENV_FD } from '../env.js';
-import { type OneOffCommandEntry, cliEventLog, commandBy, maskSecrets } from '../event-log.js';
+import { startedByAgent } from '../agent-detection';
+import { getRegisteredPackages } from '../config';
+import { RESOLVE_ENV_FD } from '../env';
+import { currentProfile, isNested } from '../env-base';
+import { type OneOffCommandEntry, cliEventLog, commandBy, maskSecrets } from '../event-log';
 import {
   type OneOffResolution,
   type OneOffSpec,
@@ -15,12 +15,12 @@ import {
   oneOffSpecFor,
   resolveOneOff,
   resolveOneOffTarget,
-} from '../one-off/resolve.js';
-import { CommandStartError, runOneOff } from '../one-off/run.js';
-import { exitCodeOf } from '../scripts.js';
-import { oneOffLogDir } from '../session-files.js';
-import { type ResolvedTarget, TargetNotFoundError } from '../target.js';
-import { loadedConfigOrExit } from './workspace.js';
+} from '../one-off/resolve';
+import { CommandStartError, runOneOff } from '../one-off/run';
+import { exitCodeOf } from '../scripts';
+import { oneOffLogDir } from '../session-files';
+import { type ResolvedTarget, TargetNotFoundError } from '../target';
+import { loadedConfigOrExit } from './workspace';
 
 // `stackctl exec` and `stackctl run`: thin wrappers over the one-off resolver and runner the
 // SDK's `exec()` and `run()` use too. And the hidden command those two resolve through.
@@ -48,7 +48,7 @@ async function loadForOneOff(): Promise<string> {
   const root = process.cwd();
   if (config.reverseProxy?.tls === 'self-signed') {
     // Loaded only here: the TLS module is a good part of a one-off command's start.
-    const { proxyTlsFor } = await import('../dev-tls.js');
+    const { proxyTlsFor } = await import('../dev-tls');
     await proxyTlsFor(config, root);
   }
   return root;
@@ -96,7 +96,7 @@ export async function runOneOffCommand(
   // Inside a command stackctl runs, which logs and records it, nothing is left to do: this process
   // becomes the command. Returns only when it can't, and the command runs as a child instead.
   if (isNested()) {
-    const { execInPlace } = await import('../one-off/in-place.js');
+    const { execInPlace } = await import('../one-off/in-place');
     await execInPlace(spec);
   }
   // Written to the session's event log: the service (or directory) it ran in, what it ran, its

@@ -18,9 +18,9 @@ const mock = vi.hoisted(() => {
   };
 });
 
-vi.mock('./tui/App.js', () => ({ renderApp: mock.renderApp }));
+vi.mock('./tui/App', () => ({ renderApp: mock.renderApp }));
 
-const { renderAppInProduction } = await import('./render-app-production.js');
+const { renderAppInProduction } = await import('./render-app-production');
 
 const OPTIONS = { logFile: 'session.log', configPath: 'stackctl.config.ts' };
 

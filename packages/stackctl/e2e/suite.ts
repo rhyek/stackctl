@@ -5,9 +5,9 @@
  */
 import fs from 'node:fs';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
-import { createWorkspace, FIXTURE_PORTS } from './fixture.js';
-import { closeAll, killStrayServices, listening } from './processes.js';
-import { ALT_SCREEN_OFF, ALT_SCREEN_ON, MOUSE_OFF, MOUSE_ON, Pty, stripAnsi } from './pty.js';
+import { createWorkspace, FIXTURE_PORTS } from './fixture';
+import { closeAll, killStrayServices, listening } from './processes';
+import { ALT_SCREEN_OFF, ALT_SCREEN_ON, MOUSE_OFF, MOUSE_ON, Pty, stripAnsi } from './pty';
 
 /** Sets up the file's workspace; the function returned gives its path. */
 export function fixtureWorkspace(): () => string {

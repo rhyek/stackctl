@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AnyServiceConfig } from './config.js';
+import type { AnyServiceConfig } from './config';
 
 // What `stackctl exec` and `stackctl run` act on: a target, named by a service or by a directory.
 

@@ -1,11 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import {
-  anchorOffset,
-  bottomAnchor,
-  computeWindow,
-  convertOffset,
-  windowRows,
-} from './log-window.js';
+import { anchorOffset, bottomAnchor, computeWindow, convertOffset, windowRows } from './log-window';
 
 describe('computeWindow', () => {
   test('returns an empty window for an empty buffer', () => {

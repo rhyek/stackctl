@@ -1,16 +1,16 @@
-import type { ResolvedReverseProxyRoute } from './config.js';
-import type { ServiceAction } from './control-server.js';
-import { DEFAULT_PROFILE, type ProfileSource, isProfileSource } from './env-base.js';
-import type { EventEnvelope, EventLine } from './event-log.js';
-import type { InfraAction, InfraStatus } from './infra/control.js';
-import type { ServiceName } from './register.js';
-import type { InstanceInfo } from './running.js';
+import type { ResolvedReverseProxyRoute } from './config';
+import type { ServiceAction } from './control-server';
+import { DEFAULT_PROFILE, type ProfileSource, isProfileSource } from './env-base';
+import type { EventEnvelope, EventLine } from './event-log';
+import type { InfraAction, InfraStatus } from './infra/control';
+import type { ServiceName } from './register';
+import type { InstanceInfo } from './running';
 import {
   QUIT_REQUEST_TIMEOUT_MS,
   SERVICE_START_REQUEST_TIMEOUT_MS,
   SERVICE_STOP_REQUEST_TIMEOUT_MS,
-} from './shutdown-timing.js';
-import { readOwnVersion } from './skill.js';
+} from './shutdown-timing';
+import { readOwnVersion } from './skill';
 
 /** An application service's status on `GET /query/status`. */
 export type SessionServiceStatus = 'running' | 'stopped' | 'waiting' | 'restarting';

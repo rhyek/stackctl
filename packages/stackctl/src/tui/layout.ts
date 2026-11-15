@@ -12,12 +12,12 @@ import {
   SELECTED_COLOR,
   WORKSPACE_COLOR,
   WARN_COLOR,
-} from '../colors.js';
-import type { ItemRect } from '../components/footer-nav.js';
-import { formatMemory } from '../service-usage.js';
-import type { SessionInfraState, SessionSnapshot } from '../session/session.js';
-import type { Rect, Target } from './hit-test.js';
-import { type Action, type Entry, type Hint, hintsFor } from './keymap.js';
+} from '../colors';
+import type { ItemRect } from '../components/footer-nav';
+import { formatMemory } from '../service-usage';
+import type { SessionInfraState, SessionSnapshot } from '../session/session';
+import type { Rect, Target } from './hit-test';
+import { type Action, type Entry, type Hint, hintsFor } from './keymap';
 import {
   RowBuilder,
   type Segment,
@@ -28,10 +28,10 @@ import {
   cutStart,
   rowWidth,
   width,
-} from './text-cells.js';
-import { type UiContext, type UiState, focusIndex, keyContext } from './ui-state.js';
+} from './text-cells';
+import { type UiContext, type UiState, focusIndex, keyContext } from './ui-state';
 
-export type { Segment } from './text-cells.js';
+export type { Segment } from './text-cells';
 
 /**
  * The run screen's footer (Design A) and commands menu, laid out as plain data: rows of styled

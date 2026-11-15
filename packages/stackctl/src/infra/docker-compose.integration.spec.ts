@@ -8,11 +8,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import type { Config } from '../config.js';
-import { ambientEnv, baseEnvs } from '../env.js';
-import { execLines, streamLines } from '../spawn.js';
-import { DockerComposeProvider } from './providers/docker-compose.js';
-import type { ResolvedDockerComposeInfra } from './types.js';
+import type { Config } from '../config';
+import { ambientEnv, baseEnvs } from '../env';
+import { execLines, streamLines } from '../spawn';
+import { DockerComposeProvider } from './providers/docker-compose';
+import type { ResolvedDockerComposeInfra } from './types';
 
 function dockerAvailable(): boolean {
   try {

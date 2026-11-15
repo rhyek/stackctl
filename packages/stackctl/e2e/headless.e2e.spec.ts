@@ -5,10 +5,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from 'vitest';
-import { isProcessAlive } from '../src/process-info.js';
-import { PORTS, sessionRecord } from './fixture.js';
-import { CliProcess, runCli, track, until } from './processes.js';
-import { fixtureWorkspace } from './suite.js';
+import { isProcessAlive } from '../src/process-info';
+import { PORTS, sessionRecord } from './fixture';
+import { CliProcess, runCli, track, until } from './processes';
+import { fixtureWorkspace } from './suite';
 
 const ws = fixtureWorkspace();
 

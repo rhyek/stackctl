@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
-import { readAgentsBlock, readInstalledRules, rulesInstallPath } from './agent-rules.js';
-import { runInit } from './init.js';
-import { readInstalledSkill, readOwnVersion } from './skill.js';
+import { readAgentsBlock, readInstalledRules, rulesInstallPath } from './agent-rules';
+import { runInit } from './init';
+import { readInstalledSkill, readOwnVersion } from './skill';
 
 let cwd: string;
 beforeEach(() => {

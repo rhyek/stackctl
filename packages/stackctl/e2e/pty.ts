@@ -8,10 +8,10 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { processStartTime } from '../src/process-info.js';
-import { cliPath } from './cli.js';
-import { childEnv, signalOwned, track, until, type Exit, type Owned } from './processes.js';
-import { Screen } from './screen.js';
+import { processStartTime } from '../src/process-info';
+import { cliPath } from './cli';
+import { childEnv, signalOwned, track, until, type Exit, type Owned } from './processes';
+import { Screen } from './screen';
 
 const DRIVER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'pty_driver.py');
 

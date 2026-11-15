@@ -1,7 +1,7 @@
-import { currentProfile } from '../env-base.js';
-import { createInfraReporter } from '../infra/report.js';
-import type { LogStore } from './log-store.js';
-import type { Session } from './session.js';
+import { currentProfile } from '../env-base';
+import { createInfraReporter } from '../infra/report';
+import type { LogStore } from './log-store';
+import type { Session } from './session';
 
 /** Where a headless session prints. `columns` and `isTTY` are read when stdout is a terminal. */
 interface Output {

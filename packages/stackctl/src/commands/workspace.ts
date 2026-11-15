@@ -3,14 +3,14 @@ import {
   type Config,
   getLoadedConfig,
   getRegisteredPackages,
-} from '../config.js';
-import { envFileNames, workspaceEnvLayer } from '../env.js';
+} from '../config';
+import { envFileNames, workspaceEnvLayer } from '../env';
 import {
   NoProjectConfigError,
   findConfigPath,
   formatConfigLoadFailure,
   loadConfig,
-} from '../load-config.js';
+} from '../load-config';
 
 // Loading the workspace's config, for the commands that use it. `--help`, `logs`, `stop`, `reset`
 // and `init` never get here, so they neither evaluate the config file nor pay for what it loads.

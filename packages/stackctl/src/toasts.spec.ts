@@ -7,7 +7,7 @@ import {
   dismissToast,
   newestSticky,
   type Toast,
-} from './toasts.js';
+} from './toasts';
 
 /** A toast at `id`, transient unless `duration` says otherwise. */
 const toast = (id: number, duration: Toast['duration'] = DEFAULT_TOAST_MS): Toast =>

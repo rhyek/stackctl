@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, test, expect } from 'vitest';
-import { defineConfig } from './config.js';
-import { getStateDir, profileStateDir } from './log-files.js';
+import { defineConfig } from './config';
+import { getStateDir, profileStateDir } from './log-files';
 import {
   saveSelection,
   resolveSelectedNames,
   readSelection,
   initialPhaseFor,
-} from './saved-selection.js';
+} from './saved-selection';
 
 describe('state + persistence', () => {
   /** The saved selection's current names, or `null` when nothing was saved. */

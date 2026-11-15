@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { type Action, type Entry, hintsFor, resolveKey } from './keymap.js';
+import { type Action, type Entry, hintsFor, resolveKey } from './keymap';
 import {
   type Effect,
   QUIT_CONFIRM_MS,
@@ -11,7 +11,7 @@ import {
   keyContext,
   nextExpiry,
   step,
-} from './ui-state.js';
+} from './ui-state';
 
 const ENTRIES: Entry[] = [
   { kind: 'app', name: 'api', state: 'running' },

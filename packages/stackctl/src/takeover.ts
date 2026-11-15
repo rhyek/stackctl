@@ -1,9 +1,9 @@
-import { startedByAgent } from './agent-detection.js';
-import { createControlClient, type SessionStatus } from './control-client.js';
-import { currentProfile } from './env-base.js';
-import { findSession, type FoundSession, unresponsiveMessage } from './find-session.js';
-import { canSignal } from './process-info.js';
-import { clearRecordAdvice, isRecordedSession } from './session-identity.js';
+import { startedByAgent } from './agent-detection';
+import { createControlClient, type SessionStatus } from './control-client';
+import { currentProfile } from './env-base';
+import { findSession, type FoundSession, unresponsiveMessage } from './find-session';
+import { canSignal } from './process-info';
+import { clearRecordAdvice, isRecordedSession } from './session-identity';
 
 /**
  * Deciding whether a starting session may quit the one already running for this project in the
@@ -112,7 +112,7 @@ const defaultDeps: PreflightDeps = {
     canSignal(pid) ? isRecordedSession(cwd, profile, pid) : 'unknown',
   async stopUnresponsive(session) {
     // Loaded here: only a takeover of a hung session needs it.
-    const { killProcessTrees } = await import('./session-takeover.js');
+    const { killProcessTrees } = await import('./session-takeover');
     await killProcessTrees([session.pid]);
   },
   async askToQuit(status) {

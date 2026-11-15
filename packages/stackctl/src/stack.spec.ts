@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { defineConfig } from './config.js';
-import { originsOf, stackEnvironment } from './stack.js';
+import { defineConfig } from './config';
+import { originsOf, stackEnvironment } from './stack';
 
 describe('originsOf', () => {
   test("lists each service's public origin: its route's, else its port's, and none without either", () => {

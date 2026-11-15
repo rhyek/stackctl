@@ -1,13 +1,13 @@
 import fs from 'node:fs';
-import { startedByAgent } from '../agent-detection.js';
-import { RELEASE_MESSAGE, currentProfile, currentProfileSource, isCI } from '../env-base.js';
-import { findSession, unresponsiveMessage } from '../find-session.js';
-import { startState } from '../relaunch.js';
-import { SESSION_ID_ENV } from '../running.js';
-import { sessionLogPath } from '../session-files.js';
-import { type LaunchedSession, SessionStartError, launchSession, stopChild } from '../stack.js';
-import type { StartOptions } from './default.js';
-import { removeRecord, stopSession } from './stop.js';
+import { startedByAgent } from '../agent-detection';
+import { RELEASE_MESSAGE, currentProfile, currentProfileSource, isCI } from '../env-base';
+import { findSession, unresponsiveMessage } from '../find-session';
+import { startState } from '../relaunch';
+import { SESSION_ID_ENV } from '../running';
+import { sessionLogPath } from '../session-files';
+import { type LaunchedSession, SessionStartError, launchSession, stopChild } from '../stack';
+import type { StartOptions } from './default';
+import { removeRecord, stopSession } from './stop';
 
 // `stackctl start --detach`: a headless session in a process group of its own, which outlives the
 // command. The command waits until the session is ready, as `startStack()` does, prints where it

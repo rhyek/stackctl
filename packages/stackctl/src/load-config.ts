@@ -1,9 +1,9 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { AnyServiceConfig, Config } from './config.js';
-import { WorkspaceNotFoundError, locateWorkspace, recordConfigDir } from './workspace-root.js';
+import type { AnyServiceConfig, Config } from './config';
+import { WorkspaceNotFoundError, locateWorkspace, recordConfigDir } from './workspace-root';
 
-export { CONFIG_NAMES, findConfigPath } from './workspace-root.js';
+export { CONFIG_NAMES, findConfigPath } from './workspace-root';
 
 export class NoProjectConfigError extends Error {}
 
@@ -52,7 +52,7 @@ export async function loadConfig(cwd: string = process.cwd()): Promise<AnyServic
   const mod = (await import(pathToFileURL(configPath).href)) as { default?: Config<string> };
   // `defineConfig` registers packages as a side effect of being imported. (Imported here, not
   // up top, so finding the workspace root — all some commands need — loads no config code.)
-  const { getRegisteredPackages } = await import('./config.js');
+  const { getRegisteredPackages } = await import('./config');
   const registered = getRegisteredPackages();
   if (registered.length) {
     return registered;

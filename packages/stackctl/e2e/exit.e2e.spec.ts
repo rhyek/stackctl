@@ -6,10 +6,10 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { expect, test } from 'vitest';
-import { PORTS, sessionRecord } from './fixture.js';
-import { track } from './processes.js';
-import { Pty } from './pty.js';
-import { expectTerminalRestored, fixtureWorkspace } from './suite.js';
+import { PORTS, sessionRecord } from './fixture';
+import { track } from './processes';
+import { Pty } from './pty';
+import { expectTerminalRestored, fixtureWorkspace } from './suite';
 
 const ws = fixtureWorkspace();
 

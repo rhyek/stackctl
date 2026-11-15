@@ -9,7 +9,7 @@ import {
   spawnCommand,
   startFailure,
   streamLines,
-} from './spawn.js';
+} from './spawn';
 
 const nodePath = process.execPath;
 

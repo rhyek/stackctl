@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { RESOLVE_ONE_OFF_COMMAND, assertValidProfile } from '../env-base.js';
+import { RESOLVE_ONE_OFF_COMMAND, assertValidProfile } from '../env-base';
 
 // How the SDK's `exec()`/`run()` and `resolveEnv()` invoke the CLI's hidden resolver. Imports
 // nothing heavy: `resolveEnv` is on a config's path.

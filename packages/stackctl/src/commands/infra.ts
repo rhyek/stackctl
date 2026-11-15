@@ -1,6 +1,6 @@
 import chalk from 'chalk';
-import { startedByAgent } from '../agent-detection.js';
-import { getLoadedConfig } from '../config.js';
+import { startedByAgent } from '../agent-detection';
+import { getLoadedConfig } from '../config';
 import {
   type ComposeCommandEntry,
   type InfraCommandEntry,
@@ -8,13 +8,13 @@ import {
   commandBy,
   isReadOnlyCompose,
   maskSecrets,
-} from '../event-log.js';
-import type { InfraAction } from '../infra/control.js';
-import { InfraManager } from '../infra/manager.js';
-import { createInfraReporter, type InfraReporter } from '../infra/report.js';
-import { InfraError, type InfraRunSummary } from '../infra/types.js';
-import { endCommandsOnSignals } from '../spawn.js';
-import { loadConfigOrExit } from './workspace.js';
+} from '../event-log';
+import type { InfraAction } from '../infra/control';
+import { InfraManager } from '../infra/manager';
+import { createInfraReporter, type InfraReporter } from '../infra/report';
+import { InfraError, type InfraRunSummary } from '../infra/types';
+import { endCommandsOnSignals } from '../spawn';
+import { loadConfigOrExit } from './workspace';
 
 // `stackctl infra …`: the services the packages need but that aren't packages. Every subcommand
 // exits when it's done — none stays up streaming logs — and none goes through session

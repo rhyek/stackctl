@@ -1,9 +1,9 @@
 import fs from 'node:fs';
-import { type ControlClient, createControlClient, type SessionStatus } from './control-client.js';
-import { currentProfile } from './env-base.js';
-import { isInsideWorkspace, isProcessAlive, processCwd, resolveRealPath } from './process-info.js';
-import type { ServiceName } from './register.js';
-import { readRunning, type RunningState } from './running.js';
+import { type ControlClient, createControlClient, type SessionStatus } from './control-client';
+import { currentProfile } from './env-base';
+import { isInsideWorkspace, isProcessAlive, processCwd, resolveRealPath } from './process-info';
+import type { ServiceName } from './register';
+import { readRunning, type RunningState } from './running';
 
 /**
  * A workspace's session in a profile, as its `profiles/<profile>/running.json` and its control API

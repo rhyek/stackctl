@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createControlClient, probeInstance, type SessionEvent } from './control-client.js';
+import { createControlClient, probeInstance, type SessionEvent } from './control-client';
 
 const servers: http.Server[] = [];
 

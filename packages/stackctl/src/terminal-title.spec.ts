@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { setTitleSequence, stripTitleSequences } from './terminal-title.js';
+import { setTitleSequence, stripTitleSequences } from './terminal-title';
 
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);

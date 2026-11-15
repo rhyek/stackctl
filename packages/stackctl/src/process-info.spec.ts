@@ -10,7 +10,7 @@ import {
   parseLstart,
   processStartTime,
   resolveRealPath,
-} from './process-info.js';
+} from './process-info';
 
 const tmpDirs: string[] = [];
 

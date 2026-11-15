@@ -10,7 +10,7 @@ import path from 'node:path';
 import { Duplex } from 'node:stream';
 import tls from 'node:tls';
 import { describe, test, expect, afterEach, vi } from 'vitest';
-import { defineConfig } from './config.js';
+import { defineConfig } from './config';
 import {
   startDevReverseProxy,
   routesFromConfig,
@@ -21,9 +21,9 @@ import {
   type DevReverseProxyManager,
   type DevReverseProxyTarget,
   type DevReverseProxyServer,
-} from './dev-reverse-proxy.js';
-import { type ProxyTls, selfSignedTls } from './dev-tls.js';
-import { UPSTREAM_MAX_NEW_SOCKETS, UPSTREAM_MAX_SOCKETS } from './upstream-pool.js';
+} from './dev-reverse-proxy';
+import { type ProxyTls, selfSignedTls } from './dev-tls';
+import { UPSTREAM_MAX_NEW_SOCKETS, UPSTREAM_MAX_SOCKETS } from './upstream-pool';
 
 // ---------------------------------------------------------------------------
 // Fixtures: real upstream servers on ephemeral ports, a stub manager, and a tiny HTTP client

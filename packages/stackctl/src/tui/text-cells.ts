@@ -1,5 +1,5 @@
 import stringWidth from 'string-width';
-import type { Color } from '../colors.js';
+import type { Color } from '../colors';
 
 /**
  * Text measured and cut in terminal cells, and rows of styled segments built at known columns.

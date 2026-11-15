@@ -4,8 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, afterAll } from 'vitest';
-import { processStartTime } from '../process-info.js';
-import { type Running, runCommand } from '../spawn.js';
+import { processStartTime } from '../process-info';
+import { type Running, runCommand } from '../spawn';
+import { buildForTests } from './build';
 
 /**
  * What the `cli-spec` files share. End-to-end: the real CLI, as a child process, against a
@@ -193,30 +194,7 @@ export function setUpCliWorkspace(name: string): void {
   beforeAll(async () => {
     buildDir = path.join(packageDir, 'node_modules', '.cache', `cli-spec-${name}`);
     cli = path.join(buildDir, 'cli.js');
-    // TypeScript 7 exports no `bin/tsc`, so it's found next to the package.json it does export.
-    const tsPackage = fileURLToPath(import.meta.resolve('typescript/package.json'));
-    const tsc = path.join(path.dirname(tsPackage), 'bin', 'tsc');
-    fs.rmSync(buildDir, { recursive: true, force: true });
-    const build = await start(
-      'node',
-      [
-        tsc,
-        '-p',
-        path.join(packageDir, 'tsconfig.build.json'),
-        '--outDir',
-        buildDir,
-        // A build the tests only run: no source maps, which would name sources outside the
-        // build's folder, and no declarations.
-        '--sourceMap',
-        'false',
-        '--declaration',
-        'false',
-      ],
-      { cwd: packageDir },
-    ).done;
-    if (build.exitCode !== 0) {
-      throw new Error(`the build failed:\n${build.stdout}${build.stderr}`);
-    }
+    await buildForTests(buildDir);
 
     ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-cli-')));
     fs.writeFileSync(path.join(ws, 'package.json'), JSON.stringify({ name: 'wsroot', type: 'module' })); // oxfmt-ignore

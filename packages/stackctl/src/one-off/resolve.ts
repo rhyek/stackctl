@@ -1,22 +1,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { type AnyServiceConfig, type Config, getLoadedConfig } from '../config.js';
+import { type AnyServiceConfig, type Config, getLoadedConfig } from '../config';
 import {
   type SerializedEnvResolution,
   assignedNames,
   envCandidatePaths,
   envFileNames,
   targetEnvLayer,
-} from '../env.js';
-import { scriptExec, definesScript } from '../scripts.js';
-import { type ResolvedTarget, resolveTarget } from '../target.js';
-import { sessionTrustFile } from '../trust-file.js';
-import type { OneOffSpec } from './run.js';
+} from '../env';
+import { scriptExec, definesScript } from '../scripts';
+import { type ResolvedTarget, resolveTarget } from '../target';
+import { sessionTrustFile } from '../trust-file';
+import type { OneOffSpec } from './run';
 
 // Resolving a one-off command where the config is loaded: the CLI's own process for `exec` and
 // `run`, or the child CLI the SDK's `exec()` and `run()` start for it.
 
-export type { OneOffSpec } from './run.js';
+export type { OneOffSpec } from './run';
 
 /** Where a one-off command runs from: the workspace root, and what a relative target is from. */
 interface OneOffPlace {

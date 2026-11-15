@@ -13,7 +13,7 @@ import {
   stackctl,
   lastLine,
   setUpCliWorkspace,
-} from './harness.js';
+} from './harness';
 
 /** The commands that run a script or a command once (`run`, `exec`, `infra`), how they find the
  * workspace and the target, and the environment they hand it. See `harness.ts`. */
@@ -551,7 +551,7 @@ describe('env.additionalFiles', () => {
 });
 
 describe('resolveEnv()', () => {
-  type IndexModule = typeof import('../index.js');
+  type IndexModule = typeof import('../index');
   /** The compiled module, so the CLI it runs is the one compiled beside it. */
   const load = () =>
     import(pathToFileURL(path.join(buildDir, 'index.js')).href) as Promise<IndexModule>;

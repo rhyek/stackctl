@@ -6,7 +6,7 @@ import {
   scrollToTop,
   scrollToBottom,
   onContentResized,
-} from './scroll.js';
+} from './scroll';
 
 describe('scroll state', () => {
   test('follows the newest output at offset 0', () => {

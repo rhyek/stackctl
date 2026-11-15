@@ -3,10 +3,10 @@ import fs from 'node:fs';
 import module from 'node:module';
 import path from 'node:path';
 import { Command, Option } from 'commander';
-import { startedByAgent } from './agent-detection.js';
-import { agentProfileRefusal } from './agent-profile.js';
-import type { StartOptions } from './commands/default.js';
-import { rootOptionsRefusal } from './commands/root-options.js';
+import { startedByAgent } from './agent-detection';
+import { agentProfileRefusal } from './agent-profile';
+import type { StartOptions } from './commands/default';
+import { rootOptionsRefusal } from './commands/root-options';
 import {
   DETACHED_SESSION_VAR,
   RELEASE_MESSAGE,
@@ -17,16 +17,16 @@ import {
   publishProfileSource,
   resolveProfile,
   takeNested,
-} from './env-base.js';
-import { exitOnFatalError } from './errors.js';
-import { takeHandedBy } from './event-log.js';
-import { passthroughArgs } from './infra/argv.js';
-import { takeHandedSessionId } from './running.js';
+} from './env-base';
+import { exitOnFatalError } from './errors';
+import { takeHandedBy } from './event-log';
+import { passthroughArgs } from './infra/argv';
+import { takeHandedSessionId } from './running';
 // Records, as it loads, the environment and directory the process started with, which this file
 // changes before a session starts over from them (see relaunch.ts).
-import { relaunchWithCappedYoungGeneration } from './relaunch.js';
-import { readOwnVersion } from './skill.js';
-import { locateWorkspace, needsNoWorkspace, resolveWorkspaceDirArg } from './workspace-root.js';
+import { relaunchWithCappedYoungGeneration } from './relaunch';
+import { readOwnVersion } from './skill';
+import { locateWorkspace, needsNoWorkspace, resolveWorkspaceDirArg } from './workspace-root';
 
 // The entry point: Commander wiring only. What a command runs lives under `commands/` and is
 // imported by its action, so a command loads its own code and nothing else's — `--help` and
@@ -304,22 +304,22 @@ program
     }
 
     if (opts.detach) {
-      const { detachRefusal, runDetach } = await import('./commands/detach.js');
+      const { detachRefusal, runDetach } = await import('./commands/detach');
       const agentRefusal = detachRefusal();
       if (agentRefusal) {
         console.error(agentRefusal);
         process.exit(1);
       }
-      await (await import('./config-typecheck.js')).checkConfigTypes();
+      await (await import('./config-typecheck')).checkConfigTypes();
       await runDetach(opts);
     }
 
     relaunchWithCappedYoungGeneration();
     // After starting over, so it runs once; the session `--detach` starts was checked by it.
     if (!detachedSession) {
-      await (await import('./config-typecheck.js')).checkConfigTypes();
+      await (await import('./config-typecheck')).checkConfigTypes();
     }
-    const { runDefaultAction } = await import('./commands/default.js');
+    const { runDefaultAction } = await import('./commands/default');
     await runDefaultAction(opts);
   });
 
@@ -333,7 +333,7 @@ program
   )
   .option('--agents-md', 'also add a stackctl section to AGENTS.md')
   .action(async (opts: { yes?: boolean; agentsMd?: boolean }) => {
-    const { runInit } = await import('./init.js');
+    const { runInit } = await import('./init');
     // From raw argv, since the option is global: it may precede `init`.
     let given: string | undefined;
     try {
@@ -356,7 +356,7 @@ program
   .option(PROFILE_FLAGS, PROFILE_HELP) // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .action(async () => {
-    const { runStop } = await import('./commands/stop.js');
+    const { runStop } = await import('./commands/stop');
     process.exit(await runStop(process.cwd()));
   });
 
@@ -373,7 +373,7 @@ program
     Number,
   )
   .action(async (opts: { timeout?: number }) => {
-    const { runWait } = await import('./commands/wait.js');
+    const { runWait } = await import('./commands/wait');
     process.exit(await runWait({ timeout: opts.timeout }));
   });
 
@@ -410,7 +410,7 @@ for (const [action, description] of SERVICE_ACTIONS) {
     );
   }
   command.action(async (opts: { service: string[]; waitTimeout?: number }) => {
-    const { runService } = await import('./commands/service.js');
+    const { runService } = await import('./commands/service');
     process.exit(
       await runService(action, { services: opts.service, waitTimeout: opts.waitTimeout }),
     );
@@ -425,7 +425,7 @@ program
   .option(PROFILE_FLAGS, 'the profile whose state to delete (required)') // see `exec`
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .action(async () => {
-    const { runReset } = await import('./commands/stop.js');
+    const { runReset } = await import('./commands/stop');
     process.exit(await runReset(process.cwd(), {}, undefined, INVOCATION_CWD));
   });
 
@@ -439,7 +439,7 @@ program
   .option(PROFILE_FLAGS, PROFILE_HELP)
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .action(async () => {
-    const { showConfig } = await import('./commands/inspect.js');
+    const { showConfig } = await import('./commands/inspect');
     await showConfig();
   });
 
@@ -473,7 +473,7 @@ program
       console.error('exec requires a command (after `--`).');
       process.exit(1);
     }
-    const { runOneOffCommand } = await import('./commands/one-off.js');
+    const { runOneOffCommand } = await import('./commands/one-off');
     await runOneOffCommand(
       { kind: 'exec', target: before[0], command: [program, ...args] },
       oneOffContext(flags),
@@ -510,8 +510,8 @@ program
         code: 'commander.missingArgument',
       });
     }
-    await (await import('./config-typecheck.js')).checkConfigTypes();
-    const { runOneOffCommand } = await import('./commands/one-off.js');
+    await (await import('./config-typecheck')).checkConfigTypes();
+    const { runOneOffCommand } = await import('./commands/one-off');
     await runOneOffCommand({ kind: 'run', target, script, args: after }, oneOffContext(flags));
   });
 
@@ -537,7 +537,7 @@ program
       console.error('exec requires a command (after `--`).');
       process.exit(1);
     }
-    const { printOneOffResolution } = await import('./commands/one-off.js');
+    const { printOneOffResolution } = await import('./commands/one-off');
     await printOneOffResolution({
       ...oneOffContext({}),
       target: flags.target,
@@ -558,7 +558,7 @@ program
   )
   .option('--path', 'print the resolved logfile path instead of its contents, then exit')
   .action(async (opts: { follow?: boolean; path?: boolean }) => {
-    const { runLogs } = await import('./commands/logs.js');
+    const { runLogs } = await import('./commands/logs');
     await runLogs(opts);
   });
 
@@ -571,7 +571,7 @@ program
   .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
   .option('--json', 'print it as JSON')
   .action(async (opts: { json?: boolean }) => {
-    const { runStatus } = await import('./commands/status.js');
+    const { runStatus } = await import('./commands/status');
     await runStatus(opts);
   });
 
@@ -586,7 +586,7 @@ program
   .option('-f, --follow', 'keep printing lines as they are written, until the next session starts')
   .option('--path', "print the event log's path instead, then exit")
   .action(async (opts: { lines?: string; follow?: boolean; path?: boolean }) => {
-    const { runEvents } = await import('./commands/events.js');
+    const { runEvents } = await import('./commands/events');
     await runEvents(opts);
   });
 
@@ -626,7 +626,7 @@ for (const [command, description] of INFRA_COMMANDS) {
     .option(PROFILE_FLAGS, PROFILE_HELP)
     .option(WORKSPACE_DIR_FLAGS, WORKSPACE_DIR_HELP)
     .action(async (opts: { service: string[] }) => {
-      const { runInfra } = await import('./commands/infra.js');
+      const { runInfra } = await import('./commands/infra');
       await runInfra(command, opts.service, INVOCATION_CWD);
     });
 }
@@ -649,7 +649,7 @@ infra
 
 /** `infra <provider> …`: the provider's own tool, bound to this project and profile. */
 async function runInfraPassthrough(provider: string, args: string[]): Promise<never> {
-  const infraCommands = await import('./commands/infra.js');
+  const infraCommands = await import('./commands/infra');
   return infraCommands.runInfraPassthrough(provider, args, INVOCATION_CWD);
 }
 

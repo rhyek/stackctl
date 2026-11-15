@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box } from 'ink';
-import { KeysRow, SegmentLine } from './KeysRow.js';
-import type { FooterLayout } from './layout.js';
+import { KeysRow, SegmentLine } from './KeysRow';
+import type { FooterLayout } from './layout';
 
 export interface FooterProps {
   layout: FooterLayout;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import type { EventBy, EventLine } from '../event-log.js';
-import { describeBy, formatRows, recentRows, when } from './status.js';
+import type { EventBy, EventLine } from '../event-log';
+import { describeBy, formatRows, recentRows, when } from './status';
 
 const envelope = { profile: 'development', sessionId: 's1', pid: 1 };
 const cli: Extract<EventBy, { kind: 'cli' }> = { kind: 'cli', argv: ['infra', 'restart', '-s', 'db'], cwd: '.', agent: false }; // oxfmt-ignore

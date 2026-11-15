@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { Exec } from './spawn.js';
+import type { Exec } from './spawn';
 
 /** Options for the `exec` a config callback gets, and its provider's tool helper (`compose`). */
 export interface HookExecOptions {

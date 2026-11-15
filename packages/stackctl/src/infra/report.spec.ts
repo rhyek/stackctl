@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { stripAnsi } from '../format.js';
-import { createInfraReporter } from './report.js';
-import type { InfraEvent } from './types.js';
+import { stripAnsi } from '../format';
+import { createInfraReporter } from './report';
+import type { InfraEvent } from './types';
 
 function render(
   events: InfraEvent[],

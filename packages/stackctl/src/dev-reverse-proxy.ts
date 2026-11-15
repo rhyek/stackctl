@@ -3,13 +3,13 @@ import http2 from 'node:http2';
 import net from 'node:net';
 import type { Duplex } from 'node:stream';
 import picomatch from 'picomatch/posix.js';
-import type { Config, ResolvedReverseProxyRoute } from './config.js';
-import { infraServicesOf } from './config.js';
-import type { ProxyTls } from './dev-tls.js';
-import { routeHosts } from './route-hosts.js';
-import { createUpstreamPool, isBodyless } from './upstream-pool.js';
+import type { Config, ResolvedReverseProxyRoute } from './config';
+import { infraServicesOf } from './config';
+import type { ProxyTls } from './dev-tls';
+import { routeHosts } from './route-hosts';
+import { createUpstreamPool, isBodyless } from './upstream-pool';
 
-export { routeHosts } from './route-hosts.js';
+export { routeHosts } from './route-hosts';
 
 /**
  * The built-in dev reverse proxy.

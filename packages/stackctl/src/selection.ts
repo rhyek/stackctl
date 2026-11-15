@@ -14,7 +14,7 @@
  */
 import sliceAnsi from 'slice-ansi';
 import stringWidth from 'string-width';
-import { stripAnsi } from './format.js';
+import { stripAnsi } from './format';
 
 export type Point = { flatRow: number; col: number };
 /** An inclusive flat-row range of the rendered rows that make up one logical value. */

@@ -6,11 +6,11 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { beforeAll, expect, test } from 'vitest';
-import { cliPath } from './cli.js';
-import { PORTS } from './fixture.js';
-import { CliProcess, childEnv, runCli } from './processes.js';
-import { Pty } from './pty.js';
-import { fixtureWorkspace } from './suite.js';
+import { cliPath } from './cli';
+import { PORTS } from './fixture';
+import { CliProcess, childEnv, runCli } from './processes';
+import { Pty } from './pty';
+import { fixtureWorkspace } from './suite';
 
 const ws = fixtureWorkspace();
 

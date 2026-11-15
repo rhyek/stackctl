@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test, expect } from 'vitest';
-import { copyToClipboard, copyViaNativeCommand, osc52 } from './clipboard.js';
+import { copyToClipboard, copyViaNativeCommand, osc52 } from './clipboard';
 
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);

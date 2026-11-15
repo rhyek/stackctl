@@ -1,9 +1,9 @@
 import type { DOMElement } from 'ink';
 import { describe, expect, test } from 'vitest';
-import type { ToastTarget } from '../components/ToastStack.js';
-import { hitTest } from './hit-test.js';
-import type { FooterLayout, MenuLayout } from './layout.js';
-import { screenTargets } from './screen-targets.js';
+import type { ToastTarget } from '../components/ToastStack';
+import { hitTest } from './hit-test';
+import type { FooterLayout, MenuLayout } from './layout';
+import { screenTargets } from './screen-targets';
 
 const node = (name: string) => ({ name }) as unknown as DOMElement;
 const JUMP = node('jump');

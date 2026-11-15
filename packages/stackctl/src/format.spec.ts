@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest';
-import { formatDuration, logTimestamp } from './format.js';
+import { formatDuration, logTimestamp } from './format';
 
 describe('logTimestamp', () => {
   test('formats as `YYYY-MM-DD HH:MM:SS` (24-hour, with date)', () => {

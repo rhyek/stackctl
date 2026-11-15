@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { displayTimestamp, spansOneDay, timestampGutterWidth } from './timestamp-mode.js';
+import { displayTimestamp, spansOneDay, timestampGutterWidth } from './timestamp-mode';
 
 describe('displayTimestamp', () => {
   test('keeps the full stamp in date mode', () => {

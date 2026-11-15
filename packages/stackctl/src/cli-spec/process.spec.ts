@@ -15,7 +15,7 @@ import {
   stackctl,
   lastLine,
   setUpCliWorkspace,
-} from './harness.js';
+} from './harness';
 
 /** What a command loads, the stackctl process itself, and `deps` as a callback. See `harness.ts`. */
 setUpCliWorkspace('process');

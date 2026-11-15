@@ -1,11 +1,11 @@
-import { type AnyServiceConfig, getRegisteredPackages } from '../config.js';
-import type { SessionStatus } from '../control-client.js';
-import { type FoundSession, findSession, unresponsiveMessage } from '../find-session.js';
-import { definesDevScript } from '../scripts.js';
-import { waitUntilHealthy } from '../stack.js';
-import { findConfigPath } from '../workspace-root.js';
-import { type StopTarget, activeTarget } from './stop.js';
-import { loadedConfigOrExit } from './workspace.js';
+import { type AnyServiceConfig, getRegisteredPackages } from '../config';
+import type { SessionStatus } from '../control-client';
+import { type FoundSession, findSession, unresponsiveMessage } from '../find-session';
+import { definesDevScript } from '../scripts';
+import { waitUntilHealthy } from '../stack';
+import { findConfigPath } from '../workspace-root';
+import { type StopTarget, activeTarget } from './stop';
+import { loadedConfigOrExit } from './workspace';
 
 // `stackctl wait`: blocks until the profile's session is ready, the one a script or an agent
 // started in the background. It waits for the session to appear, then for what `startStack()` waits

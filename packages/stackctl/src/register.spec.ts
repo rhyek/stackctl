@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
-import { defineConfig, findService } from './index.js';
-import type { AnyServiceConfig, ServiceName } from './index.js';
+import { defineConfig, findService } from './index';
+import type { AnyServiceConfig, ServiceName } from './index';
 
 describe('public exports', () => {
   test('re-exports the runtime API', () => {

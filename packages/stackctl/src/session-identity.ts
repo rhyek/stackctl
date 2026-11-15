@@ -1,10 +1,5 @@
-import {
-  isInsideWorkspace,
-  processCwd,
-  processStartTime,
-  resolveRealPath,
-} from './process-info.js';
-import { readRunning, runningFilePath } from './running.js';
+import { isInsideWorkspace, processCwd, processStartTime, resolveRealPath } from './process-info';
+import { readRunning, runningFilePath } from './running';
 
 // Whether a live, silent pid is the session its record names: the one check every path that would
 // signal such a pid makes first (`stop`, `reset`, and a takeover with `--kill-others`).

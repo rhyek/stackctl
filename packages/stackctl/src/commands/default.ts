@@ -1,9 +1,9 @@
-import { startedByAgent } from '../agent-detection.js';
-import { guidanceAtStart } from '../agent-guidance.js';
-import { isCI } from '../env-base.js';
-import { resolveSelectedNames } from '../saved-selection.js';
-import { readOwnVersion } from '../skill.js';
-import { loadConfigOrExit, validatePackageNames } from './workspace.js';
+import { startedByAgent } from '../agent-detection';
+import { guidanceAtStart } from '../agent-guidance';
+import { isCI } from '../env-base';
+import { resolveSelectedNames } from '../saved-selection';
+import { readOwnVersion } from '../skill';
+import { loadConfigOrExit, validatePackageNames } from './workspace';
 
 // `stackctl start`, the default command — `stackctl` with no subcommand: a dev session.
 
@@ -64,6 +64,6 @@ export async function runDefaultAction(opts: StartOptions): Promise<void> {
   validatePackageNames(opts.service);
 
   // Only now: the checks above have no use for what a session loads.
-  const { runDevSession } = await import('./session.js');
+  const { runDevSession } = await import('./session');
   await runDevSession(opts);
 }

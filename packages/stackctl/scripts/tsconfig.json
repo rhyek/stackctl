@@ -1,0 +1,9 @@
+{
+  // The preview scripts run on Node's TypeScript support and import the sources by their `.ts`
+  // names; the sources import each other extensionless, so both resolve as a bundler would.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true
+  },
+  "include": ["./**/*.ts", "../src/**/*.ts", "../src/**/*.tsx"]
+}

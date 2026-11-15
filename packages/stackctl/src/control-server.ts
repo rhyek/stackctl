@@ -1,20 +1,20 @@
 import http from 'node:http';
-import { startedByAgent } from './agent-detection.js';
+import { startedByAgent } from './agent-detection';
 import {
   EVENTS_HEARTBEAT_MS,
   type SessionEvent,
   type SessionServiceStatus,
-} from './control-client.js';
-import type { DevReverseProxyServer } from './dev-reverse-proxy.js';
-import { currentProfile, currentProfileSource } from './env-base.js';
-import { EventTail, fileSize, type EventBy, type EventLog, type StateEntry } from './event-log.js';
+} from './control-client';
+import type { DevReverseProxyServer } from './dev-reverse-proxy';
+import { currentProfile, currentProfileSource } from './env-base';
+import { EventTail, fileSize, type EventBy, type EventLog, type StateEntry } from './event-log';
 import {
   INFRA_ACTIONS,
   type InfraAction,
   type InfraRunOutcome,
   type InfraStatus,
-} from './infra/control.js';
-import { sessionId } from './running.js';
+} from './infra/control';
+import { sessionId } from './running';
 
 /** What `POST /command/service/<action>/<name>` can do to an application service. */
 export type ServiceAction = 'start' | 'stop' | 'restart';

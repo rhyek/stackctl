@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { refreshGuidance } from './agent-guidance.js';
-import { isCI } from './env-base.js';
-import { runInit } from './init.js';
-import { findConfigPath } from './load-config.js';
-import { readOwnVersion } from './skill.js';
+import { refreshGuidance } from './agent-guidance';
+import { isCI } from './env-base';
+import { runInit } from './init';
+import { findConfigPath } from './load-config';
+import { readOwnVersion } from './skill';
 
 /**
  * stackctl's `postinstall`: keeps the agent guidance already in a project current on every

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import primitives from '@dotenvx/primitives';
-import type { AnyServiceConfig } from './config.js';
+import type { AnyServiceConfig } from './config';
 import {
   INJECTED_ENV_VAR,
   REPLACED_ENV_VAR,
@@ -16,15 +16,15 @@ import {
   type EnvFileOrder,
   type EnvOverride,
   type Profile,
-} from './env-base.js';
-import { type EnvFilesReading, readEnvFiles, readEnvFilesSync } from './env-file-reader.js';
-import { resolverArgs } from './one-off/resolver-args.js';
-import type { ResolvedTarget } from './target.js';
+} from './env-base';
+import { type EnvFilesReading, readEnvFiles, readEnvFilesSync } from './env-file-reader';
+import { resolverArgs } from './one-off/resolver-args';
+import type { ResolvedTarget } from './target';
 
 // Reading and resolving the `.env` files. What needs no file is in `env-base.ts`, re-exported here
 // so this module is the one to import for either. A command that resolves no environment imports
 // `env-base.ts` alone, and never loads the parser.
-export * from './env-base.js';
+export * from './env-base';
 
 export interface EnvResolution {
   /**

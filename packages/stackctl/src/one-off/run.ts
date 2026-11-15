@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import tty from 'node:tty';
-import { startedByAgent } from '../agent-detection.js';
-import { NESTED_ENV_VAR, isNested } from '../env-base.js';
-import { maskSecrets } from '../event-log.js';
-import { commandLine, formatDuration, logTimestamp, stripAnsi } from '../format.js';
-import { getDefaultLogFile } from '../log-files.js';
-import { forEachLine, spawnCommand, startFailure } from '../spawn.js';
+import { startedByAgent } from '../agent-detection';
+import { NESTED_ENV_VAR, isNested } from '../env-base';
+import { maskSecrets } from '../event-log';
+import { commandLine, formatDuration, logTimestamp, stripAnsi } from '../format';
+import { getDefaultLogFile } from '../log-files';
+import { forEachLine, spawnCommand, startFailure } from '../spawn';
 
 // Running a one-off command, once it is resolved: shared by the CLI's `exec`/`run` and the SDK's
 // `exec()`/`run()`, which resolve it differently (in-process, or in a child CLI).

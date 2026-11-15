@@ -1,9 +1,9 @@
-import type { DragSelection, LogViewport } from '../components/LogPane.js';
-import type { Toasts } from '../components/ToastStack.js';
-import { errorMessage } from '../errors.js';
-import type { EventBy } from '../event-log.js';
-import type { Session } from '../session/session.js';
-import type { Effect, EntryKey } from './ui-state.js';
+import type { DragSelection, LogViewport } from '../components/LogPane';
+import type { Toasts } from '../components/ToastStack';
+import { errorMessage } from '../errors';
+import type { EventBy } from '../event-log';
+import type { Session } from '../session/session';
+import type { Effect, EntryKey } from './ui-state';
 
 /**
  * Carries out the reducer's effects against the session and the screen's own parts. Each runs in

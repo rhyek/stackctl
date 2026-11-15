@@ -1,4 +1,4 @@
-import type { AnyServiceConfig } from './config.js';
+import type { AnyServiceConfig } from './config';
 
 // Augmentation target — intentionally empty. Consumers augment it from stackctl.config.ts.
 // oxlint-disable-next-line typescript/no-empty-object-type

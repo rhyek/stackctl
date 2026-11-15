@@ -1,10 +1,10 @@
 import chalk from 'chalk';
-import { EVENT_BY_ENV, type EventBy } from '../event-log.js';
-import { type Running, runCommand, startFailure } from '../spawn.js';
-import { stripTitleSequences } from '../terminal-title.js';
-import { callEach } from '../util.js';
-import type { InfraWatch } from './provider.js';
-import type { InfraServiceState } from './types.js';
+import { EVENT_BY_ENV, type EventBy } from '../event-log';
+import { type Running, runCommand, startFailure } from '../spawn';
+import { stripTitleSequences } from '../terminal-title';
+import { callEach } from '../util';
+import type { InfraWatch } from './provider';
+import type { InfraServiceState } from './types';
 
 /** What a session can do to one of its infra services, from a hotkey or the control API. */
 export type InfraAction = 'start' | 'stop' | 'restart' | 'reset';

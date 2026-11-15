@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { agentProfileRefusal } from './agent-profile.js';
+import { agentProfileRefusal } from './agent-profile';
 
 const argv = (...args: string[]) => ['node', 'stackctl', ...args];
 const agent = { agent: true, forked: false };

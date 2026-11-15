@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { type UiState, nextExpiry } from './ui-state.js';
+import { type UiState, nextExpiry } from './ui-state';
 
 /**
  * One timer for the earliest armed confirmation: at its time, `onExpire(now)` dispatches the

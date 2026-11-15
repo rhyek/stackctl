@@ -2,17 +2,17 @@ import path from 'node:path';
 import React, { useCallback, useEffect, useState } from 'react';
 import chalk from 'chalk';
 import { render, useApp } from 'ink';
-import { initialPhaseFor, saveSelection } from '../saved-selection.js';
-import { buildSessionPlan } from '../session/plan.js';
-import { Session } from '../session/session.js';
-import { installShutdownSignals } from '../signals.js';
-import { setTitleSequence } from '../terminal-title.js';
-import { type Shell, crashRestore, failWith, finish } from './app-exit.js';
-import { planRuns, pickerInputOf } from './picker-input.js';
-import type { PickerInput } from './picker-state.js';
-import { Picker } from './Picker.js';
-import { RunScreen } from './RunScreen.js';
-import { installTerminalRestore } from './shutdown.js';
+import { initialPhaseFor, saveSelection } from '../saved-selection';
+import { buildSessionPlan } from '../session/plan';
+import { Session } from '../session/session';
+import { installShutdownSignals } from '../signals';
+import { setTitleSequence } from '../terminal-title';
+import { type Shell, crashRestore, failWith, finish } from './app-exit';
+import { Picker } from './Picker';
+import { planRuns, pickerInputOf } from './picker-input';
+import type { PickerInput } from './picker-state';
+import { RunScreen } from './RunScreen';
+import { installTerminalRestore } from './shutdown';
 
 // The app shell: the picker, then the run screen over a `Session`, in one Ink instance in the
 // alternate screen, from mount to exit. `renderApp` pins the tab title, writes the start line,

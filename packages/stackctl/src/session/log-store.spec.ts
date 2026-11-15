@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
-import { LINE_OVERHEAD_BYTES, LogStore, lineBytes } from './log-store.js';
-import type { LogFilter, LogLine } from './types.js';
+import { LINE_OVERHEAD_BYTES, LogStore, lineBytes } from './log-store';
+import type { LogFilter, LogLine } from './types';
 
 let dir: string;
 let store: LogStore | undefined;

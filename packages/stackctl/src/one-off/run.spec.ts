@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import { processStartTime } from '../process-info.js';
-import { type OneOffSpec, runOneOff } from './run.js';
+import { processStartTime } from '../process-info';
+import { type OneOffSpec, runOneOff } from './run';
 
 let tmp: string;
 /**

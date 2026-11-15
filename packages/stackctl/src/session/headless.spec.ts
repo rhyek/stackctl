@@ -4,23 +4,23 @@ import os from 'node:os';
 import path from 'node:path';
 import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { type AnyServiceConfig, defineConfig } from '../config.js';
-import type { DevReverseProxyServer } from '../dev-reverse-proxy.js';
-import { EventLog } from '../event-log.js';
-import { logTimestamp } from '../format.js';
-import { sessionEventsPath } from '../session-files.js';
-import { createHeadlessPrinter, runHeadless } from './headless.js';
-import { LogStore } from './log-store.js';
-import { buildSessionPlan } from './plan.js';
+import { type AnyServiceConfig, defineConfig } from '../config';
+import type { DevReverseProxyServer } from '../dev-reverse-proxy';
+import { EventLog } from '../event-log';
+import { logTimestamp } from '../format';
+import { sessionEventsPath } from '../session-files';
+import { createHeadlessPrinter, runHeadless } from './headless';
+import { LogStore } from './log-store';
+import { buildSessionPlan } from './plan';
 import type {
   ProcessExit,
   ProcessState,
   ServiceProcessEvents,
   ServiceProcessOptions,
-} from './service-process.js';
-import { Session, type SessionSeams } from './session.js';
-import type { SupervisedProcess } from './supervisor.js';
-import type { LogLine } from './types.js';
+} from './service-process';
+import { Session, type SessionSeams } from './session';
+import type { SupervisedProcess } from './supervisor';
+import type { LogLine } from './types';
 
 // The capture's own lines (baseline `headless-backend.out.txt`, `--headless -s backend` in the
 // example, piped) from the proxy's route table on, the labels padded to `stackctl`.

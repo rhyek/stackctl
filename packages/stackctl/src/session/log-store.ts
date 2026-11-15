@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import stringWidth from 'string-width';
-import { stripAnsi } from '../format.js';
-import { filterTerms, normalize } from '../tui/text-cells.js';
-import { callEach } from '../util.js';
-import { expandTabs } from '../wrap-rows.js';
-import { countRows, labelGutter, wrapLineRows } from './log-layout.js';
-import type { LogFilter, LogLine, TimestampMode, WrappedRow } from './types.js';
+import { stripAnsi } from '../format';
+import { filterTerms, normalize } from '../tui/text-cells';
+import { callEach } from '../util';
+import { expandTabs } from '../wrap-rows';
+import { countRows, labelGutter, wrapLineRows } from './log-layout';
+import type { LogFilter, LogLine, TimestampMode, WrappedRow } from './types';
 
 /** What the log viewport reads: the visible lines, their layout, and a change signal. */
 export interface LogSource {

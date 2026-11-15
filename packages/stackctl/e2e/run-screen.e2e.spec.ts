@@ -5,14 +5,9 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from 'vitest';
-import { WEB_SCRIPT } from './fixture.js';
-import type { Pty } from './pty.js';
-import {
-  allRunning,
-  expectTerminalRestored,
-  fixtureWorkspace,
-  startEveryService,
-} from './suite.js';
+import { WEB_SCRIPT } from './fixture';
+import type { Pty } from './pty';
+import { allRunning, expectTerminalRestored, fixtureWorkspace, startEveryService } from './suite';
 
 const ws = fixtureWorkspace();
 

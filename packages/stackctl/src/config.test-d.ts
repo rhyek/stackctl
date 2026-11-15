@@ -12,16 +12,6 @@ import type * as v from 'valibot';
  * value form would *read* `port` and throw at load time by design.
  */
 import { describe, test, expectTypeOf } from 'vitest';
-import type {
-  BuildAddressOptionsSchema,
-  DefineConfigSchema,
-  EnvAdditionalFileSchema,
-  PublicAddressSchema,
-  PublicOriginInputSchema,
-  ReverseProxyRouteSchema,
-  ReverseProxyTlsSchema,
-  ServiceConfigSchema,
-} from './config-schema.js';
 import {
   defineConfig,
   type Config,
@@ -54,8 +44,18 @@ import {
   type ServiceRoute,
   type UrlEntry,
   type WorkspaceUrlsContext,
-} from './config.js';
-import type { EnvAdditionalFile, EnvFileOrder, Envs, Profile } from './env.js';
+} from './config';
+import type {
+  BuildAddressOptionsSchema,
+  DefineConfigSchema,
+  EnvAdditionalFileSchema,
+  PublicAddressSchema,
+  PublicOriginInputSchema,
+  ReverseProxyRouteSchema,
+  ReverseProxyTlsSchema,
+  ServiceConfigSchema,
+} from './config-schema';
+import type { EnvAdditionalFile, EnvFileOrder, Envs, Profile } from './env';
 import {
   resolveEnv,
   type ControlClient,
@@ -65,7 +65,7 @@ import {
   type ServiceAction,
   type SessionServiceStatus,
   type StartStackOptions,
-} from './index.js';
+} from './index';
 import type {
   DockerComposeCallbackContext,
   DockerComposeDestroyContext,
@@ -87,13 +87,8 @@ import type {
   InfraServicesInput,
   ResolvedInfra,
   ResolvedInfraService,
-} from './infra/types.js';
-import type {
-  InfraServiceName,
-  InfraServiceNameIn,
-  ServiceName,
-  ServiceNameIn,
-} from './register.js';
+} from './infra/types';
+import type { InfraServiceName, InfraServiceNameIn, ServiceName, ServiceNameIn } from './register';
 
 describe('per-package tokens', () => {
   test('gives each package the config tokens plus its own, and nothing from a sibling', () => {
@@ -1088,7 +1083,7 @@ describe('the removed build surface', () => {
 
   test('`ServiceType` is not exported', () => {
     // @ts-expect-error stackctl no longer exports `ServiceType`
-    type Gone = import('./index.js').ServiceType;
+    type Gone = import('./index').ServiceType;
     expectTypeOf<Gone>().toBeAny();
   });
 });

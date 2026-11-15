@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { SessionStatus } from './control-client.js';
-import { preflightTakeover, resolveTakeover, type PreflightDeps } from './takeover.js';
+import type { SessionStatus } from './control-client';
+import { preflightTakeover, resolveTakeover, type PreflightDeps } from './takeover';
 
 const CONFIG = '/ws/stackctl.config.ts';
 

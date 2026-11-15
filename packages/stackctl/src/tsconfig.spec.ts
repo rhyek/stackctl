@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parse } from 'jsonc-parser';
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
-import { reconcileTsconfigText, reconcileTsconfig } from './tsconfig.js';
+import { reconcileTsconfigText, reconcileTsconfig } from './tsconfig';
 
 const CFG = 'stackctl.config.ts';
 

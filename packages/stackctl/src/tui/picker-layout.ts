@@ -1,5 +1,5 @@
-import { BRANCH_COLOR, FOCUS_COLOR, NEEDED_COLOR, WARN_COLOR, WORKSPACE_COLOR } from '../colors.js';
-import type { Rect } from './hit-test.js';
+import { BRANCH_COLOR, FOCUS_COLOR, NEEDED_COLOR, WARN_COLOR, WORKSPACE_COLOR } from '../colors';
+import type { Rect } from './hit-test';
 import {
   BRANCH_MIN,
   type FooterRow,
@@ -7,7 +7,7 @@ import {
   MIN_FILL,
   RULE_TAIL,
   layoutHints,
-} from './layout.js';
+} from './layout';
 import {
   type PickerAction,
   type PickerHint,
@@ -24,7 +24,7 @@ import {
   visibleRows,
   willStart,
   windowTop,
-} from './picker-state.js';
+} from './picker-state';
 import {
   RowBuilder,
   type Segment,
@@ -35,7 +35,7 @@ import {
   joinNames,
   rowWidth,
   width,
-} from './text-cells.js';
+} from './text-cells';
 
 /**
  * The service picker laid out as plain data: rows of styled segments filling the viewport, and

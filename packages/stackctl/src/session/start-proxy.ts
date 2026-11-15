@@ -1,13 +1,13 @@
-import { getLoadedConfig, getWorkspaceDir } from '../config.js';
+import { getLoadedConfig, getWorkspaceDir } from '../config';
 import {
   type DevReverseProxyServer,
   routesFromConfig,
   startDevReverseProxy,
-} from '../dev-reverse-proxy.js';
-import { proxyTlsFor } from '../dev-tls.js';
-import { currentProfile } from '../env-base.js';
-import { isProcessAlive } from '../process-info.js';
-import { isPortListening, readOtherProfilesRunning } from '../running.js';
+} from '../dev-reverse-proxy';
+import { proxyTlsFor } from '../dev-tls';
+import { currentProfile } from '../env-base';
+import { isProcessAlive } from '../process-info';
+import { isPortListening, readOtherProfilesRunning } from '../running';
 
 /**
  * Starts the loaded config's dev reverse proxy, or resolves `null` when it has none. Runs after

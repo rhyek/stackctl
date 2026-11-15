@@ -1,16 +1,16 @@
 import fs from 'node:fs';
-import { startedByAgent } from '../agent-detection.js';
-import { createControlClient } from '../control-client.js';
-import { type ProfileSource, currentProfile, currentProfileSource } from '../env-base.js';
-import { type SessionCommandEntry, cliEventLog, commandBy } from '../event-log.js';
-import { type FoundSession, findSession } from '../find-session.js';
-import { profileStateDir } from '../log-files.js';
-import { canSignal } from '../process-info.js';
-import { readRunning, recordedProfiles, runningFilePath } from '../running.js';
-import { clearRecordAdvice, isRecordedSession } from '../session-identity.js';
-import type { QuitOptions } from '../session-takeover.js';
-import { HANDOFF_FORCE_KILL_MS } from '../shutdown-timing.js';
-import { findConfigPath } from '../workspace-root.js';
+import { startedByAgent } from '../agent-detection';
+import { createControlClient } from '../control-client';
+import { type ProfileSource, currentProfile, currentProfileSource } from '../env-base';
+import { type SessionCommandEntry, cliEventLog, commandBy } from '../event-log';
+import { type FoundSession, findSession } from '../find-session';
+import { profileStateDir } from '../log-files';
+import { canSignal } from '../process-info';
+import { readRunning, recordedProfiles, runningFilePath } from '../running';
+import { clearRecordAdvice, isRecordedSession } from '../session-identity';
+import type { QuitOptions } from '../session-takeover';
+import { HANDOFF_FORCE_KILL_MS } from '../shutdown-timing';
+import { findConfigPath } from '../workspace-root';
 
 // `stackctl stop` and `stackctl reset`: one profile's session of a workspace, ended the way a
 // takeover ends one; `reset` then removes that profile's state. Neither loads the config, and
@@ -151,7 +151,7 @@ export async function stopSession(
     return { profile, pid: session.pid, outcome: 'aliased', runsAs: session.runsAs };
   }
   // Only now: what kills a process tree loads more than finding there is none to kill.
-  const { quitSession, sweepOrphans, terminateSession } = await import('../session-takeover.js');
+  const { quitSession, sweepOrphans, terminateSession } = await import('../session-takeover');
   const pid = session.kind === 'running' ? session.status.pid : session.pid;
   const outcome =
     session.kind === 'running' && session.record

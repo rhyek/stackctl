@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Box, Text, type DOMElement } from 'ink';
-import { DANGER_COLOR, LINK_COLOR, NOTICE_COLOR, OK_COLOR, WARN_COLOR } from '../colors.js';
+import { DANGER_COLOR, LINK_COLOR, NOTICE_COLOR, OK_COLOR, WARN_COLOR } from '../colors';
 import {
   addToast,
   createToast,
@@ -9,7 +9,7 @@ import {
   type Toast,
   type ToastOptions,
   type ToastTone,
-} from '../toasts.js';
+} from '../toasts';
 
 /**
  * What a tone is drawn in. Lives here rather than in `colors.ts` for the same

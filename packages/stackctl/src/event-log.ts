@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SessionServiceStatus } from './control-client.js';
-import type { InfraStatus } from './infra/control.js';
-import { isProcessAlive } from './process-info.js';
-import { readRunning } from './running.js';
-import { currentSessionId, sessionEventsPath, writeTargetSessionId } from './session-files.js';
+import type { SessionServiceStatus } from './control-client';
+import type { InfraStatus } from './infra/control';
+import { isProcessAlive } from './process-info';
+import { readRunning } from './running';
+import { currentSessionId, sessionEventsPath, writeTargetSessionId } from './session-files';
 
 // A session's event log, `node_modules/.stackctl/profiles/<profile>/sessions/<id>/events.jsonl`:
 // one JSON object per line, its `type` first, for whatever changes the profile's stack. The session

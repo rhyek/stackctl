@@ -5,8 +5,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
-import { processCwd } from './process-info.js';
-import { writeRunning } from './running.js';
+import { processCwd } from './process-info';
+import { writeRunning } from './running';
 import {
   devPorts,
   freeDevPorts,
@@ -21,7 +21,7 @@ import {
   sweepableGroups,
   terminateSession,
   treeOf,
-} from './session-takeover.js';
+} from './session-takeover';
 
 const unix = process.platform !== 'win32';
 

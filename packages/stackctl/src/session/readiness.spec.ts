@@ -1,7 +1,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, test } from 'vitest';
-import { type Clock, probeHealthcheck, Readiness } from './readiness.js';
+import { type Clock, probeHealthcheck, Readiness } from './readiness';
 
 const HC = { url: 'http://127.0.0.1:1/health', timeout: 1500 };
 

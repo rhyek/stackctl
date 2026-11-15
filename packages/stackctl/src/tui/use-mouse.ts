@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { DOMElement } from 'ink';
-import { MOUSE_DISABLE, MOUSE_ENABLE, type MouseReport, createMouseDecoder } from '../mouse.js';
-import { type Rect, hitTest, isClick } from './hit-test.js';
-import type { Action } from './keymap.js';
+import { MOUSE_DISABLE, MOUSE_ENABLE, type MouseReport, createMouseDecoder } from '../mouse';
+import { type Rect, hitTest, isClick } from './hit-test';
+import type { Action } from './keymap';
 
 /**
  * The run screen's mouse: SGR reporting switched on while the screen is up and off on the way out,

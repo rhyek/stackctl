@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import { findProgram } from './in-place.js';
+import { findProgram } from './in-place';
 
 let tmp: string;
 beforeEach(() => {

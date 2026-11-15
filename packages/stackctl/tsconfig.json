@@ -1,6 +1,12 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
+    // tsdown resolves the sources' extensionless relative imports and writes them out as
+    // `./x.js`, so TypeScript resolves them as a bundler does.
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    // tsdown (oxc) compiles each file on its own.
+    "isolatedModules": true,
     "jsx": "react-jsx",
     "types": ["node", "react"],
     "noEmit": true

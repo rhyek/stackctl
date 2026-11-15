@@ -4,8 +4,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from 'vitest';
-import { Pty } from './pty.js';
-import { allRunning, expectTerminalRestored, fixtureWorkspace } from './suite.js';
+import { Pty } from './pty';
+import { allRunning, expectTerminalRestored, fixtureWorkspace } from './suite';
 
 const ws = fixtureWorkspace();
 

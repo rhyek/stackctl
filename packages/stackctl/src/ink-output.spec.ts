@@ -6,7 +6,7 @@ import {
   leanOutputMethods,
   loadInkOutput,
   type InkOutput,
-} from './ink-output.js';
+} from './ink-output';
 
 /** A small seeded generator, so a failure names a case that can be replayed. */
 function random(seed: number) {

@@ -5,18 +5,18 @@ import { Writable } from 'node:stream';
 import React from 'react';
 import { render } from 'ink';
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
-import { stripAnsi } from '../format.js';
-import { LogStore } from '../session/log-store.js';
+import { stripAnsi } from '../format';
+import { LogStore } from '../session/log-store';
 import {
   type DragSelection,
   LogPane,
   type LogViewport,
   useDragSelection,
   useLogViewport,
-} from './LogPane.js';
+} from './LogPane';
 
 // A copy-on-select must not reach the machine's real clipboard.
-vi.mock('../clipboard.js', () => ({ copyToClipboard: vi.fn() }));
+vi.mock('../clipboard', () => ({ copyToClipboard: vi.fn() }));
 
 const h = React.createElement;
 

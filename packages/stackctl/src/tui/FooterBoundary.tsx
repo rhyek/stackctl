@@ -1,7 +1,7 @@
 import React from 'react';
 import { Text } from 'ink';
-import type { Session, SessionSnapshot } from '../session/session.js';
-import { logError } from './actions.js';
+import type { Session, SessionSnapshot } from '../session/session';
+import { logError } from './actions';
 import {
   type FooterLayout,
   type FooterOptions,
@@ -9,8 +9,8 @@ import {
   type MenuOptions,
   footerLayout,
   menuLayout,
-} from './layout.js';
-import type { UiState } from './ui-state.js';
+} from './layout';
+import type { UiState } from './ui-state';
 
 /**
  * The footer's and the menu's guard (run-screen §11.3): a fault while laying them out or drawing

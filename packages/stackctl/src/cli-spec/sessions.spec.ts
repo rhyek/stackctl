@@ -3,16 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import type { Running } from '../spawn.js';
-import {
-  packageDir,
-  buildDir,
-  cli,
-  start,
-  parentPid,
-  script,
-  setUpCliWorkspace,
-} from './harness.js';
+import type { Running } from '../spawn';
+import { packageDir, buildDir, cli, start, parentPid, script, setUpCliWorkspace } from './harness';
 
 /** Sessions from the command line: starting one, the default command, their records, and one
  * whose .env file cannot be read yet. See `harness.ts`. */

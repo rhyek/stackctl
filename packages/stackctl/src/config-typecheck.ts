@@ -2,8 +2,8 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { stateDirOf } from './log-files.js';
-import { findConfigPath } from './workspace-root.js';
+import { stateDirOf } from './log-files';
+import { findConfigPath } from './workspace-root';
 
 // What `start` and `run` do first: type-check `stackctl.config.ts` with the `tsc` of the
 // `typescript` beside it, and exit 1 on a type error. A `tsc` process, not the compiler API:

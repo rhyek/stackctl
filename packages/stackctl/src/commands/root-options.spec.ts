@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import type { StartOptions } from './default.js';
-import { rootOptionsRefusal } from './root-options.js';
+import type { StartOptions } from './default';
+import { rootOptionsRefusal } from './root-options';
 
 const base: StartOptions = {
   service: [],

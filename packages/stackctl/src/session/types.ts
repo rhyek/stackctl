@@ -1,7 +1,7 @@
-import type { AnyServiceConfig, ResolvedHealthcheck, UrlEntry, UrlLine } from '../config.js';
-import type { EnvFileOrder, EnvOverride } from '../env-base.js';
-import type { InfraWatch } from '../infra/provider.js';
-import type { InfraServiceState } from '../infra/types.js';
+import type { AnyServiceConfig, ResolvedHealthcheck, UrlEntry, UrlLine } from '../config';
+import type { EnvFileOrder, EnvOverride } from '../env-base';
+import type { InfraWatch } from '../infra/provider';
+import type { InfraServiceState } from '../infra/types';
 
 // The types a dev session's runtime shares: what a selection runs, what its infra step hands
 // over, and the log records every part of it writes and reads.
