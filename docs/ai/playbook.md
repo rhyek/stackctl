@@ -164,7 +164,13 @@ Use the service's own environment. Don't export variables by hand.
 stackctl --profile development run api seed       # a package.json script or Makefile target
 stackctl --profile development exec api -- node src/migrate.ts   # any command
 stackctl --profile test exec api -- node --test   # in the test profile's environment
+stackctl --profile development exec ./scripts/report -- node main.ts   # a folder that is no service
 ```
+
+- **A folder that is no service works too**, a script's directory say, with nothing to add to
+  `stackctl.config.ts`. The command runs there, with the `.env` files of every directory from
+  the workspace root down to it, its own last, and no `PORT`. See
+  [Targets](../guide/commands.md#targets).
 
 See [One-off commands](../guide/commands.md). From a script, use
 [`exec()`, `run()`](../reference/sdk.md#exec-and-run) or
