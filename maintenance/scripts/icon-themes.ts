@@ -125,7 +125,7 @@ const offset: [number, number] = [
 ];
 // The icon's colors and their nearest in the Material palette: for dark themes, then light.
 const material: Record<string, [dark: string, light: string]> = {
-  '#7a88ff': ['#7986cb', '#5c6bc0'], // the prompt: indigo 300, indigo 400
+  '#6b7aff': ['#7986cb', '#5c6bc0'], // the prompt: indigo 300, indigo 400
   '#e4e4e7': ['#e0e0e0', '#757575'], // the outer lines: grey 300, grey 600
   '#facc15': ['#ffca28', '#ffb300'], // the middle line: amber 400, amber 600
 };
