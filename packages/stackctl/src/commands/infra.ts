@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { startedByAgent } from '../agent-detection';
-import { getLoadedConfig } from '../config';
+import { type Config, getLoadedConfig, infraServicesOf } from '../config';
 import {
   type ComposeCommandEntry,
   type InfraCommandEntry,
@@ -12,8 +12,16 @@ import {
 import type { InfraAction } from '../infra/control';
 import { InfraManager } from '../infra/manager';
 import { createInfraReporter, type InfraReporter } from '../infra/report';
-import { InfraError, type InfraRunSummary } from '../infra/types';
+import {
+  INFRA_DONE_STATUS,
+  InfraError,
+  type InfraRunAction,
+  type InfraRunSummary,
+} from '../infra/types';
+import { writeSdkResult } from '../sdk-result';
+import type { InfraResult } from '../sdk/infra';
 import { endCommandsOnSignals } from '../spawn';
+import { type TagSelection, UnknownTagError, selectByTags } from '../tags';
 import { loadConfigOrExit } from './workspace';
 
 // `stackctl infra …`: the services the packages need but that aren't packages. Every subcommand
@@ -21,7 +29,7 @@ import { loadConfigOrExit } from './workspace';
 // acquisition, so a running dev session is never disturbed.
 
 /** The infra manager for the loaded config, exiting with a hint when it declares no `infra`. */
-async function loadInfraOrExit(): Promise<{ manager: InfraManager; profile: string }> {
+async function loadInfraOrExit(): Promise<{ manager: InfraManager; config: Config<string> }> {
   await loadConfigOrExit();
   const config = getLoadedConfig();
   const manager = config ? await InfraManager.fromConfig(config) : null;
@@ -31,7 +39,7 @@ async function loadInfraOrExit(): Promise<{ manager: InfraManager; profile: stri
     );
     process.exit(1);
   }
-  return { manager, profile: config.profile };
+  return { manager, config };
 }
 
 /**
@@ -54,15 +62,6 @@ async function infraExitCode(
   }
 }
 
-/** What a service that came through a lifecycle command is now. */
-const DONE: Record<InfraCommand, 'ready' | 'stopped' | 'destroyed'> = {
-  start: 'ready',
-  restart: 'ready',
-  reset: 'ready',
-  stop: 'stopped',
-  destroy: 'destroyed',
-};
-
 /** The `stackctl infra` lifecycle commands: a session's infra actions, and `destroy`. */
 export type InfraCommand = InfraAction | 'destroy';
 
@@ -71,30 +70,84 @@ export type InfraCommandManager = Pick<InfraManager, 'up' | 'down' | 'destroy'>;
 
 /**
  * Runs a lifecycle command on `services` (none: every enabled one; for `destroy`, the whole
- * project) and resolves with its exit code. `restart` is `stop` then `start`: the containers are
- * recreated, picking up a changed compose file, and their data kept. A failed stop starts nothing.
+ * project) and resolves with its exit code: `0` when every service reached the state the command
+ * names, else `1`. `restart` is `stop` then `start`: the containers are recreated, picking up a
+ * changed compose file, and their named volumes kept. A failed stop starts nothing.
+ * `opts.waitTimeoutS` is how long `start`, `restart` and `reset` wait for the services to be ready.
  */
 export async function runInfraCommand(
   manager: InfraCommandManager,
   command: InfraCommand,
   services: string[],
   reporter: InfraReporter,
+  opts: { waitTimeoutS?: number } = {},
 ): Promise<number> {
+  const run = { services, onEvent: reporter.onEvent };
   if (command === 'stop' || command === 'restart') {
-    const code = await manager.down(services);
-    if (command === 'stop' || code !== 0) {
-      return code;
+    const stopped = await manager.down(run);
+    if (command === 'stop' || !stopped.ok) {
+      reporter.finish(stopped, 'down');
+      return stopped.ok ? 0 : 1;
     }
   }
-  const run = { services, onEvent: reporter.onEvent };
   if (command === 'destroy') {
     const summary = await manager.destroy(run);
     reporter.finish(summary, 'destroy');
     return summary.ok ? 0 : 1;
   }
-  const summary = await manager.up({ ...run, trigger: command });
+  const summary = await manager.up({
+    ...run,
+    trigger: command,
+    ...(opts.waitTimeoutS === undefined ? {} : { readyTimeoutMs: opts.waitTimeoutS * 1000 }),
+  });
   reporter.finish(summary, 'up');
   return summary.ok ? 0 : 1;
+}
+
+/**
+ * The infra services `infra <command>` acts on: the `-s` names, and the services the config names
+ * that have a `-t` tag, less a disabled one only a tag picked. A name the config doesn't list is
+ * kept, for the provider to check. With neither, `[]`: every enabled service (for `destroy`, the
+ * whole project). With tags, never `[]`: when none is left it throws {@link InfraError}, as it
+ * does for a tag no configured infra service has.
+ */
+export function infraSelection(
+  names: string[],
+  tags: string[],
+  configured: readonly { name: string; enabled: boolean; tags: readonly string[] }[],
+): string[] {
+  if (tags.length === 0) {
+    return names;
+  }
+  let selection: TagSelection;
+  try {
+    selection = selectByTags(configured, { names, tags }, 'infra service');
+  } catch (err) {
+    throw err instanceof UnknownTagError ? new InfraError(err.message) : err;
+  }
+  const disabled = new Set(configured.filter((s) => !s.enabled).map((s) => s.name));
+  const selected = selection.names.filter(
+    (name) => !selection.fromTagOnly.has(name) || !disabled.has(name),
+  );
+  if (selected.length === 0) {
+    throw new InfraError(`no enabled infra service is tagged ${[...new Set(tags)].join(', ')}`);
+  }
+  return selected;
+}
+
+/**
+ * What a run did to each service, as the SDK's `infra.*` resolves it: a service that made it is in
+ * the state the run's action names. For a restart whose stop failed, that run is the stop.
+ */
+export function infraResults(
+  summary: InfraRunSummary,
+  action: InfraRunAction,
+): InfraResult['results'] {
+  return summary.services.map((s) => ({
+    service: s.service,
+    status: s.ok ? INFRA_DONE_STATUS[action] : 'failed',
+    ...(s.error === undefined ? {} : { error: s.error }),
+  }));
 }
 
 /**
@@ -103,10 +156,32 @@ export async function runInfraCommand(
  */
 export async function runInfra(
   command: InfraCommand,
-  services: string[],
+  names: string[],
+  tags: string[],
   invocationCwd: string,
+  opts: { waitTimeoutS?: number } = {},
 ): Promise<never> {
-  const { manager, profile } = await loadInfraOrExit();
+  if (opts.waitTimeoutS !== undefined && !(opts.waitTimeoutS > 0)) {
+    console.error('--wait-timeout takes a number of seconds above 0.');
+    process.exit(1);
+  }
+  const { manager, config } = await loadInfraOrExit();
+  const { profile } = config;
+  let services: string[];
+  try {
+    const configured = infraServicesOf(config).map(({ name, service }) => ({
+      name,
+      enabled: service.enabled,
+      tags: service.tags,
+    }));
+    services = infraSelection(names, tags, configured);
+  } catch (err) {
+    if (err instanceof InfraError) {
+      console.error(chalk.red(err.message));
+      process.exit(1);
+    }
+    throw err;
+  }
   // A `kill <pid>` of this command ends the Compose run or migration it is waiting on, too.
   endCommandsOnSignals();
   const root = process.cwd();
@@ -115,31 +190,35 @@ export async function runInfra(
     commandBy(root, { agent: startedByAgent(), invocationCwd }),
   );
   const plain = createInfraReporter({ profile });
-  let summary: InfraRunSummary | null = null;
+  // A refusal ran nothing, and has no results.
+  let results: InfraResult['results'] | undefined;
   let error: string | undefined;
   const reporter: InfraReporter = {
     ...plain,
-    finish: (finished, action) => {
-      summary = finished;
-      plain.finish(finished, action);
+    finish: (summary, action) => {
+      results = infraResults(summary, action);
+      plain.finish(summary, action);
     },
   };
   const code = await infraExitCode(
-    () => runInfraCommand(manager, command, services, reporter),
+    () => runInfraCommand(manager, command, services, reporter, opts),
     (message) => (error = message),
   );
-  const ran = summary as InfraRunSummary | null;
   entry.end({
     ok: code === 0,
-    ...(ran
+    ...(results
       ? {
-          services: ran.services.map((s) => s.service),
-          results: Object.fromEntries(ran.services.map((s) => [s.service, s.ok ? DONE[command] : ('failed' as const)])), // oxfmt-ignore
+          services: results.map((r) => r.service),
+          results: Object.fromEntries(results.map((r) => [r.service, r.status])),
         }
       : {}),
     ...(command === 'destroy' && services.length === 0 ? { everything: true } : {}),
-    ...(error !== undefined ? { error } : code !== 0 && !ran ? { error: `exited with code ${String(code)}` } : {}), // oxfmt-ignore
+    ...(error !== undefined ? { error } : code !== 0 && !results ? { error: `exited with code ${String(code)}` } : {}), // oxfmt-ignore
   });
+  // For the SDK's `infra.*`. Without results the call rejects with the refusal's message.
+  if (results) {
+    writeSdkResult({ ok: code === 0, results });
+  }
   process.exit(code);
 }
 
@@ -153,12 +232,12 @@ export async function runInfraPassthrough(
   args: string[],
   invocationCwd: string,
 ): Promise<never> {
-  const { manager, profile } = await loadInfraOrExit();
+  const { manager, config } = await loadInfraOrExit();
   // What only reads (`ps`, `logs`) leaves no line.
   const root = process.cwd();
   const entry = isReadOnlyCompose(args)
     ? null
-    : cliEventLog(root, profile).begin<ComposeCommandEntry>(
+    : cliEventLog(root, config.profile).begin<ComposeCommandEntry>(
         { type: 'compose-command', args: maskSecrets(args) },
         commandBy(root, { agent: startedByAgent(), invocationCwd }),
       );

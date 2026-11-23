@@ -15,7 +15,7 @@ beforeAll(() => {
 afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 const app = (name: string, over: Partial<AnyServiceConfig> = {}) =>
-  ({ name, targetDir: name, resolvedTargetDir: dir, ...over }) as AnyServiceConfig;
+  ({ name, dir: name, resolvedDir: dir, ...over }) as AnyServiceConfig;
 
 const client = {} as ControlClient;
 
@@ -90,6 +90,28 @@ describe('runWaitCommand', () => {
     expect(err).toEqual([
       "stackctl: a development session is recorded as running (pid 4242) but doesn't answer on its control API (port 14001): it looks hung",
     ]);
+  });
+
+  test('without waitForStart, no session running is an error at once', async () => {
+    const { ctx, err, asked } = context([NONE, running({ api: 'running' })]);
+    expect(await runWaitCommand({ timeout: 60, waitForStart: false }, ctx)).toBe(1);
+    expect(asked()).toBe(1);
+    expect(err).toEqual([
+      'No development stackctl session is running (development is the default profile; pass --profile to choose another).',
+    ]);
+  });
+
+  test("without waitForStart, a session that doesn't answer is an error at once", async () => {
+    const { ctx, err, asked } = context([HUNG, running({ api: 'running' })]);
+    expect(await runWaitCommand({ timeout: 60, waitForStart: false }, ctx)).toBe(1);
+    expect(asked()).toBe(1);
+    expect(err[0]).toMatch(/^stackctl: a development session is recorded as running \(pid 4242\)/);
+  });
+
+  test('without waitForStart, a session still starting is waited on until ready', async () => {
+    const { ctx, waited } = context([running(null), running({ api: 'waiting' })]);
+    expect(await runWaitCommand({ timeout: 60, waitForStart: false }, ctx)).toBe(0);
+    expect(waited.map((w) => w.services)).toEqual([['api']]);
   });
 
   test('a session that ends before it reports its services fails the wait at once', async () => {

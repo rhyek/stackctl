@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { processStartTime } from '../process-info';
-import { type OneOffSpec, runOneOff } from './run';
+import { SHUTDOWN_GRACE_MS } from '../shutdown-timing';
+import { MANY_GRACE_MS, type OneOffSpec, runOneOff } from './run';
 
 let tmp: string;
 /**
@@ -383,5 +384,459 @@ describe('runOneOff inside a command stackctl runs', () => {
     await expect(runOneOff(spec, { stdio: 'pipe', logDir: tmp, nested: true })).rejects.toThrow(
       'stackctl-no-such-command',
     );
+  });
+});
+
+describe('runOneOff in the many form', () => {
+  /** `sh -c <script>` in the temp directory, with this process's environment. */
+  const sh = (script: string): OneOffSpec => ({
+    cwd: tmp,
+    command: '/bin/sh',
+    args: ['-c', script],
+    env: { ...process.env },
+  });
+
+  /** The file a command writes its pids to, a line ending in a newline, for the test to keep. */
+  const pidsFile = () => path.join(tmp, 'pids');
+
+  /** JavaScript that writes the command's pid to {@link pidsFile}. */
+  const writePid = () =>
+    `require('fs').writeFileSync(${JSON.stringify(pidsFile())},process.pid+'\\n')`;
+
+  /** The pids in {@link pidsFile} once it holds its line, kept; rejects after 5 s. */
+  const pidsWritten = async (): Promise<number[]> => {
+    const deadline = Date.now() + 5_000;
+    while (!fs.existsSync(pidsFile()) || !fs.readFileSync(pidsFile(), 'utf8').endsWith('\n')) {
+      if (Date.now() > deadline) {
+        throw new Error('the command never wrote its pids');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return keepPidsWritten();
+  };
+
+  /** Keeps whatever pids {@link pidsFile} holds, should the command outlive its test. */
+  const keepPidsWritten = async (): Promise<number[]> => {
+    const text = fs.existsSync(pidsFile()) ? fs.readFileSync(pidsFile(), 'utf8') : '';
+    const pids = text.split(/\s+/).filter(Boolean).map(Number);
+    for (const pid of pids) {
+      await keep(pid);
+    }
+    return pids;
+  };
+
+  /** Whether `pid` names a process: a signal 0 reaches it. */
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code === 'EPERM';
+    }
+  };
+
+  /** Resolves once `pid` is gone, its reaping included; rejects after 5 s. */
+  const gone = async (pid: number) => {
+    const deadline = Date.now() + 5_000;
+    while (alive(pid)) {
+      if (Date.now() > deadline) {
+        throw new Error(`${String(pid)} is still running`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  };
+
+  /** An `onLine` that records each line with its stream. */
+  const recorder = () => {
+    const lines: ['stdout' | 'stderr', string][] = [];
+    const onLine = (stream: 'stdout' | 'stderr', line: string) => {
+      lines.push([stream, line]);
+    };
+    const of = (stream: 'stdout' | 'stderr') =>
+      lines.filter(([s]) => s === stream).map(([, line]) => line);
+    return { lines, onLine, of };
+  };
+
+  test('many: each line goes to onLine with its stream, the last one without a newline too', async () => {
+    const { lines, onLine, of } = recorder();
+    const out = vi.spyOn(process.stdout, 'write');
+    const err = vi.spyOn(process.stderr, 'write');
+    let result;
+    try {
+      result = await runOneOff(node("process.stdout.write('a\\nb');process.stderr.write('c\\n')"), {
+        stdio: 'inherit',
+        logDir: tmp,
+        isTerminal: () => true,
+        agent: false,
+        many: { onLine, stop: new AbortController().signal },
+      });
+      expect(out).not.toHaveBeenCalled();
+      expect(err).not.toHaveBeenCalled();
+    } finally {
+      out.mockRestore();
+      err.mockRestore();
+    }
+    expect(result).toEqual({ exitCode: 0, signal: null });
+    // Each stream's lines in order; the two streams interleave as they arrive.
+    expect(of('stdout')).toEqual(['a', 'b']);
+    expect(of('stderr')).toEqual(['c']);
+    expect(lines).toHaveLength(3);
+  });
+
+  test("many: with 'pipe', the output is still collected into the result", async () => {
+    const result = await runOneOff(node("console.log('hi');console.error('there')"), {
+      stdio: 'pipe',
+      logDir: tmp,
+      many: { stop: new AbortController().signal },
+    });
+    expect(result).toEqual({ exitCode: 0, signal: null, stdout: 'hi\n', stderr: 'there\n' });
+  });
+
+  test('many: the log records the piped lines, as without it', async () => {
+    const logDir = path.join(tmp, 'logs');
+    await runOneOff(node("console.log('one');console.error('two')"), {
+      stdio: 'inherit',
+      logDir,
+      isTerminal: () => true,
+      agent: false,
+      many: { onLine: () => {}, stop: new AbortController().signal },
+    });
+    expect(logLines(logsIn(logDir)[0]!).slice(1, -1).sort()).toEqual(['one', 'two']);
+  });
+
+  test('many: stdin is closed', { timeout: 10_000 }, async () => {
+    const running = runOneOff(
+      node(`${writePid()};process.stdin.resume();process.stdin.on('end',()=>process.exit(0))`),
+      {
+        stdio: 'pipe',
+        logDir: tmp,
+        many: { stop: new AbortController().signal, graceMs: 200 },
+      },
+    );
+    try {
+      await pidsWritten();
+      const at = Date.now();
+      expect(await running).toMatchObject({ exitCode: 0, signal: null });
+      expect(Date.now() - at).toBeLessThan(2_000);
+    } finally {
+      await keepPidsWritten();
+      await killKept();
+      await running.catch(() => {});
+    }
+  });
+
+  test('many: stop ends the command and its children', { timeout: 10_000 }, async () => {
+    const stop = new AbortController();
+    const running = runOneOff(sh(`sleep 30 & echo "$$ $!" > '${pidsFile()}'; wait`), {
+      stdio: 'pipe',
+      logDir: tmp,
+      many: { stop: stop.signal, graceMs: 2_000 },
+    });
+    try {
+      const [, sleep] = await pidsWritten();
+      const at = Date.now();
+      stop.abort();
+      expect(await running).toMatchObject({ exitCode: null, signal: 'SIGTERM' });
+      expect(Date.now() - at).toBeLessThan(1_500);
+      await gone(sleep!);
+    } finally {
+      await keepPidsWritten();
+      await killKept();
+      await running.catch(() => {});
+    }
+  });
+
+  test(
+    'many: a command that ignores SIGTERM is killed after the grace',
+    { timeout: 10_000 },
+    async () => {
+      const stop = new AbortController();
+      const running = runOneOff(
+        node(`process.on('SIGTERM',()=>{});${writePid()};setInterval(()=>{},1e9)`),
+        { stdio: 'pipe', logDir: tmp, many: { stop: stop.signal, graceMs: 200 } },
+      );
+      try {
+        await pidsWritten();
+        const at = Date.now();
+        stop.abort();
+        expect(await running).toMatchObject({ exitCode: null, signal: 'SIGKILL' });
+        expect(Date.now() - at).toBeLessThan(2_000);
+      } finally {
+        await keepPidsWritten();
+        await killKept();
+        await running.catch(() => {});
+      }
+    },
+  );
+
+  test('many: a stop already aborted ends the command at once', { timeout: 10_000 }, async () => {
+    const running = runOneOff(node(`${writePid()};setInterval(()=>{},1e9)`), {
+      stdio: 'pipe',
+      logDir: tmp,
+      many: { stop: AbortSignal.abort(), graceMs: 200 },
+    });
+    // Should it be ignored, the command runs on: its pid, kept below, ends it once the test fails.
+    const ended = await Promise.race([
+      running,
+      new Promise((resolve) => setTimeout(resolve, 3_000)),
+    ]);
+    try {
+      expect(ended).toMatchObject({ exitCode: null, signal: 'SIGTERM' });
+    } finally {
+      await keepPidsWritten();
+      await killKept();
+      await running.catch(() => {});
+    }
+  });
+
+  test(
+    'many: onStopSent is called when stop reaches a running command, once',
+    { timeout: 10_000 },
+    async () => {
+      const stop = new AbortController();
+      const onStopSent = vi.fn();
+      // It ignores SIGTERM: the stop, a forwarded SIGTERM and the SIGKILL after the grace all
+      // reach it.
+      const running = runOneOff(
+        node(`process.on('SIGTERM',()=>{});${writePid()};setInterval(()=>{},1e9)`),
+        { stdio: 'pipe', logDir: tmp, many: { stop: stop.signal, graceMs: 200, onStopSent } },
+      );
+      try {
+        await pidsWritten();
+        expect(onStopSent).not.toHaveBeenCalled();
+        stop.abort();
+        process.emit('SIGTERM');
+        expect(await running).toMatchObject({ exitCode: null, signal: 'SIGKILL' });
+        expect(onStopSent).toHaveBeenCalledTimes(1);
+      } finally {
+        await keepPidsWritten();
+        await killKept();
+        await running.catch(() => {});
+      }
+    },
+  );
+
+  test(
+    'many: onStopSent is not called for a command that already ended',
+    { timeout: 10_000 },
+    async () => {
+      const stop = new AbortController();
+      const onStopSent = vi.fn();
+      // The shell exits at once; the sleep it leaves holds its stdout open, so the run goes on.
+      const running = runOneOff(sh(`sleep 30 & echo "$$ $!" > '${pidsFile()}'; exit 0`), {
+        stdio: 'pipe',
+        logDir: tmp,
+        many: { stop: stop.signal, graceMs: 200, onStopSent },
+      });
+      try {
+        const [shell, sleep] = await pidsWritten();
+        await gone(shell!);
+        stop.abort();
+        expect(await running).toMatchObject({ exitCode: 0, signal: null });
+        expect(onStopSent).not.toHaveBeenCalled();
+        await gone(sleep!);
+      } finally {
+        await keepPidsWritten();
+        await killKept();
+        await running.catch(() => {});
+      }
+    },
+  );
+
+  test(
+    "many: SIGINT is forwarded even on a terminal: the terminal's doesn't reach its group",
+    { timeout: 10_000 },
+    async () => {
+      const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+      const before = signals.map((s) => process.listenerCount(s));
+      const running = runOneOff(
+        node(`process.on('SIGINT',()=>process.exit(7));${writePid()};setInterval(()=>{},1e9)`),
+        {
+          stdio: 'inherit',
+          logDir: tmp,
+          isTerminal: (fd) => fd === 0,
+          many: { onLine: () => {}, stop: new AbortController().signal, graceMs: 200 },
+        },
+      );
+      try {
+        await pidsWritten();
+        process.emit('SIGINT');
+        expect(await running).toMatchObject({ exitCode: 7, signal: null });
+        expect(signals.map((s) => process.listenerCount(s))).toEqual(before);
+      } finally {
+        await keepPidsWritten();
+        await killKept();
+        await running.catch(() => {});
+      }
+    },
+  );
+
+  test(
+    'many: a forwarded signal is followed by SIGKILL after the grace',
+    { timeout: 10_000 },
+    async () => {
+      const running = runOneOff(
+        node(`process.on('SIGTERM',()=>{});${writePid()};setInterval(()=>{},1e9)`),
+        { stdio: 'pipe', logDir: tmp, many: { stop: new AbortController().signal, graceMs: 200 } },
+      );
+      try {
+        const [pid] = await pidsWritten();
+        const at = Date.now();
+        process.emit('SIGTERM');
+        expect(await running).toMatchObject({ exitCode: null, signal: 'SIGKILL' });
+        expect(Date.now() - at).toBeLessThan(2_000);
+        await gone(pid!);
+      } finally {
+        await keepPidsWritten();
+        await killKept();
+        await running.catch(() => {});
+      }
+    },
+  );
+
+  test(
+    "many: stop after a forwarded signal doesn't restart the grace",
+    { timeout: 10_000 },
+    async () => {
+      const stop = new AbortController();
+      const running = runOneOff(
+        node(`process.on('SIGTERM',()=>{});${writePid()};setInterval(()=>{},1e9)`),
+        { stdio: 'pipe', logDir: tmp, many: { stop: stop.signal, graceMs: 1_000 } },
+      );
+      try {
+        await pidsWritten();
+        const at = Date.now();
+        process.emit('SIGTERM');
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        stop.abort();
+        expect(await running).toMatchObject({ exitCode: null, signal: 'SIGKILL' });
+        // About 1000 ms after the forwarded signal; a grace restarted by the stop would be 1500.
+        expect(Date.now() - at).toBeGreaterThanOrEqual(990);
+        expect(Date.now() - at).toBeLessThan(1_400);
+      } finally {
+        await keepPidsWritten();
+        await killKept();
+        await running.catch(() => {});
+      }
+    },
+  );
+
+  test(
+    'many: stop reaches a descendant that outlives the leader',
+    { timeout: 15_000 },
+    async () => {
+      const stop = new AbortController();
+      // A background shell that ignores SIGTERM, holds none of the command's pipes, and writes its
+      // pid once its trap is set; the leader sleeps in the foreground.
+      const running = runOneOff(
+        sh(`sh -c "trap '' TERM; echo \\$\\$ > '${pidsFile()}'; exec sleep 30" >/dev/null 2>&1 & sleep 30`), // oxfmt-ignore
+        // A grace longer than the test waits: only a sweep at the leader's end reaches it.
+        { stdio: 'pipe', logDir: tmp, many: { stop: stop.signal, graceMs: 10_000 } },
+      );
+      try {
+        const [background] = await pidsWritten();
+        stop.abort();
+        expect(await running).toMatchObject({ exitCode: null, signal: 'SIGTERM' });
+        await gone(background!);
+      } finally {
+        await keepPidsWritten();
+        await killKept();
+        await running.catch(() => {});
+      }
+    },
+  );
+
+  test(
+    'many: a forwarded SIGINT reaches a background job that ignores it',
+    { timeout: 15_000 },
+    async () => {
+      // A non-interactive shell starts an `&` job with SIGINT ignored.
+      const running = runOneOff(
+        sh(`sleep 30 >/dev/null 2>&1 & echo "$!" > '${pidsFile()}'; sleep 30`),
+        {
+          stdio: 'pipe',
+          logDir: tmp,
+          many: { stop: new AbortController().signal, graceMs: 10_000 },
+        },
+      );
+      try {
+        const [background] = await pidsWritten();
+        process.emit('SIGINT');
+        expect(await running).toMatchObject({ exitCode: null, signal: 'SIGINT' });
+        await gone(background!);
+      } finally {
+        await keepPidsWritten();
+        await killKept();
+        await running.catch(() => {});
+      }
+    },
+  );
+
+  test(
+    'many: a command that ended by itself leaves its background process alone',
+    { timeout: 10_000 },
+    async () => {
+      const running = runOneOff(
+        sh(`sleep 30 >/dev/null 2>&1 & echo "$!" > '${pidsFile()}'; exit 0`),
+        { stdio: 'pipe', logDir: tmp, many: { stop: new AbortController().signal } },
+      );
+      try {
+        expect(await running).toMatchObject({ exitCode: 0, signal: null });
+        const [background] = await keepPidsWritten();
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(alive(background!)).toBe(true);
+      } finally {
+        await keepPidsWritten();
+        await killKept();
+        await running.catch(() => {});
+      }
+    },
+  );
+
+  test('single form: a forwarded signal arms no SIGKILL', { timeout: 10_000 }, async () => {
+    const running = runOneOff(
+      node(`process.on('SIGTERM',()=>setTimeout(()=>process.exit(5),500));${writePid()};setInterval(()=>{},1e9)`), // oxfmt-ignore
+      { stdio: 'pipe', logDir: tmp },
+    );
+    try {
+      await pidsWritten();
+      process.emit('SIGTERM');
+      expect(await running).toMatchObject({ exitCode: 5, signal: null });
+    } finally {
+      await keepPidsWritten();
+      await killKept();
+      await running.catch(() => {});
+    }
+  });
+
+  test("MANY_GRACE_MS is under a session's grace", () => {
+    expect(MANY_GRACE_MS).toBeLessThan(SHUTDOWN_GRACE_MS);
+  });
+
+  test('many: a stop after the command ended does nothing', async () => {
+    const stop = new AbortController();
+    const result = await runOneOff(node(''), {
+      stdio: 'pipe',
+      logDir: tmp,
+      many: { stop: stop.signal, graceMs: 200 },
+    });
+    expect(() => stop.abort()).not.toThrow();
+    expect(result).toMatchObject({ exitCode: 0, signal: null });
+  });
+
+  test('many: nested, the output is still piped to onLine and no log is written', async () => {
+    const logDir = path.join(tmp, 'logs');
+    const { lines, onLine } = recorder();
+    await runOneOff(node(`${fdsOf().args[1]};console.log('hi')`), {
+      stdio: 'inherit',
+      logDir,
+      isTerminal: () => true,
+      agent: false,
+      nested: true,
+      many: { onLine, stop: new AbortController().signal },
+    });
+    expect(handedOver()).toEqual([false, false]);
+    expect(lines).toEqual([['stdout', 'hi']]);
+    expect(fs.existsSync(logDir)).toBe(false);
   });
 });

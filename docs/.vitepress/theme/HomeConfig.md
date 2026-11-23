@@ -21,6 +21,7 @@ export default defineConfig({
       port: 3000,
       deps: [{ service: 'backend', wait: true }],
       urls: [{ label: 'Home page', url: '/' }],
+      tags: ['browser'],
     },
   },
   infra: {

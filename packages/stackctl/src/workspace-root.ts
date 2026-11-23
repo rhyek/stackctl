@@ -88,7 +88,15 @@ export function recordedConfigDir(): string | undefined {
 }
 
 /** Options that take a value, in `stackctl`'s own argument position. */
-const VALUE_OPTIONS = new Set(['-p', '--profile', '--workspace-dir', '-s', '--service']);
+const VALUE_OPTIONS = new Set([
+  '-p',
+  '--profile',
+  '--workspace-dir',
+  '-s',
+  '--service',
+  '-t',
+  '--tag',
+]);
 
 /** The end of stackctl's own arguments: a bare `--`, or an `infra <provider>` passthrough. */
 function ownArgs(argv: readonly string[]): readonly string[] {

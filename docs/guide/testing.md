@@ -28,9 +28,10 @@ Call `startStack()` from the suite's global setup. It starts a headless session 
 once the infra and every service are healthy:
 
 ```ts
-import { startStack } from 'stackctl';
+import { infra, startStack } from 'stackctl';
 
-// in the global setup
+// in the global setup: clean databases, then the stack
+await infra.reset({ profile: 'test' });
 const stack = await startStack({ profile: 'test', services: ['web'] });
 // hand stack.origins.web to the specs
 
@@ -63,9 +64,16 @@ exits, leaving the session running for the next steps:
 
 In CI the profile defaults to `test`, so both commands act on the test session. If the stack
 doesn't come up, `--detach` stops it, prints the error and the log's last 50 lines, and exits
-`1`. See [`stackctl start`](../reference/cli.md#stackctl-start).
+`1`. See [`stackctl start`](../reference/cli.md#stackctl-start). A suite that calls
+`startStack()` itself needs neither step.
 
-A suite that calls `startStack()` itself needs neither step.
+A suite run after `--detach` reads that session with
+[`attach()`](../reference/sdk.md#attach-and-wait), which resolves with the same object
+`startStack()` does:
+
+```ts
+const stack = await attach({ profile: 'test' });
+```
 
 ## From a shell script
 
@@ -88,4 +96,5 @@ For a suite that needs the environment but not the services, run it through
 
 ```bash
 sctl --profile test run api test
+sctl --profile test run -t backend test   # every service tagged backend
 ```

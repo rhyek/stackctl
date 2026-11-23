@@ -9,6 +9,7 @@ import {
   type InfraDestroyTrigger,
   type InfraEvent,
   type InfraRunOptions,
+  type InfraRunAction,
   type InfraRunResult,
   type InfraRunSummary,
   type InfraServiceCallbacks,
@@ -78,6 +79,8 @@ export interface InfraRunRequest {
    * `restart` or `reset`. A `reset` destroys the targets before starting them.
    */
   trigger?: InfraStartTrigger;
+  /** How long to wait for the services to be ready, in ms. Default: the provider's `readyTimeout`. */
+  readyTimeoutMs?: number;
   onEvent?: (event: InfraEvent) => void;
 }
 
@@ -134,8 +137,6 @@ export abstract class InfraProvider {
 
   /** The services this provider can run. */
   abstract listServices(): Promise<string[]>;
-  /** Stops and removes the services, keeping their data. Resolves with the tool's exit code. */
-  abstract down(services: string[]): Promise<number>;
   /** Runs the provider's own tool with `args`, in `invocationCwd`, the terminal handed over. */
   abstract passthrough(args: string[], invocationCwd: string): Promise<number>;
   /**
@@ -250,6 +251,18 @@ export abstract class InfraProvider {
     };
   }
 
+  /**
+   * What a reset or a destroy of `targets` couldn't remove, one message per thing, `[]` when it
+   * can remove all of it. `everything` is the whole project (nothing was named). Asked before any
+   * hook runs, so a refusal leaves everything as it was.
+   */
+  protected abstract removalRefusals(
+    targets: string[],
+    everything: boolean,
+    action: 'reset' | 'destroy',
+  ): Promise<string[]>;
+  /** Stops the targets and removes their containers, keeping their named volumes. */
+  protected abstract stopServices(targets: string[], emit: Emit): Promise<void>;
   /** Removes the named services' containers and data — and nothing belonging to another service. */
   protected abstract destroyServices(targets: string[], emit: Emit): Promise<void>;
   /** Removes everything the provider created for the project. */
@@ -287,10 +300,16 @@ export abstract class InfraProvider {
     return {};
   }
 
+  /** Whether the config leaves `service` enabled in this profile. */
+  protected enabled(service: string): boolean {
+    return this.serviceConfig[service]?.enabled !== false;
+  }
+
   /**
    * Brings the targets up and waits until each is ready: (on a `reset`) `beforeDestroy`,
    * destroy them and `afterDestroy`, then `beforeStart`, one start for all of them, a readiness poll, and each
-   * service's `afterReady` the moment *it* is ready.
+   * service's `afterReady` the moment *it* is ready. A reset with nothing named destroys the whole
+   * project; one that couldn't remove something is refused before any of it runs.
    *
    * A failure before the services are started aborts the run and fails every target. After
    * that, each service runs to its own result. Rejects only for a request that can't be run
@@ -299,7 +318,10 @@ export abstract class InfraProvider {
   async up(req: InfraRunRequest = {}): Promise<InfraRunSummary> {
     const emit = req.onEvent ?? (() => {});
     const trigger = req.trigger ?? 'start';
-    const { targets } = await this.resolveTargets(req.services, 'up');
+    const { targets, everything } = await this.resolveTargets(req.services, 'up');
+    if (trigger === 'reset' && targets.length > 0) {
+      await this.refuseWhatCantBeRemoved(targets, everything, 'reset');
+    }
     const run = new Run(targets, emit, this.runtime.connectControl);
     emit({ type: 'targets', provider: this.key, action: 'up', services: targets });
     run.setAll('pending');
@@ -312,13 +334,13 @@ export abstract class InfraProvider {
         return run.summary();
       }
       if (trigger === 'reset') {
-        // Exactly the services about to be started, never the whole project: a reset must not
-        // take the data of a service it isn't bringing back — one disabled in this profile, say.
+        // With nothing named, the whole project, disabled services' data included; with names,
+        // exactly those services.
         run.setAll('destroying');
         if (!(await this.runPhase('beforeDestroy', run, trigger))) {
           return run.summary();
         }
-        await this.destroyServices(targets, emit);
+        await (everything ? this.destroyAll(emit) : this.destroyServices(targets, emit));
         if (!(await this.runPhase('afterDestroy', run, trigger))) {
           return run.summary();
         }
@@ -335,7 +357,33 @@ export abstract class InfraProvider {
       return run.summary();
     }
 
-    await this.awaitReady(run, trigger, fresh);
+    await this.awaitReady(run, trigger, fresh, req.readyTimeoutMs ?? this.readyTimeout);
+    return run.summary();
+  }
+
+  /**
+   * Stops the targets and removes their containers, keeping their named volumes: with none named,
+   * every enabled service, by name, so a disabled service's container and the project's network
+   * are left alone. A disabled service named is refused before anything stops. Runs no callback.
+   */
+  async down(req: Omit<InfraRunRequest, 'trigger'> = {}): Promise<InfraRunSummary> {
+    const emit = req.onEvent ?? (() => {});
+    const { targets } = await this.resolveTargets(req.services, 'down');
+    const run = new Run(targets, emit, this.runtime.connectControl);
+    emit({ type: 'targets', provider: this.key, action: 'down', services: targets });
+    if (targets.length === 0) {
+      return run.summary();
+    }
+    run.setAll('stopping');
+    try {
+      await this.stopServices(targets, emit);
+    } catch (err) {
+      run.failAll(errorMessage(err));
+      return run.summary();
+    }
+    for (const service of targets) {
+      run.succeed(service, 'stopped');
+    }
     return run.summary();
   }
 
@@ -343,11 +391,13 @@ export abstract class InfraProvider {
    * Calls `beforeDestroy({ trigger: 'destroy' })`, removes the targets and their data, then calls
    * `afterDestroy({ trigger: 'destroy' })`. A `beforeDestroy` failure removes nothing. With no
    * services named it removes the whole project — disabled services' leftovers included — and
-   * the targets, for the callbacks, are the enabled ones.
+   * the targets, for the callbacks, are the enabled ones. One that couldn't remove something is
+   * refused before any of it runs.
    */
   async destroy(req: Omit<InfraRunRequest, 'trigger'> = {}): Promise<InfraRunSummary> {
     const emit = req.onEvent ?? (() => {});
     const { targets, everything } = await this.resolveTargets(req.services, 'destroy');
+    await this.refuseWhatCantBeRemoved(targets, everything, 'destroy');
     const run = new Run(targets, emit, this.runtime.connectControl);
     emit({ type: 'targets', provider: this.key, action: 'destroy', services: targets });
     run.setAll('destroying');
@@ -387,7 +437,7 @@ export abstract class InfraProvider {
    */
   private async resolveTargets(
     named: string[] | undefined,
-    action: 'up' | 'destroy',
+    action: InfraRunAction,
   ): Promise<{ targets: string[]; everything: boolean }> {
     const all = await this.listServices();
     const strays = Object.keys(this.serviceConfig).filter((name) => !all.includes(name));
@@ -398,23 +448,34 @@ export abstract class InfraProvider {
           `Services: ${all.join(', ') || '(none)'}`,
       );
     }
-    const enabled = (name: string) => this.serviceConfig[name]?.enabled !== false;
     if (!named || named.length === 0) {
-      return { targets: all.filter(enabled), everything: true };
+      return { targets: all.filter((name) => this.enabled(name)), everything: true };
     }
     const unknown = named.filter((name) => !all.includes(name));
     if (unknown.length > 0) {
       throw unknownServicesError(unknown, all);
     }
-    const disabled = named.filter((name) => !enabled(name));
-    if (action === 'up' && disabled.length > 0) {
+    const disabled = named.filter((name) => !this.enabled(name));
+    if (action !== 'destroy' && disabled.length > 0) {
       throw new InfraError(
         `infra service${disabled.length > 1 ? 's' : ''} ${disabled.map((s) => `"${s}"`).join(', ')} ` +
           `${disabled.length > 1 ? 'are' : 'is'} disabled for profile "${this.runtime.profile}" ` +
-          '(`enabled` in the stackctl config), so there is nothing to bring up.',
+          `(\`enabled\` in the stackctl config), so there is nothing to ${action === 'up' ? 'bring up' : 'stop'}.`,
       );
     }
     return { targets: [...new Set(named)], everything: false };
+  }
+
+  /** Throws an {@link InfraError} listing what `removalRefusals` found, before anything runs. */
+  private async refuseWhatCantBeRemoved(
+    targets: string[],
+    everything: boolean,
+    action: 'reset' | 'destroy',
+  ): Promise<void> {
+    const refusals = await this.removalRefusals(targets, everything, action);
+    if (refusals.length > 0) {
+      throw new InfraError(refusals.join('\n'));
+    }
   }
 
   /**
@@ -473,11 +534,12 @@ export abstract class InfraProvider {
     run: Run,
     trigger: InfraStartTrigger,
     fresh: Set<string>,
+    timeoutMs: number,
   ): Promise<void> {
     const pending = new Set(run.targets);
     const settling: Promise<void>[] = [];
     const lastDetail = new Map<string, string>();
-    const deadline = Date.now() + this.readyTimeout;
+    const deadline = Date.now() + timeoutMs;
     const interval = this.runtime.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
 
     while (pending.size > 0) {
@@ -509,10 +571,7 @@ export abstract class InfraProvider {
       if (Date.now() >= deadline) {
         for (const service of pending) {
           const saw = lastDetail.get(service);
-          run.fail(
-            service,
-            `not ready after ${formatTimeout(this.readyTimeout)}${saw ? ` (${saw})` : ''}`,
-          );
+          run.fail(service, `not ready after ${formatTimeout(timeoutMs)}${saw ? ` (${saw})` : ''}`);
         }
         break;
       }
@@ -596,7 +655,7 @@ export abstract class InfraProvider {
   }
 }
 
-/** The bookkeeping of one `up` or `destroy`: each target's result, reported as it changes. */
+/** The bookkeeping of one `up`, `down` or `destroy`: each target's result, reported as it changes. */
 class Run {
   private readonly results = new Map<string, InfraServiceResult>();
   private session: Promise<ControlClient | undefined> | null = null;
@@ -643,7 +702,7 @@ class Run {
     }
   }
 
-  succeed(service: string, status: 'ready' | 'destroyed'): void {
+  succeed(service: string, status: 'ready' | 'stopped' | 'destroyed'): void {
     this.results.set(service, { service, ok: true });
     this.set(service, status);
   }

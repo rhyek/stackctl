@@ -3,15 +3,26 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { WaitedSession } from './commands/wait';
 import type { ControlClient, SessionEvent, SessionServiceStatus } from './control-client';
 import {
   DETACHED_SESSION_VAR,
   type ProfileSource,
-  assertOutsideCli,
-  rejectUnknownOptions,
+  assertSdkCall,
+  assertStringArrays,
 } from './env-base';
 import type { InfraStatus } from './infra/control';
 import type { ServiceName } from './register';
+import { flagArgs, selectionArgs } from './sdk/cli-child';
+import {
+  type ServiceCommandResult,
+  type StackServiceOptions,
+  type StackServiceStartOptions,
+  type StatusReport,
+  service,
+  status,
+  stop as stopSession,
+} from './sdk/session';
 
 // `startStack()`: a headless session forked as this process's child, for a test suite's setup. It
 // runs the CLI rather than stackctl in-process, so the config loads in a process of its own and
@@ -20,6 +31,7 @@ import type { ServiceName } from './register';
 /** The options of {@link StartStackOptions}, checked at runtime since a JavaScript caller bypasses the types. */
 const START_STACK_OPTIONS = [
   'services',
+  'tags',
   'profile',
   'workspaceDir',
   'waitTimeout',
@@ -28,8 +40,13 @@ const START_STACK_OPTIONS = [
 ];
 
 export interface StartStackOptions<P extends string = ServiceName> {
-  /** The services to bring up, as `-s` names them. Their deps and the profile's infra come too. */
-  services: P[];
+  /**
+   * The services to bring up, as `-s` names them. Their deps and the profile's infra come too.
+   * Required unless `tags` names something.
+   */
+  services?: P[];
+  /** Brings up every service with one of these tags too, as `-t` does. */
+  tags?: string[];
   /** The profile, as `--profile` takes it. Unset, the CLI resolves it as it does from a shell. */
   profile?: string;
   /**
@@ -53,8 +70,11 @@ export interface StartStackOptions<P extends string = ServiceName> {
 }
 
 export interface Stack<P extends string = ServiceName> {
-  /** Always `started`: a stack's session is the one its call started. */
-  session: 'started';
+  /**
+   * `started`: the session `startStack()` started, which ends with this process. `attached`: one
+   * already running, from `attach()` or `wait()`, which doesn't.
+   */
+  session: 'started' | 'attached';
   /** The session's pid. */
   pid: number;
   /** The session's control-API port. */
@@ -85,6 +105,69 @@ export interface Stack<P extends string = ServiceName> {
   control: ControlClient<P>;
   /** Quits the session, resolving once it has exited. */
   stop(): Promise<void>;
+  /** The session now, and the last commands that acted on it, as the SDK's `status()`. */
+  status(): Promise<StatusReport>;
+  /** `stackctl service …` on this session, as the SDK's `service`. */
+  service: {
+    /** Starts the services, adding any the session lacks, and waits until they are ready. */
+    start(options: StackServiceStartOptions): Promise<ServiceCommandResult>;
+    /** Stops the services. */
+    stop(options: StackServiceOptions): Promise<ServiceCommandResult>;
+    /** Restarts the services and waits until they are ready. */
+    restart(options: StackServiceStartOptions): Promise<ServiceCommandResult>;
+  };
+}
+
+/**
+ * The methods a stack has whichever way it came, acting on its profile in its workspace through
+ * the same functions the SDK exports.
+ */
+function sessionMethods(where: {
+  profile: string;
+  workspaceDir: string;
+}): Pick<Stack, 'status' | 'service'> {
+  return {
+    status: () => status(where),
+    service: {
+      start: (options) => service.start({ ...options, ...where }),
+      stop: (options) => service.stop({ ...options, ...where }),
+      restart: (options) => service.restart({ ...options, ...where }),
+    },
+  };
+}
+
+/**
+ * The stack for a ready session another process started: its origins and domain read once from
+ * its status. `stop()` quits it, as the SDK's `stop()` does.
+ */
+export async function stackFrom<P extends string = ServiceName>(
+  ready: WaitedSession,
+): Promise<Stack<P>> {
+  const { createControlClient } = await import('./control-client');
+  const control = createControlClient<P>(ready.port);
+  const now = await control.query.status();
+  if (!now?.config) {
+    throw new Error(
+      `stackctl: the session on port ${String(ready.port)} did not report its config`,
+    );
+  }
+  const where = { profile: ready.profile, workspaceDir: ready.workspaceDir };
+  return {
+    session: 'attached',
+    pid: ready.pid,
+    port: ready.port,
+    profile: ready.profile,
+    profileSource: ready.profileSource,
+    logFile: ready.logFile,
+    services: ready.services as P[],
+    origins: originsOf<P>(now.config),
+    domain: now.reverseProxy?.domain ?? null,
+    control,
+    stop: async () => {
+      await stopSession(where);
+    },
+    ...sessionMethods(where),
+  } as Stack<P>;
 }
 
 /** What a forked session sends its parent over the IPC channel. */
@@ -138,19 +221,16 @@ export async function startStack<P extends string = ServiceName>(
   options: StartStackOptions<P>,
 ): Promise<Stack<P>> {
   // A config that started a stack as it loaded would fork a session that loads it again, and so on.
-  assertOutsideCli('startStack');
-  rejectUnknownOptions('startStack', options, START_STACK_OPTIONS);
-  const args = [
-    ...(options.profile === undefined ? [] : ['--profile', options.profile]),
-    ...(options.workspaceDir === undefined ? [] : ['--workspace-dir', options.workspaceDir]),
-    'start',
-    '--headless',
-    ...options.services.flatMap((name) => ['-s', name]),
-    ...(options.killOthers ? ['--kill-others'] : []),
-  ];
-  note(`starting a session: ${options.services.join(', ')}`);
+  assertSdkCall('startStack', options, START_STACK_OPTIONS);
+  assertStringArrays('startStack', options, ['services', 'tags']);
+  const services = options.services ?? [];
+  const tags = options.tags ?? [];
+  if (services.length === 0 && tags.length === 0) {
+    throw new Error('startStack: `services` or `tags` must name something');
+  }
+  note(`starting a session: ${[...services, ...tags.map((tag) => `tag ${tag}`)].join(', ')}`);
   const launched = await launchSession<P>({
-    args,
+    args: startStackArgs(options),
     cwd: process.cwd(),
     env: options.env ?? stackEnvironment(),
     waitTimeout: options.waitTimeout ?? DEFAULT_WAIT_TIMEOUT_S,
@@ -164,7 +244,25 @@ export async function startStack<P extends string = ServiceName>(
   // From here the session needn't keep this process running: it ends when this process does.
   child.unref();
   child.channel?.unref();
-  return { session: 'started', ...launched.ready, control, stop };
+  return {
+    session: 'started',
+    ...launched.ready,
+    control,
+    stop,
+    ...sessionMethods({ profile: launched.ready.profile, workspaceDir: launched.workspaceDir }),
+  } as Stack<P>;
+}
+
+/** The arguments of the CLI that {@link startStack} forks for `options`. */
+export function startStackArgs<P extends string>(options: StartStackOptions<P>): string[] {
+  return [
+    ...flagArgs('--profile', options.profile),
+    ...flagArgs('--workspace-dir', options.workspaceDir),
+    'start',
+    '--headless',
+    ...selectionArgs(options),
+    ...(options.killOthers ? ['--kill-others'] : []),
+  ];
 }
 
 /** What {@link launchSession}'s session reports once it is healthy: the fields a stack and `start --detach`'s line are built from. */
@@ -194,6 +292,8 @@ export interface ForkedSession {
 export type LaunchedSession<P extends string = ServiceName> = ForkedSession & {
   started: StackMessage;
   control: ControlClient<P>;
+  /** The workspace root: the directory holding the session's config. */
+  workspaceDir: string;
   ready: ReadySession<P>;
 };
 
@@ -361,6 +461,7 @@ export async function launchSession<P extends string = ServiceName>(opts: {
   return {
     ...session,
     control,
+    workspaceDir: path.dirname(status.configPath),
     ready: {
       pid: started.pid,
       port: started.port,

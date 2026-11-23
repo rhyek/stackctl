@@ -8,8 +8,8 @@ import {
   useState,
   type ReactElement,
 } from 'react';
-// Internal tool for choosing `PACKAGE_PALETTE` (`src/colors.ts`): a mock of the run screen, log
-// rows with `[name]` prefixes above the footer, that you page through candidate palettes on.
+// Internal tool for choosing `PACKAGE_PALETTE` (`src/log-colors.ts`): a mock of the run screen,
+// log rows with `[name]` prefixes above the footer, that you page through candidate palettes on.
 //
 //   ← →   previous / next palette (→ past the last one generates a new one)
 //   ↑ ↓   more / fewer services (1–7)
@@ -86,13 +86,13 @@ const PALETTE_SIZE = PACKAGE_PALETTE.length;
 
 /**
  * The hue arc candidates are drawn from, in OKLCH degrees: red (15°) round through orange,
- * yellow, green, blue and purple (320°). The gap left out is magenta and pink — `colors.ts`
+ * yellow, green, blue and purple (320°). The gap left out is magenta and pink — `log-colors.ts`
  * rules pink out of the package palette.
  */
 const HUE_START = 15;
 const HUE_SPAN = 305;
 
-/** Below this chroma a color reads as a pastel, which `colors.ts` also rules out. */
+/** Below this chroma a color reads as a pastel, which `log-colors.ts` also rules out. */
 const MIN_CHROMA = 0.12;
 
 type Oklch = { l: number; c: number; h: number };
@@ -848,7 +848,7 @@ console.log(
     `Palette ${lastState.index + 1} of ${lastState.palettes.length}, in the order last shown:`,
     finalPalette.map(({ color }) => chalk.hex(color)('██')).join(' '),
     '',
-    'export const PACKAGE_PALETTE: readonly Color[] = [',
+    'export const PACKAGE_PALETTE: readonly string[] = [',
     ...finalPalette.map(({ color }) => `  '${color}',`),
     '];',
   ].join('\n'),

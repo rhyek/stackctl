@@ -1,49 +1,55 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { startedByAgent } from '../agent-detection';
-import { getRegisteredPackages } from '../config';
 import { RESOLVE_ENV_FD } from '../env';
 import { currentProfile, isNested } from '../env-base';
-import { type OneOffCommandEntry, cliEventLog, commandBy, maskSecrets } from '../event-log';
+import { commandBy } from '../event-log';
+import { oneOffRecorder } from '../one-off/record';
 import {
+  type ManyTarget,
+  type OneOffAsk,
+  type OneOffManyRequest,
+  type OneOffManyResolution,
   type OneOffResolution,
   type OneOffSpec,
-  type OneOffWhere,
   ScriptNotFoundError,
   oneOffEnvLayer,
   oneOffEnvResolution,
   oneOffSpecFor,
   resolveOneOff,
+  resolveOneOffMany,
   resolveOneOffTarget,
+  whereOf,
 } from '../one-off/resolve';
 import { CommandStartError, runOneOff } from '../one-off/run';
 import { exitCodeOf } from '../scripts';
 import { oneOffLogDir } from '../session-files';
+import { UnknownTagError } from '../tags';
 import { type ResolvedTarget, TargetNotFoundError } from '../target';
 import { loadedConfigOrExit } from './workspace';
 
 // `stackctl exec` and `stackctl run`: thin wrappers over the one-off resolver and runner the
 // SDK's `exec()` and `run()` use too. And the hidden command those two resolve through.
 
-/** Where `exec` and `run` were invoked, and their own options. */
+/** Where `exec` and `run` were invoked. */
 export interface OneOffContext {
-  /** The directory stackctl was invoked in: what a relative target resolves against. */
+  /** The directory stackctl was invoked in. */
   invocationCwd: string;
-  /** Whether `--workspace-dir` was given: a relative target then resolves against the root. */
-  workspaceDirGiven: boolean;
+  /**
+   * What a relative target resolves against: the invocation directory, or the root when
+   * `--workspace-dir` was given.
+   */
+  base: string;
 }
 
-/** A one-off command as the command line gave it. */
-export type OneOffCommand =
-  | { kind: 'exec'; target?: string; command: [string, ...string[]] }
-  | { kind: 'run'; target?: string; script: string; args: string[] };
+/** A one-off command as the command line gave it: what it runs, and in which target. */
+export type OneOffCommand = OneOffAsk & { target?: string };
 
 /**
  * Loads the config — once — with the workspace's environment, and the proxy's self-signed
  * certificates, made now if no session has yet: a test runner started here trusts the
  * `https://` origins of the stack it starts. Returns the workspace root, where the CLI anchored.
  */
-async function loadForOneOff(): Promise<string> {
+export async function loadForOneOff(): Promise<string> {
   const config = await loadedConfigOrExit();
   const root = process.cwd();
   if (config.reverseProxy?.tls === 'self-signed') {
@@ -54,18 +60,11 @@ async function loadForOneOff(): Promise<string> {
   return root;
 }
 
-/** Where a one-off command running in `cwd` runs, for its event-log lines: a service, or a directory. */
-function whereOf(root: string, cwd: string): OneOffWhere {
-  const service = getRegisteredPackages().find(
-    (pkg) => path.resolve(pkg.resolvedTargetDir) === path.resolve(cwd),
-  )?.name;
-  return service ? { service } : { dir: path.relative(root, cwd) || '.' };
-}
-
 /** Prints what a one-off command can't start for, and exits 1; rethrows anything else. */
-function exitOnOneOffError(err: unknown): never {
+export function exitOnOneOffError(err: unknown): never {
   if (
     err instanceof TargetNotFoundError ||
+    err instanceof UnknownTagError ||
     err instanceof ScriptNotFoundError ||
     err instanceof CommandStartError
   ) {
@@ -76,7 +75,7 @@ function exitOnOneOffError(err: unknown): never {
 }
 
 /**
- * `stackctl exec [target] -- <command…>` and `stackctl run [target] <script> [-- <args…>]`: runs
+ * `stackctl exec [service] -- <command…>` and `stackctl run [service] <script> [-- <args…>]`: runs
  * the command to completion and exits with its exit code. No preamble: they are meant to be
  * composable, so their output is only the command's own (still teed to a logfile, which
  * `stackctl logs --path` can point at).
@@ -86,10 +85,9 @@ export async function runOneOffCommand(
   context: OneOffContext,
 ): Promise<never> {
   const root = await loadForOneOff();
-  const base = context.workspaceDirGiven ? root : context.invocationCwd;
   let spec: OneOffSpec;
   try {
-    spec = resolveOneOff({ ...command, root, base });
+    spec = resolveOneOff({ ...command, root, base: context.base });
   } catch (err) {
     exitOnOneOffError(err);
   }
@@ -100,27 +98,19 @@ export async function runOneOffCommand(
     await execInPlace(spec);
   }
   // Written to the session's event log: the service (or directory) it ran in, what it ran, its
-  // exit. Its log goes in the same session's folder. Inside a command stackctl runs, that command
-  // is the one recorded, so this writes nothing.
-  const entry = isNested()
-    ? { end: () => {} }
-    : cliEventLog(root, currentProfile()).begin<OneOffCommandEntry>(
-        {
-          type: 'one-off-command',
-          kind: command.kind,
-          ...whereOf(root, spec.cwd),
-          ...(command.kind === 'exec'
-            ? { command: maskSecrets(command.command) }
-            : { script: command.script, args: maskSecrets(command.args) }),
-        },
-        commandBy(root, { agent: startedByAgent(), invocationCwd: context.invocationCwd }),
-      );
+  // exit. Its log goes in the same session's folder.
+  const entry = oneOffRecorder(command, {
+    root,
+    profile: currentProfile(),
+    nested: isNested(),
+    by: commandBy(root, { agent: startedByAgent(), invocationCwd: context.invocationCwd }),
+  })(whereOf(root, spec.cwd));
   try {
     const result = await runOneOff(spec, {
       stdio: 'inherit',
       logDir: oneOffLogDir(root, currentProfile()),
     });
-    entry.end({ ok: result.exitCode === 0, exitCode: result.exitCode ?? null, signal: result.signal ?? null }); // oxfmt-ignore
+    entry.end({ ok: result.exitCode === 0, exitCode: result.exitCode, signal: result.signal });
     process.exit(
       exitCodeOf({ exitCode: result.exitCode ?? undefined, signal: result.signal ?? undefined }),
     );
@@ -131,14 +121,13 @@ export async function runOneOffCommand(
 }
 
 /** What the hidden resolver command is asked for. */
-export interface ResolveOneOffRequest extends OneOffContext {
+export interface ResolveOneOffRequest {
   /** The target, as `exec`/`run` take it. */
   target?: string;
+  /** What a relative target resolves against. */
+  base: string;
   /** `exec`'s command, `run`'s script and arguments, or neither for an environment only. */
-  request:
-    | { kind: 'exec'; command: [string, ...string[]] }
-    | { kind: 'run'; script: string; args: string[] }
-    | { kind: 'env' };
+  request: OneOffAsk | { kind: 'env' };
 }
 
 /**
@@ -149,10 +138,9 @@ export interface ResolveOneOffRequest extends OneOffContext {
  */
 export async function printOneOffResolution(opts: ResolveOneOffRequest): Promise<never> {
   const root = await loadForOneOff();
-  const base = opts.workspaceDirGiven ? root : opts.invocationCwd;
   let target: ResolvedTarget;
   try {
-    target = resolveOneOffTarget({ target: opts.target, root, base });
+    target = resolveOneOffTarget({ target: opts.target, root, base: opts.base });
   } catch (err) {
     exitOnOneOffError(err);
   }
@@ -172,6 +160,39 @@ export async function printOneOffResolution(opts: ResolveOneOffRequest): Promise
     root,
     profile: currentProfile(),
     where: whereOf(root, spec?.cwd ?? target.dir),
+  };
+  fs.writeSync(RESOLVE_ENV_FD, JSON.stringify(result));
+  process.exit(0);
+}
+
+/**
+ * Loads the config as {@link loadForOneOff} does, and resolves the many form's commands
+ * ({@link resolveOneOffMany}). What can't start (an unknown service or tag, a named service
+ * without the script) is printed, and exits 1.
+ */
+export async function loadManyForOneOff(
+  request: OneOffManyRequest,
+): Promise<{ root: string; targets: ManyTarget[] }> {
+  const root = await loadForOneOff();
+  try {
+    return { root, targets: resolveOneOffMany({ ...request, root }) };
+  } catch (err) {
+    exitOnOneOffError(err);
+  }
+}
+
+/**
+ * `stackctl __resolve-one-off --many`, which the many form of the SDK's `exec()`/`run()` runs:
+ * each service's command, as the many form of `exec` or `run` would run it, and the log
+ * directory, written as JSON to {@link RESOLVE_ENV_FD}. What can't start is printed, and exits 1.
+ */
+export async function printOneOffManyResolution(request: OneOffManyRequest): Promise<never> {
+  const { root, targets } = await loadManyForOneOff(request);
+  const result: OneOffManyResolution = {
+    targets,
+    logDir: oneOffLogDir(root, currentProfile()),
+    root,
+    profile: currentProfile(),
   };
   fs.writeSync(RESOLVE_ENV_FD, JSON.stringify(result));
   process.exit(0);

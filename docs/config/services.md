@@ -1,5 +1,5 @@
 ---
-description: Every option of a service in stackctl.config.ts - port, healthcheck and readiness, deps, command, urls, autostart, its own env files and variables, tokens, logs, color and directory.
+description: Every option of a service in stackctl.config.ts - port, healthcheck and readiness, deps, command, urls, autostart, tags, its own env files and variables, tokens, logs, color and directory.
 ---
 
 # Services
@@ -14,15 +14,18 @@ export default defineConfig({
     api: {
       port: ({ envs }) => Number(envs.API_PORT),
       healthcheck: '/health',
+      tags: ['backend'],
     },
     web: {
       port: 3000,
       deps: [{ service: 'api', wait: true }],
       urls: [''],
+      tags: ['browser'],
     },
     worker: {
       command: ['start', { watches: false }],
       autostart: false,
+      tags: ['backend'],
     },
   },
 });
@@ -40,7 +43,8 @@ Every option is optional. `{}` is a valid service: it runs the `dev` script in
 | [`urls`](#urls)                 | none                  | Links shown in the footer.                         |
 | [`autostart`](#autostart)       | `true`                | Whether it starts with the session.                |
 | [`selectable`](#selectable)     | `true`                | Whether the picker lists it.                       |
-| [`targetDir`](#targetdir)       | `<serviceRootDir>/<name>` | The service's directory.                       |
+| [`tags`](#tags)                 | `[]`                  | Labels for picking services together.              |
+| [`dir`](#dir)                   | `<serviceRootDir>/<name>` | The service's directory.                       |
 | [`env`](#env)                   | the config's          | `.env` files, variables and overrides of its own.  |
 | [`tokens`](#tokens)             | none                  | Values for this service's callbacks.               |
 | [`logs`](#logs)                 | inherits              | Timestamps and log formatting for this service.    |
@@ -153,7 +157,7 @@ See [Links in the footer](./urls.md#links-in-the-footer).
 - **Default:** `true`
 
 Set `false` to leave a selected service stopped when the session starts. Start it with `s` in
-the terminal UI, `stackctl service start -s <name>`, or the control API. A service that waits
+the terminal UI, `stackctl service start -s <service>`, or the control API. A service that waits
 for it waits until you do.
 
 ## `selectable`
@@ -162,9 +166,27 @@ for it waits until you do.
 - **Default:** `true`
 
 Set `false` to hide a service from the picker. It still runs as another service's dep, or with
-`-s`.
+`-s` or `-t`.
 
-## `targetDir`
+## `tags`
+
+- **Type:** `string[]`
+- **Default:** `[]`
+
+```ts
+services: {
+  api: { tags: ['backend', 'data'] },
+  worker: { tags: ['backend'] },
+  web: { tags: ['frontend'] },
+}
+```
+
+Labels for picking services together with `-t, --tag`. An empty tag is an error, and a repeated
+one counts once. Each resolved service carries its tags, so your own code can select by them,
+in a script that imports the config and runs from the workspace root:
+`Object.values(config.services).filter((s) => s.tags.includes('backend'))`.
+
+## `dir`
 
 - **Type:** `string`
 - **Default:** `<serviceRootDir>/<name>`
@@ -205,7 +227,7 @@ Each option works as its namesake in the config's [`env`](./env.md), for this se
 - **A callback stands for `vars`**: `env: ({ envs }) => ({ … })`. Its `envs` holds the service's
   `.env` files and the config's `vars` when it inherits, and its `tokens` are the service's.
 - **It reaches the service everywhere**: its process, its callbacks (`port`, `urls`, …), and
-  [`stackctl exec` and `run`](../guide/commands.md#targets) with it as the target. A directory
+  [`stackctl exec` and `run`](../guide/commands.md#naming-a-service) on it. A directory
   that is no service gets the config's `env` alone.
 - **`decrypt` is the config's**, and applies to every service either way.
 - **A file the config's `additionalFiles` lists** is an error here, unless `inherits: false`.

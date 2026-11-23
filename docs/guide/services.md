@@ -53,7 +53,7 @@ script, and `command` says which kind it is:
 | `'dev'` (the default)             | watches files and reloads       | nothing to do                         |
 | `['start', { watches: false }]`   | runs once, from current source  | restart it                            |
 
-Restart a service with `r` in the terminal UI, `sctl service restart -s <name>`, or
+Restart a service with `r` in the terminal UI, `sctl service restart -s <service>`, or
 `POST /command/service/restart/<name>` on the [control API](../reference/control-api.md).
 `watches` changes nothing about how the service runs: it tells you, and a
 [coding agent](../ai/playbook.md#after-editing-code), whether a restart is needed.

@@ -176,15 +176,12 @@ describe('sessions', () => {
     test.each([
       [
         ['-s', 'web', 'exec', '--', 'true'],
-        'exec takes the service or directory as its first argument: stackctl exec api -- <command>',
+        "exec's options go after it: stackctl exec -s api -- <command>",
       ],
-      [
-        ['-s', 'web', 'run', 'build'],
-        'run takes the service or directory as its first argument: stackctl run api <script>',
-      ],
+      [['-s', 'web', 'run', 'build'], "run's options go after it: stackctl run -s api <script>"],
       [
         ['start', '-s', 'web', 'exec', '--', 'true'],
-        'exec takes the service or directory as its first argument: stackctl exec api -- <command>',
+        "exec's options go after it: stackctl exec -s api -- <command>",
       ],
     ])(
       'stackctl %j fails, saying where the service goes, and starts no session',

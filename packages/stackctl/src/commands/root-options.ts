@@ -15,8 +15,8 @@ export function rootOptionsRefusal(opts: StartOptions): string | undefined {
     if (opts.ui) {
       return "--ui and --detach can't be combined.";
     }
-    if (opts.service.length === 0 && !opts.lastAnswers) {
-      return '--detach needs services to start: pass --service or --last-answers.';
+    if (opts.service.length === 0 && opts.tag.length === 0 && !opts.lastAnswers) {
+      return '--detach needs services to start: pass --service, --tag or --last-answers.';
     }
     if (opts.waitTimeout !== undefined && !(opts.waitTimeout > 0)) {
       return '--wait-timeout takes a number of seconds above 0.';

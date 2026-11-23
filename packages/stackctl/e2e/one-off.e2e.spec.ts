@@ -1,15 +1,17 @@
 /**
  * `stackctl exec` hands the terminal to the command: on a terminal the command sees one, and
- * without one (or for a coding agent) its output is piped and logged, as before.
+ * without one (or for a coding agent) its output is piped and logged, as before. With `-s` or
+ * `-t`, `exec` and `run` run the command in several services at once, each line labelled.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { beforeAll, expect, test } from 'vitest';
+import { beforeAll, describe, expect, test } from 'vitest';
+import { processStartTime } from '../src/process-info';
 import { cliPath } from './cli';
 import { PORTS } from './fixture';
-import { CliProcess, childEnv, runCli } from './processes';
-import { Pty } from './pty';
+import { CliProcess, type Owned, childEnv, runCli, signalOwned, track, until } from './processes';
+import { Pty, stripAnsi } from './pty';
 import { fixtureWorkspace } from './suite';
 
 const ws = fixtureWorkspace();
@@ -39,6 +41,17 @@ beforeAll(() => {
   const api = JSON.parse(fs.readFileSync(pkg('api'), 'utf8'));
   api.scripts.wrapped = `stackctl exec -- sh -c 'echo wrapped-out; ${MARKER}'`;
   fs.writeFileSync(pkg('api'), JSON.stringify(api));
+  // The many form's scripts: `check` on both `backend` services, `fail` that fails at once on
+  // `web` and runs on in `api`, `only-api` on `api` alone, and `wrap-many` running the many form
+  // inside a script.
+  const addScripts = (name: string, scripts: Record<string, string>) => {
+    const json = JSON.parse(fs.readFileSync(pkg(name), 'utf8'));
+    Object.assign(json.scripts, scripts);
+    fs.writeFileSync(pkg(name), JSON.stringify(json));
+  };
+  addScripts('api', { check: 'echo check-api', fail: 'sleep 30', 'only-api': 'echo only-api' });
+  addScripts('worker', { check: 'echo check-worker' });
+  addScripts('web', { fail: 'exit 3', 'wrap-many': 'stackctl exec -s api -- echo inner' });
 });
 
 /** The command lines of `pid`'s ancestors below `top`, nearest first. */
@@ -220,5 +233,250 @@ test('a nested exec becomes the command as a child would start: blocking streams
     status: 0,
     stdout: 'y\n',
     stderr: '',
+  });
+});
+
+/** `pid`'s children, as `ps` lists them now: their pids and command lines. */
+function childrenOf(pid: number): { pid: number; command: string }[] {
+  return execFileSync('ps', ['-A', '-o', 'pid=,ppid=,command='], { encoding: 'utf8' })
+    .split('\n')
+    .map((line) => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line))
+    .filter((match) => match !== null && Number(match[2]) === pid)
+    .map((match) => ({ pid: Number(match![1]), command: match![3]! }));
+}
+
+/** Whether `owned` is still the process it was when its start time was read. */
+async function alive(owned: Owned): Promise<boolean> {
+  return owned.startedAt !== null && (await processStartTime(owned.pid)) === owned.startedAt;
+}
+
+describe('the many form', () => {
+  test('run -t backend check: both scripts run, labelled; exit 0', async () => {
+    const proc = await runCli(['run', '-t', 'backend', 'check'], { cwd: ws() });
+    expect(await proc.waitForExit(), proc.stderr).toEqual({ code: 0, signal: null });
+    expect(proc.stdout).toMatch(/\[api\s*\] check-api/);
+    expect(proc.stdout).toMatch(/\[worker\s*\] check-worker/);
+    expect(proc.stderr).toMatch(/^stackctl: 2 ok$/m);
+    // The summary is stderr's alone: stdout has the scripts' lines and nothing else.
+    expect(proc.stdout).not.toContain('stackctl:');
+  });
+
+  test("exec -s api -s worker -- sh -c 'echo $PORT': each line carries its own service's port", async () => {
+    const proc = await runCli(
+      ['exec', '-s', 'api', '-s', 'worker', '--', 'sh', '-c', 'echo "port=[$PORT] $E2E_SVC_VAR"'],
+      { cwd: ws() },
+    );
+    expect(await proc.waitForExit(), proc.stderr).toEqual({ code: 0, signal: null });
+    expect(proc.stdout).toMatch(new RegExp(`\\[api\\s*\\] port=\\[${String(PORTS.api)}\\] from-api$`, 'm')); // oxfmt-ignore
+    // worker has no port.
+    expect(proc.stdout).toMatch(/\[worker\s*\] port=\[\] from-worker$/m);
+  });
+
+  test('run -s web -s api fail: the first failure stops the rest; exit 1', async () => {
+    const started = Date.now();
+    const proc = await runCli(['run', '-s', 'web', '-s', 'api', 'fail'], { cwd: ws() });
+    expect(await proc.waitForExit(), proc.stderr).toEqual({ code: 1, signal: null });
+    // `api`'s `sleep 30` was stopped, not waited for.
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(proc.stderr).toMatch(/^stackctl: 1 failed, 1 stopped$/m);
+    expect(proc.stderr).toMatch(/^ {2}web\s+failed\s+exit 3, /m);
+    expect(proc.stderr).toMatch(/^ {2}api\s+stopped\s+/m);
+  });
+
+  test('--ignore-sibling-error lets the others finish', async () => {
+    const proc = await runCli(
+      [
+        'exec',
+        '-s',
+        'web',
+        '-s',
+        'api',
+        '--ignore-sibling-error',
+        '--',
+        'sh',
+        '-c',
+        'if [ "$(basename "$PWD")" = web ]; then exit 3; fi; sleep 1; echo finished',
+      ],
+      { cwd: ws() },
+    );
+    expect(await proc.waitForExit(), proc.stderr).toEqual({ code: 1, signal: null });
+    expect(proc.stdout).toMatch(/\[api\s*\] finished$/m);
+    expect(proc.stderr).toMatch(/^stackctl: 1 ok, 1 failed$/m);
+    expect(proc.stderr).toMatch(/^ {2}api\s+ok\s+/m);
+    expect(proc.stderr).toMatch(/^ {2}web\s+failed\s+exit 3, /m);
+  });
+
+  test('run -t backend only-api: a tagged service without the script is skipped', async () => {
+    const proc = await runCli(['run', '-t', 'backend', 'only-api'], { cwd: ws() });
+    expect(await proc.waitForExit(), proc.stderr).toEqual({ code: 0, signal: null });
+    expect(proc.stderr).toContain('skipping worker: no "only-api" script');
+    expect(proc.stdout).toMatch(/\[api\s*\] only-api$/m);
+    expect(proc.stdout).not.toContain('worker');
+    expect(proc.stderr).toMatch(/^stackctl: 1 ok, 1 skipped$/m);
+  });
+
+  test('run -s worker only-api: named, the missing script is an error before anything runs', async () => {
+    const proc = await runCli(['run', '-s', 'worker', 'only-api'], { cwd: ws() });
+    expect(await proc.waitForExit()).toEqual({ code: 1, signal: null });
+    expect(proc.stderr).toContain('No "only-api" script or make target found in');
+    expect(proc.stderr).not.toContain('stackctl:');
+    expect(proc.stdout).toBe('');
+  });
+
+  test('nested: a script that runs the many form prints its lines labelled, with no date stamp of their own', async () => {
+    const proc = await runCli(['run', 'web', 'wrap-many'], { cwd: ws() });
+    expect(await proc.waitForExit(), proc.stderr).toEqual({ code: 0, signal: null });
+    expect(proc.stdout).toMatch(/^\[api\s*\] inner$/m);
+  });
+
+  test('Ctrl-C ends every command and gives the terminal back', async () => {
+    const pty = await Pty.start({
+      cwd: ws(),
+      args: ['exec', '-s', 'api', '-s', 'worker', '--', 'sleep', '30'],
+    });
+    const cli = pty.owned.pid;
+    // Both commands running, read off `ps` as the CLI's own children, before the Ctrl-C.
+    await until(
+      () => childrenOf(cli).filter((child) => child.command === 'sleep 30').length === 2,
+      30_000,
+      () => `the two sleeps never started: ${JSON.stringify(childrenOf(cli))}`,
+    );
+    const sleeps: Owned[] = await Promise.all(
+      childrenOf(cli)
+        .filter((child) => child.command === 'sleep 30')
+        .map(async (child) => ({ pid: child.pid, startedAt: await processStartTime(child.pid) })),
+    );
+    // Should the CLI leave them, the test still ends them: these pids, and no other.
+    track({
+      close: async () => {
+        await Promise.all(sleeps.map((sleep) => signalOwned(sleep, 'SIGKILL')));
+      },
+    });
+
+    // A Ctrl-C's SIGINT, sent to the CLI as a terminal sends it to the foreground process group
+    // (the commands are each in a group of their own). The driver's terminal is no controlling
+    // terminal of the CLI, so a typed `\x03` would raise no signal.
+    pty.signal('SIGINT');
+    expect(await pty.waitForExit()).toEqual({ code: 130, signal: null });
+    const text = stripAnsi(pty.raw());
+    expect(text).toMatch(/stackctl: 2 stopped/);
+    expect(text).toMatch(/^ {2}api\s+stopped\s+/m);
+    expect(text).toMatch(/^ {2}worker\s+stopped\s+/m);
+    expect(text).not.toContain('failed');
+    for (const sleep of sleeps) {
+      expect(await alive(sleep), `sleep ${String(sleep.pid)} still running`).toBe(false);
+    }
+    // The terminal as it was: the many form never turns on mouse reporting or the alternate
+    // screen, and leaves neither on.
+    expect(pty.screen.modes.get(1006)).not.toBe(true);
+    expect(pty.screen.modes.get(1002)).not.toBe(true);
+    expect(pty.screen.modes.get(1049)).not.toBe(true);
+  });
+
+  test("Ctrl-C ends a script's background job too", async () => {
+    const pidFile = path.join(ws(), '.e2e-background-pid');
+    fs.rmSync(pidFile, { force: true });
+    // A non-interactive shell starts an `&` job with SIGINT ignored, and this one holds none of
+    // the command's pipes: only a sweep of its group, once the shell has ended, reaches it.
+    const proc = await CliProcess.start(
+      ['exec', '-s', 'api', '--', 'sh', '-c', `sleep 25 >/dev/null 2>&1 & echo $! > '${pidFile}'; sleep 25`], // oxfmt-ignore
+      { cwd: ws() },
+    );
+    await until(
+      () => fs.existsSync(pidFile) && fs.readFileSync(pidFile, 'utf8').endsWith('\n'),
+      30_000,
+      () => `the command never wrote its pid\n--- stderr:\n${proc.stderr}`,
+    );
+    const pid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+    const background: Owned = { pid, startedAt: await processStartTime(pid) };
+    expect(background.startedAt, `no start time for ${String(pid)}`).not.toBeNull();
+    // Should the CLI leave it, the test still ends it: this pid, and no other.
+    track({ close: () => signalOwned(background, 'SIGKILL') });
+
+    await signalOwned(proc.owned, 'SIGINT');
+    expect(await proc.waitForExit(), proc.stderr).toEqual({ code: 130, signal: null });
+    expect(proc.stderr).toMatch(/^ {2}api\s+stopped\s+/m);
+    await until(
+      async () => !(await alive(background)),
+      5_000,
+      () => `background sleep ${String(pid)} still running`,
+    );
+  });
+
+  test('a reader that closes early ends the run quietly, with the commands', async () => {
+    const pidFile = path.join(ws(), '.e2e-many-pids');
+    fs.rmSync(pidFile, { force: true });
+    const proc = await CliProcess.start(
+      // `api` prints on; `worker` prints nothing, so no write of its own can end it once the
+      // reader is gone: only stackctl can.
+      ['exec', '-s', 'api', '-s', 'worker', '--', 'sh', '-c', `echo $$ >> '${pidFile}'; if [ "$(basename "$PWD")" = worker ]; then exec sleep 30; fi; while :; do echo tick; sleep 0.05; done`], // oxfmt-ignore
+      { cwd: ws() },
+    );
+    const lines = () => (fs.existsSync(pidFile) ? fs.readFileSync(pidFile, 'utf8') : '').split('\n').filter(Boolean); // oxfmt-ignore
+    await until(
+      () => lines().length === 2,
+      30_000,
+      () => `the commands never wrote their pids\n--- stderr:\n${proc.stderr}`,
+    );
+    const shells: Owned[] = await Promise.all(
+      lines().map(async (line) => ({ pid: Number(line), startedAt: await processStartTime(Number(line)) })), // oxfmt-ignore
+    );
+    for (const shell of shells) {
+      expect(shell.startedAt, `no start time for ${String(shell.pid)}`).not.toBeNull();
+    }
+    // Should the CLI leave them, the test still ends them: these groups, and no other.
+    track({
+      close: async () => {
+        await Promise.all(shells.map((shell) => signalOwned(shell, 'SIGKILL', true)));
+      },
+    });
+
+    // As `| head -2` does once it has its lines: the reading end of the CLI's stdout closes.
+    await proc.waitForOutput('tick');
+    proc.child.stdout!.destroy();
+    expect(await proc.waitForExit(), proc.stderr).toEqual({ code: 141, signal: null });
+    expect(proc.stderr).not.toContain('EPIPE');
+    expect(proc.stderr).not.toMatch(/^\s+at /m);
+    for (const shell of shells) {
+      await until(
+        async () => !(await alive(shell)),
+        5_000,
+        () => `command ${String(shell.pid)} still running`,
+      );
+    }
+  });
+
+  test('each command has its own log file and event-log entry', async () => {
+    const logsBefore = oneOffLogs().length;
+    const eventsBefore = oneOffEvents().length;
+    const proc = await runCli(['run', '-t', 'backend', 'check'], { cwd: ws() });
+    expect(await proc.waitForExit(), proc.stderr).toEqual({ code: 0, signal: null });
+    const logs = oneOffLogs().slice(logsBefore);
+    expect(logs).toHaveLength(2);
+    expect(logs.some((log) => /^\S+ \S+ check-api$/m.test(log))).toBe(true);
+    expect(logs.some((log) => /^\S+ \S+ check-worker$/m.test(log))).toBe(true);
+    const events = oneOffEvents().slice(eventsBefore);
+    expect(events).toHaveLength(4);
+    for (const service of ['api', 'worker']) {
+      expect(events).toContainEqual(
+        expect.objectContaining({ phase: 'begin', kind: 'run', service, script: 'check' }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          phase: 'end',
+          kind: 'run',
+          service,
+          script: 'check',
+          exitCode: 0,
+        }),
+      );
+    }
+  });
+
+  test("run api check, the single form, prints only the script's output", async () => {
+    const proc = await runCli(['run', 'api', 'check'], { cwd: ws() });
+    expect(await proc.waitForExit(), proc.stderr).toEqual({ code: 0, signal: null });
+    expect(proc.stdout).toBe('check-api\n');
+    expect(proc.stderr).toBe('');
   });
 });

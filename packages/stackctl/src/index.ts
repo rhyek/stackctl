@@ -1,4 +1,4 @@
-export { defineConfig, findService, proxyHostsFor } from './config';
+export { defineConfig, proxyHostsFor } from './config';
 // stackctl's log utilities: `logging.formatter(config)` builds a structured-log formatter for a
 // service's `logs.formatter` (and is the default applied to every service); the ecosystem helpers
 // `logging.nodejs.{pino,winston}.formatter` are the same with adjusted defaults.
@@ -79,9 +79,46 @@ export type {
 // A test suite's stack: a detached headless session, started or reused, waited on until healthy.
 export { startStack, stackEnvironment } from './stack';
 export type { StartStackOptions, Stack } from './stack';
-// One command with a target's directory and environment, as `stackctl exec` and `stackctl run` run it.
+// One command with a service's directory and environment, as `stackctl exec` and `stackctl run` run
+// it, or in several services at once.
 export { exec, run } from './one-off/sdk';
-export type { OneOffOptions, ExecOptions, RunOptions, OneOffResult } from './one-off/sdk';
+export { showConfig } from './sdk/show-config';
+export { infra } from './sdk/infra';
+export { events, logs, resetProfile, service, status, stop } from './sdk/session';
+export type {
+  EventsOptions,
+  FollowOptions,
+  LogsResult,
+  ResetProfileOptions,
+  ServiceCommandResult,
+  ServiceResult,
+  ServiceSelection,
+  ServiceStartOptions,
+  StackServiceOptions,
+  StackServiceStartOptions,
+  StatusReport,
+} from './sdk/session';
+export { init } from './sdk/init';
+export type { InitOptions } from './sdk/init';
+export { attach, wait } from './sdk/attach';
+export type { AttachOptions, WaitOptions } from './sdk/attach';
+export type {
+  InfraComposeOptions,
+  InfraComposeResult,
+  InfraResult,
+  InfraSelection,
+  InfraStartOptions,
+} from './sdk/infra';
+export type {
+  OneOffOptions,
+  ExecOptions,
+  RunOptions,
+  OneOffResult,
+  OneOffManyOptions,
+  ExecManyOptions,
+  RunManyOptions,
+  OneOffManyResult,
+} from './one-off/sdk';
 // What an infra callback's `control` is: a client for the running session's control API.
 export type {
   ControlClient,

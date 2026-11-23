@@ -7,6 +7,7 @@ import { type FoundSession, findSession } from '../find-session';
 import { profileStateDir } from '../log-files';
 import { canSignal } from '../process-info';
 import { readRunning, recordedProfiles, runningFilePath } from '../running';
+import { writeSdkResult } from '../sdk-result';
 import { clearRecordAdvice, isRecordedSession } from '../session-identity';
 import type { QuitOptions } from '../session-takeover';
 import { HANDOFF_FORCE_KILL_MS } from '../shutdown-timing';
@@ -196,7 +197,7 @@ const mayStillRun = (s: StoppedSession) =>
  * default logs. Never touches `tls/`, `debug.log` or another profile's folder. Removes nothing if
  * the session may still be running.
  */
-export async function resetProfile(
+export async function deleteProfileState(
   root: string,
   profile: string,
   opts: StopOptions = {},
@@ -287,12 +288,17 @@ export async function runStop(
 ): Promise<number> {
   const session = await stopSession(root, target.profile, opts);
   if (session) {
-    return report(session, opts) ? 0 : 1;
+    if (!report(session, opts)) {
+      return 1;
+    }
+    writeSdkResult({ stopped: true });
+    return 0;
   }
   console.log(noSessionLine(target));
   for (const line of await otherSessionLines(root, target.profile)) {
     console.log(line);
   }
+  writeSdkResult({ stopped: false });
   return 0;
 }
 
@@ -311,7 +317,7 @@ export async function runReset(
     console.error(RESET_NEEDS_PROFILE);
     return 1;
   }
-  const { session, deleted } = await resetProfile(root, target.profile, opts);
+  const { session, deleted } = await deleteProfileState(root, target.profile, opts);
   const dir = `node_modules/.stackctl/profiles/${target.profile}/`;
   // The reset took the event log with the rest, so its lines open the new one; one that left the
   // profile's state in place lands in the old.
@@ -340,5 +346,6 @@ export async function runReset(
       ? `Removed ${dir}; its event log starts again with this reset.`
       : `Nothing to remove: ${dir} doesn't exist.`,
   );
+  writeSdkResult({ deleted });
   return 0;
 }

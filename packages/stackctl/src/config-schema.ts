@@ -175,8 +175,9 @@ export const ServiceEnvSchema = v.pipe(
 // here; the rest describe how to run/select/link it. Strict, so a misspelled key fails at load
 // rather than being stripped.
 export const ServiceConfigSchema = v.strictObject({
-  targetDir: v.optional(v.string()),
+  dir: v.optional(v.string()),
   selectable: v.optional(v.boolean()),
+  tags: v.optional(v.array(nonEmptyString())),
   color: v.optional(v.string()),
   // Must be parsed, not stripped — it's what a callback's `tokens` is built from.
   tokens: v.optional(v.record(v.string(), v.optional(v.string()))),
@@ -260,6 +261,7 @@ const infraCallback = () => v.optional(callback<(...args: never[]) => unknown>()
 export const InfraServiceSchema = v.strictObject({
   // A literal, or a callback `defineConfig` resolves to a boolean while the config loads.
   enabled: v.optional(v.union([v.boolean(), callback<(...args: never[]) => unknown>()])),
+  tags: v.optional(v.array(nonEmptyString())),
   // The service's port on the host. Here, not on a provider's options, so every provider has it.
   port: v.optional(PortSchema),
   // The service's footer links, and its public origin, as for a service.

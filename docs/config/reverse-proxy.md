@@ -78,7 +78,7 @@ routes: [
 | `service`   | The service that gets every request on those hosts.                                               |
 | `paths`     | Path globs to services, in [picomatch](https://github.com/micromatch/picomatch) syntax. The first glob that matches wins. |
 
-A target is an application service or an [infra service](./infra.md#port-and-urls) with a
+A route leads to an application service or an [infra service](./infra.md#port-and-urls) with a
 `port`. Names are type-checked.
 
 **How a request is matched:**

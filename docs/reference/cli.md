@@ -9,11 +9,13 @@ description: Every stackctl command and flag - start, stop, wait, reset, service
 ```bash
 stackctl                          # the terminal UI: pick services, run them
 stackctl -s web -s api            # run these services, skipping the picker
+stackctl -t backend               # every service tagged backend
 stackctl --headless -s web        # no UI: stream logs to stdout
 stackctl --profile test           # another profile: .env.test, its own session
 stackctl stop                     # stop the profile's session
 stackctl service restart -s api   # restart one service in the running session
 stackctl run api seed             # one script, with api's environment
+stackctl run -t backend test      # a script in every service tagged backend
 stackctl infra start              # start the infra, then exit
 ```
 
@@ -35,7 +37,7 @@ above the current one, that holds `stackctl.config.ts`. Without one, every comma
 | [`exec`](#stackctl-exec-and-stackctl-run)      | Run a command with a service's environment.               |
 | [`run`](#stackctl-exec-and-stackctl-run)       | Run a script with a service's environment.                |
 | [`logs`](#stackctl-logs)                       | Print or follow the session's log.                        |
-| [`infra`](#stackctl-infra)                     | Start, stop, reset or destroy infra, or run Compose on it. |
+| [`infra`](#stackctl-infra)                     | Start, stop, restart, reset or destroy infra, or run Compose on it. |
 | [`init`](#stackctl-init)                       | Set the project up.                                       |
 
 ## Global options
@@ -59,15 +61,23 @@ Accepted before or after any command.
 Starts a session. `stackctl` with no command is `stackctl start`, so `stackctl -s web` and
 `stackctl start -s web` are the same.
 
-| Option                   | What it does                                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------ |
-| `-s, --service <name>`   | A service to run, with its deps. Repeatable. Skips the picker.                       |
-| `--last-answers`         | Skip the picker and reuse the selection it last saved.                               |
-| `--ui`                   | The terminal UI. The default.                                                        |
-| `--headless`             | No UI: stream the log to stdout. Needs `-s` or `--last-answers`.                     |
-| `-d, --detach`           | For CI: a headless session that outlives the command. Needs `-s` or `--last-answers`. |
-| `--wait-timeout <s>`     | How long `--detach` waits for the session to be ready. Default `300`.                |
-| `--kill-others`          | Quit a session already running in this profile without asking.                       |
+| Option                    | What it does                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------- |
+| `-s, --service <service>` | A service to run, with its deps. Repeatable. Skips the picker.                              |
+| `-t, --tag <tag>`         | Every service with the tag, with their deps. Repeatable. Skips the picker.                  |
+| `--last-answers`          | Skip the picker and reuse the selection it last saved.                                      |
+| `--ui`                    | The terminal UI. The default.                                                               |
+| `--headless`              | No UI: stream the log to stdout. Needs `-s`, `-t` or `--last-answers`.                      |
+| `-d, --detach`            | For CI: a headless session that outlives the command. Needs `-s`, `-t` or `--last-answers`. |
+| `--wait-timeout <s>`      | How long `--detach` waits for the session to be ready. Default `300`.                       |
+| `--kill-others`           | Quit a session already running in this profile without asking.                              |
+
+- **`-s` names a service by its name or by a path**, as
+  [Naming a service](../guide/commands.md#naming-a-service) shows. A directory that belongs to
+  no service is refused.
+- **`-t` matches application services**, by their [`tags`](../config/services.md#tags). `-s`
+  and `-t` add up: `stackctl -s web -t backend` runs `web` and every service tagged `backend`.
+- **A service with no dev command is left unstarted**, picked or tagged.
 
 It first [type-checks the config](../config/config-file.md#type-checking), and exits on a type
 error.
@@ -192,6 +202,7 @@ other profiles are left alone. The reset writes its own lines to a new event log
 ```bash
 stackctl service restart -s api              # restart api, wait until it is ready
 stackctl service start -s worker -s web      # start them, adding any the session lacks
+stackctl service restart -t backend          # every service tagged backend
 stackctl --profile test service stop -s worker
 ```
 
@@ -207,9 +218,14 @@ Drives application services in the profile's **running** session, through its
 A service waiting for its dependencies is left to start once they're ready: `start` and
 `restart` refuse it and exit `1`.
 
-All take `-s, --service <name>`, repeatable. `start` and `restart` wait until the services
-are ready, up to `--wait-timeout <s>` (default `300`), and exit `1` if one isn't. For infra
-services, use [`stackctl infra`](#stackctl-infra).
+All take `-s, --service <service>` and `-t, --tag <tag>`, repeatable, and at least one of
+them. `start` and `restart` wait until the services are ready, up to `--wait-timeout <s>`
+(default `300`), and exit `1` if one isn't. For infra services, use
+[`stackctl infra`](#stackctl-infra).
+
+- **`-s` and `-t` pick services as on [`start`](#stackctl-start).**
+- **`start` and `restart` refuse a service named with `-s` that has no dev command**, and
+  leave out one only a tag matched.
 
 ## `stackctl status`
 
@@ -270,8 +286,8 @@ are applied. It is the same object a session reports as `config` on
 
 | Field           | What it holds                                                                          |
 | --------------- | -------------------------------------------------------------------------------------- |
-| `services`      | Each service's `port`, `publicOrigin`, `urls`, `healthcheck`, `deps`, `command`, `targetDir` (as written), `resolvedTargetDir` (absolute), and its [`env`](../config/services.md#env) combined with the config's: `envFiles`, `envOverride` and `envVars`. |
-| `infra`         | Per provider: the compose `file`, the profile's `projectName`, and each service's `enabled`, `port`, `urls` and `publicOrigin`. |
+| `services`      | Each service's `port`, `publicOrigin`, `urls`, `healthcheck`, `deps`, `command`, `tags`, `dir` (as written), `resolvedDir` (absolute), and its [`env`](../config/services.md#env) combined with the config's: `envFiles`, `envOverride` and `envVars`. |
+| `infra`         | Per provider: the compose `file`, the profile's `projectName`, and each service's `enabled`, `tags`, `port`, `urls` and `publicOrigin`. |
 | `reverseProxy`  | Its `port`, `tls`, `publicAddress` and `routes`.                                       |
 | `envFiles`      | The `.env` filenames the profile looks for in each directory, in load order. A service's own are on the service. |
 
@@ -280,22 +296,73 @@ Functions (`logs.formatter`, infra callbacks) have no JSON form and are left out
 ## `stackctl exec` and `stackctl run`
 
 ```bash
-stackctl exec [target] -- <command> [args...]
-stackctl run [target] <script> [-- args...]
+stackctl exec [service] -- <command> [args...]
+stackctl run [service] <script> [-- args...]
+stackctl exec (-s <service>|-t <tag>)... -- <command> [args...]
+stackctl run (-s <service>|-t <tag>)... <script> [-- args...]
 ```
 
-Run one command, or one `package.json` script or Makefile target, in a target's directory
-with its environment. The [One-off commands](../guide/commands.md) guide covers targets. Its log
-goes in the latest session's folder, under `commands/`.
+Run one command, or one `package.json` script or Makefile target, in a service's directory
+with its environment. A service is named by its name or by a path; a directory that belongs to
+no service runs with the workspace's environment. The [One-off commands](../guide/commands.md)
+guide covers both. Its log goes in the latest session's folder, under `commands/`. With `-s` or
+`-t`, it runs in [several services at once](#several-services-at-once).
+
+| Option                    | What it does                                                         |
+| ------------------------- | -------------------------------------------------------------------- |
+| `-s, --service <service>` | A service to run it in. Repeatable.                                  |
+| `-t, --tag <tag>`         | Every service with the tag. Repeatable.                              |
+| `--ignore-sibling-error`  | Run every command to its end when one fails. Only with `-s` or `-t`. |
 
 - **`exec` needs the `--`.** Everything after it is the command.
 - **`run` forwards what follows `--`** to the script. A script that doesn't exist is an error.
 - **`run` first [type-checks the config](../config/config-file.md#type-checking)**, and exits on
   a type error. `exec` doesn't.
-- **`-s` is not accepted.** The target is the first argument.
 - **The exit code is the command's.**
 - **On a terminal, the command gets it**, stdout and stderr each on its own, except for a coding
   agent, whose command is always piped. Its log then holds no output for that stream.
+
+### Several services at once
+
+```bash
+stackctl run -t backend test
+stackctl exec -s api -s worker -- node scripts/check.ts
+```
+
+```
+2026-11-10 16:00:11 [api   ] 12 tests passed
+2026-11-10 16:00:12 [worker] 4 tests passed
+stackctl: 2 ok
+  api     ok  1.2 seconds
+  worker  ok  2.0 seconds
+```
+
+- **Any `-s` or `-t` is this form**, even when it names one service. A service argument beside
+  them is an error: `run` then takes only the script, and `exec` only the command.
+- **`-s` and `-t` pick services as on [`start`](#stackctl-start)**, and `-s` takes a directory
+  that belongs to no service too, labelled with its path from the root. None runs twice: the
+  services in config order, then the directories.
+- **They all run at once**, each as the single form would run it in that service.
+- **Each line is date-stamped and labelled**, as [`--headless`](#--headless) prints: stdout lines
+  on stdout, stderr lines on stderr. Always piped: no command gets the terminal or stdin.
+- **The first failure stops the rest**: a non-zero exit, an end by a signal stackctl didn't
+  send, or a command that can't start. The others get `SIGTERM`, with their process trees.
+  `--ignore-sibling-error` runs each to its end instead.
+- **Ctrl+C or a `SIGTERM`** reaches every command.
+- **A command stackctl stopped that still runs 5 seconds later** is killed with `SIGKILL`, and
+  once it has ended, so is anything it left running in the background.
+- **A `run` of a missing script:** a service named with `-s` that lacks it is an error before
+  anything runs; one only a tag matched is skipped, with `skipping <service>: no "<script>"
+  script` on stderr. A script none of them has is an error.
+- **The summary goes to stderr** once the last command ends: each service as `ok`, `failed`
+  (with its exit code or signal), `stopped` (stackctl stopped it) or `skipped`, and how long it
+  ran.
+- **Exits `0`** when every command that ran exited `0`. After Ctrl+C or a signal, the code the
+  single form gives for it (`130` for Ctrl+C). Else `1`.
+- **Each command has its own log** under `commands/` and its own
+  [event](./events.md), as a single one does. A service's `logs.formatter` is not applied.
+- **Inside a command stackctl runs**, the lines carry no date stamp, since the outer command
+  stamps them, and no log or event is written.
 
 ## `stackctl logs`
 
@@ -316,29 +383,40 @@ latest session's. A one-off command's log is never it.
 ## `stackctl infra`
 
 ```bash
-stackctl infra start   [-s <name>...]
-stackctl infra stop    [-s <name>...]
-stackctl infra restart [-s <name>...]
-stackctl infra reset   [-s <name>...]
-stackctl infra destroy [-s <name>...]
+stackctl infra start   [-s <name>...] [-t <tag>...]
+stackctl infra stop    [-s <name>...] [-t <tag>...]
+stackctl infra restart [-s <name>...] [-t <tag>...]
+stackctl infra reset   [-s <name>...] [-t <tag>...]
+stackctl infra destroy [-s <name>...] [-t <tag>...]
 stackctl infra docker-compose [args...]
 ```
 
-Drives the [infra](../config/infra.md) the config declares, the same actions as a session's
-`s`, `r` and `R` keys. Every subcommand exits when it is done, and none disturbs a running
-session.
+Drives the [infra](../config/infra.md) the config declares. `start`, `stop`, `restart` and
+`reset` are the same actions as a session's `s`, `r` and `R` keys. Every subcommand exits when it
+is done, and none disturbs a running session.
 
 | Subcommand                 | What it does                                                                          |
 | -------------------------- | ------------------------------------------------------------------------------------- |
 | `start`                    | Starts the services, waits until each is ready and runs `afterReady`, then exits `0`, or `1` if one failed. They keep running. |
-| `stop`                     | Removes the containers. Data is kept.                                                 |
-| `restart`                  | `stop`, then `start`: the containers are recreated, picking up a changed compose file. Data is kept. |
-| `reset`                    | Removes the services **and their data**, then starts them clean.                      |
-| `destroy`                  | Removes the containers **and their data**, and starts nothing. With no `-s`, the whole project. |
+| `stop`                     | Stops and removes the containers. Named volumes are kept.                             |
+| `restart`                  | `stop`, then `start`: the containers are recreated, picking up a changed compose file. Named volumes are kept. |
+| `reset`                    | Removes the services **and their data**, then starts them clean. With no `-s` or `-t`, the whole project. See [`reset`](../config/infra.md#reset). |
+| `destroy`                  | Removes the containers **and their data**, and starts nothing. With no `-s` or `-t`, the whole project. |
 | `docker-compose [args...]` | Runs `docker compose <args>` on this project and profile, with your terminal.         |
 
-- **`-s, --service <name>` picks the services**, repeatable. With none, every enabled one:
+- **`-s, --service <name>` picks the services** by an infra service's name, repeatable. With
+  no `-s` and no `-t`, every enabled one, and for `reset` and `destroy` the whole project:
   `stackctl infra reset` deletes **every** infra service's data.
+- **`-t, --tag <tag>` picks every enabled infra service with the tag**, by its
+  [`tags`](../config/infra.md#tags), repeatable. It matches infra services only, and adds up
+  with `-s`. A tag that matches no enabled one exits `1`, and acts on nothing.
+- **A disabled infra service named with `-s` is an error**, before anything runs, on every
+  subcommand but `destroy`, which removes it.
+- **`--wait-timeout <seconds>`**, on `start`, `restart` and `reset`, is how long to wait for the
+  services to be ready, over the config's [`readyTimeout`](../config/infra.md#options).
+- **A service with no named volume keeps its data in its container**, so `stop` and `restart`
+  lose it, and its next start is [`fresh`](../config/infra.md#seeding-with-fresh).
+- **Exits `0`** when every service reached the state the subcommand names, else `1`.
 - **`start` runs `afterReady` even for a service already running**, so it applies new
   migrations to a database that is up.
 - **`reset` here is not `stackctl reset`**, which deletes the profile's session state and leaves
@@ -418,5 +496,5 @@ node_modules/.stackctl/
 | ------------- | --------------------------------------------------------------------------- |
 | `0`           | The session was quit normally, or the command succeeded.                    |
 | `1`           | Startup failed, a takeover was refused, or a command couldn't do its job.   |
-| the command's | `exec` and `run` exit with their command's code.                            |
+| the command's | `exec` and `run`: their command's code; with `-s` or `-t`, `0`, `1` or the signal's code (`130` for Ctrl+C). |
 | `130`, `143`  | `--detach` interrupted by Ctrl+C or `SIGTERM` while waiting.                |

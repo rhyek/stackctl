@@ -6,6 +6,7 @@ import { NESTED_ENV_VAR, isNested } from '../env-base';
 import { maskSecrets } from '../event-log';
 import { commandLine, formatDuration, logTimestamp, stripAnsi } from '../format';
 import { getDefaultLogFile } from '../log-files';
+import { SHUTDOWN_GRACE_MS } from '../shutdown-timing';
 import { forEachLine, spawnCommand, startFailure } from '../spawn';
 
 // Running a one-off command, once it is resolved: shared by the CLI's `exec`/`run` and the SDK's
@@ -39,7 +40,7 @@ export type OneOffResult = {
 export class CommandStartError extends Error {}
 
 /** Signals sent to this process that reach the command while it runs. */
-const FORWARDED: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+export const FORWARDED_SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 
 /** A running one-off command, as the signal listeners see it. */
 interface LiveChild {
@@ -53,7 +54,7 @@ const live = new Set<LiveChild>();
 
 // One listener per signal, which knows its own: a listener isn't always told which it was.
 const listeners = new Map(
-  FORWARDED.map((signal) => [
+  FORWARDED_SIGNALS.map((signal) => [
     signal,
     () => {
       for (const child of live) {
@@ -100,8 +101,16 @@ type OutputFd = 1 | 2;
 
 const STREAM_NAME = { 1: 'stdout', 2: 'stderr' } as const;
 
-/** How long a one-off command ran, for its log's last line. */
-function tookFor(ms: number): string {
+/**
+ * The many form's default grace, from SIGTERM to SIGKILL. Strictly under a session's
+ * {@link SHUTDOWN_GRACE_MS}: inside a service a session is stopping, the commands, each in a
+ * group of its own, must be gone before the session's SIGKILL reaches the stackctl that started
+ * them, which then can't end them any more.
+ */
+export const MANY_GRACE_MS = SHUTDOWN_GRACE_MS / 2;
+
+/** How long a one-off command ran, for its log's last line and the many form's summary. */
+export function tookFor(ms: number): string {
   return ms < 60_000 ? `${(ms / 1000).toFixed(1)} seconds` : formatDuration(ms);
 }
 
@@ -121,6 +130,15 @@ function tookFor(ms: number): string {
  * are forwarded to the command while it runs, and so is SIGINT, unless the command shares this
  * process's terminal; the listeners are removed once no command runs. Never exits the process.
  * Rejects with a {@link CommandStartError} when the command can't start.
+ *
+ * With `many`, one of several commands run at once: stdin is closed, stdout and stderr are always
+ * piped (and with `'inherit'` each line goes to `onLine`, when given), the log is as above, and
+ * the command leads a process group of its own, which every signal is sent to, the forwarded ones
+ * included (SIGINT too: the terminal's Ctrl-C doesn't reach that group). Aborting `stop` sends
+ * the group SIGTERM, then SIGKILL after `graceMs`; a `stop` aborted already does so as soon as
+ * the command has started. A forwarded signal is followed by the same SIGKILL, one per command,
+ * timed from the first of the two. Once a command that either reached has ended, whatever it
+ * left in its group is sent SIGKILL at once; a command that ended by itself leaves its group be.
  */
 export async function runOneOff(
   spec: OneOffSpec,
@@ -133,8 +151,26 @@ export async function runOneOff(
     agent?: boolean;
     /** Whether this runs inside a command stackctl runs; a seam for tests. Default: {@link isNested}. */
     nested?: boolean;
+    /**
+     * The many form: stdin closed, stdout and stderr piped whatever they are (nested too), the
+     * command in a process group of its own, which `stop` ends.
+     */
+    many?: {
+      /** With `stdio: 'inherit'`: each output line, in place of writing it. */
+      onLine?: (stream: 'stdout' | 'stderr', line: string) => void;
+      /** Aborted: SIGTERM to the group, SIGKILL after `graceMs`. */
+      stop: AbortSignal;
+      /** Default: `MANY_GRACE_MS`. */
+      graceMs?: number;
+      /**
+       * Called once, the first time a signal, from `stop` or forwarded, is sent to the command
+       * while it still runs: what ends it then is stackctl's doing.
+       */
+      onStopSent?: () => void;
+    };
   },
 ): Promise<OneOffResult> {
+  const { many } = opts;
   const isTerminal = opts.isTerminal ?? ((fd) => tty.isatty(fd));
   const agent = opts.agent ?? startedByAgent();
   // Inside a command stackctl runs (a dev script's `sctl exec -- node --watch …`), that command
@@ -142,12 +178,15 @@ export async function runOneOff(
   // through, and writes no log.
   const nested = opts.nested ?? isNested();
   // A terminal is handed over, so the command behaves as it would run bare: a prompt, colors, a
-  // watch mode's keys. Never to an agent, whose log then holds everything, as in CI.
+  // watch mode's keys. Never to an agent, whose log then holds everything, as in CI. Never in the
+  // many form, whose commands share this process's streams line by line.
   const toTerminal = (fd: OutputFd) =>
-    opts.stdio === 'inherit' && (nested || (!agent && isTerminal(fd)));
+    !many && opts.stdio === 'inherit' && (nested || (!agent && isTerminal(fd)));
   const handed = ([1, 2] as const).filter(toTerminal);
   let logFd: number | undefined;
   let tracked: LiveChild | undefined;
+  let graceTimer: NodeJS.Timeout | undefined;
+  let onStop: (() => void) | undefined;
   try {
     const fd = nested ? undefined : fs.openSync(getDefaultLogFile(opts.logDir), 'w');
     logFd = fd;
@@ -169,7 +208,10 @@ export async function runOneOff(
       if (!src) {
         return;
       }
-      if (opts.stdio === 'inherit') {
+      if (opts.stdio === 'inherit' && many?.onLine) {
+        const onLine = many.onLine;
+        forEachLine(src, (line) => onLine(name, line));
+      } else if (opts.stdio === 'inherit') {
         src.on('data', (chunk: Buffer) => process[name].write(chunk));
       } else {
         const decoder = new StringDecoder('utf8');
@@ -183,16 +225,92 @@ export async function runOneOff(
       cwd: spec.cwd,
       // An `exec` or `run` the command starts is part of it, as this one is of its own.
       env: nested ? spec.env : { ...spec.env, [NESTED_ENV_VAR]: '1' },
-      stdio: ['inherit', toTerminal(1) ? 'inherit' : 'pipe', toTerminal(2) ? 'inherit' : 'pipe'],
+      stdio: many
+        ? ['ignore', 'pipe', 'pipe']
+        : ['inherit', toTerminal(1) ? 'inherit' : 'pipe', toTerminal(2) ? 'inherit' : 'pipe'],
+      // The many form's command leads a process group of its own, so a stop reaches what it runs.
+      detached: many !== undefined,
     });
+    let leaderExited = false;
+    let stopSent = false;
+    if (many) {
+      child.once('exit', () => (leaderExited = true));
+    }
+    // The many form signals the command's whole group: the group outlives its leader while a
+    // process it started runs on, and keeps its id from being reused until then. Where it can't
+    // be signalled (no groups, on Windows), the command alone is, while it runs.
+    const kill = many
+      ? (signal: NodeJS.Signals) => {
+          if (child.pid === undefined) {
+            return;
+          }
+          if (!leaderExited && !stopSent) {
+            stopSent = true;
+            many.onStopSent?.();
+          }
+          try {
+            process.kill(-child.pid, signal);
+          } catch {
+            if (!leaderExited) {
+              try {
+                process.kill(child.pid, signal);
+              } catch {
+                /* exited already */
+              }
+            }
+          }
+        }
+      : (signal: NodeJS.Signals) => void child.kill(signal);
+    // The many form's SIGKILL: one timer per command, armed by whichever comes first, a stop or a
+    // forwarded signal; a later one neither restarts nor duplicates it.
+    const graceMs = many?.graceMs ?? MANY_GRACE_MS;
+    const escalate = () => {
+      graceTimer ??= setTimeout(() => kill('SIGKILL'), graceMs);
+    };
     tracked = {
-      kill: (signal) => void child.kill(signal),
-      sharesTerminal: opts.stdio === 'inherit' && isTerminal(0),
+      // A forwarded signal is followed by SIGKILL too in the many form: inside a service a
+      // session stops, it is all this command is told, and the session's SIGKILL reaches this
+      // process, not the command's group.
+      kill: many
+        ? (signal) => {
+            kill(signal);
+            escalate();
+          }
+        : kill,
+      // A command in a group of its own doesn't get the terminal's Ctrl-C: it is forwarded.
+      sharesTerminal: !many && opts.stdio === 'inherit' && isTerminal(0),
     };
     track(tracked);
     tee(child.stdout, 'stdout');
     tee(child.stderr, 'stderr');
+    if (many) {
+      onStop = () => {
+        kill('SIGTERM');
+        escalate();
+      };
+      // A stop aborted already ends the command as soon as it has started.
+      if (many.stop.aborted) {
+        onStop();
+      } else {
+        many.stop.addEventListener('abort', onStop, { once: true });
+      }
+    }
     const ended = await child.done;
+    // The many form's sweep, once a signal was sent to the command: whatever survived it in the
+    // command's group (a background job that ignores it, holding none of the command's pipes)
+    // is killed now, since the grace timer is cleared below. A command that ended by itself is
+    // left alone: a script may leave a process running on purpose. This rests on one
+    // assumption: a group's id can't be reused while a member of the group is alive, so the
+    // group signalled here is still the command's whenever anyone is left in it. When the group
+    // is empty already, the signal finds nothing (ESRCH); the only exposure is the leader's pid
+    // reused as an unrelated group's leader in the gap between its reaping and this call.
+    if (many && child.pid !== undefined && (stopSent || graceTimer !== undefined)) {
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        /* the group is empty already */
+      }
+    }
     const took = tookFor(Date.now() - startedAt);
     if (ended.error) {
       const why = `couldn't start ${spec.command}: ${startFailure(ended.error, spec.cwd)}`;
@@ -212,6 +330,10 @@ export async function runOneOff(
       ...(opts.stdio === 'pipe' ? collected : {}),
     };
   } finally {
+    clearTimeout(graceTimer);
+    if (onStop) {
+      many?.stop.removeEventListener('abort', onStop);
+    }
     if (tracked) {
       untrack(tracked);
     }

@@ -4,6 +4,7 @@ import { rootOptionsRefusal } from './root-options';
 
 const base: StartOptions = {
   service: [],
+  tag: [],
   lastAnswers: false,
   killOthers: false,
 };
@@ -20,11 +21,12 @@ describe('rootOptionsRefusal', () => {
     expect(rootOptionsRefusal({ ...base, ui: true })).toBeUndefined();
   });
 
-  test('--detach takes -s or --last-answers, and no --ui', () => {
+  test('--detach takes -s, -t or --last-answers, and no --ui', () => {
     expect(rootOptionsRefusal({ ...base, detach: true, service: ['web'] })).toBeUndefined();
+    expect(rootOptionsRefusal({ ...base, detach: true, tag: ['backend'] })).toBeUndefined();
     expect(rootOptionsRefusal({ ...base, detach: true, lastAnswers: true })).toBeUndefined();
     expect(rootOptionsRefusal({ ...base, detach: true })).toBe(
-      '--detach needs services to start: pass --service or --last-answers.',
+      '--detach needs services to start: pass --service, --tag or --last-answers.',
     );
     expect(rootOptionsRefusal({ ...base, detach: true, service: ['web'], ui: true })).toBe(
       "--ui and --detach can't be combined.",

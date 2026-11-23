@@ -4,6 +4,7 @@ import { currentProfile } from '../env-base';
 import { connectControlClient } from '../find-session';
 import { resolveLogFile } from '../log-files';
 import { readRunning } from '../running';
+import { sdkResultRequested, writeSdkResult } from '../sdk-result';
 import { currentSessionId, newestSessionId, sessionLogPath } from '../session-files';
 
 /**
@@ -37,7 +38,13 @@ export async function runLogs(opts: { follow?: boolean; path?: boolean }): Promi
     process.exit(1);
   }
   if (opts.path) {
-    console.log(logFile);
+    // For `logs()`, the path is the result: printing it too would only land on the caller's
+    // stderr.
+    if (sdkResultRequested()) {
+      writeSdkResult({ path: logFile });
+    } else {
+      console.log(logFile);
+    }
     process.exit(0);
   }
   if (opts.follow) {

@@ -12,7 +12,7 @@
  *   mappings sit next to the code that draws them (a toast tone's color in
  *   `ToastStack`), so this file answers "what color is that?" and never "what does it mean?".
  * - **The allowlist of color names a user may set** via a package's `color:` option
- *   (`NAMED_COLORS` in `session/supervisor.ts`). That's input validation over chalk's
+ *   (`NAMED_COLORS` in `label-paint.ts`). That's input validation over chalk's
  *   surface, not part of stackctl's palette.
  */
 
@@ -119,28 +119,9 @@ export const HOTKEY_LABEL_COLOR: Color = '#bbbbbb';
  */
 export const STACKCTL_LABEL_COLOR: Color = '#d7af5f';
 
-/**
- * Package-identity colors for log prefixes. Vivid truecolor shades — deliberately
- * distinct from the dull basic-ANSI colors the status text and dots use — and no pink
- * or pastels.
- *
- * The order is a priority order, not a walk around the color wheel: a workspace of N
- * packages wears the first N, so the leading entries are the ones most workspaces
- * ever show. Preview a change — to the colors or to their order — with `pnpm palette`
- * (`scripts/palette-preview.ts`) before making it.
- */
-export const PACKAGE_PALETTE: readonly Color[] = [
-  '#1FC5DA', // cyan
-  '#E74F62', // crimson
-  '#7898FC', // periwinkle
-  '#1FB5FA', // blue
-  '#FEBF33', // gold
-  '#5BCD4F', // green
-  '#BF98FD', // lavender
-  '#FE8445', // orange
-  '#07CEA9', // teal
-  '#D8D100', // yellow
-];
+// The per-service prefix colors, in a module of their own, which loads no colord: a one-off
+// command labels its services with them.
+export { PACKAGE_PALETTE } from './log-colors';
 
 // ---------------------------------------------------------------------------
 // Structured-log formatting

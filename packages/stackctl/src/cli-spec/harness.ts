@@ -223,7 +223,9 @@ export function setUpCliWorkspace(name: string): void {
         '    wide: {},',
         '    app: {},',
         '    broken: {},',
-        '    idle: {},',
+        "    idle: { tags: ['quiet', 'mixed'] },",
+        // No dev command: a tag that matches it starts the others.
+        "    assets: { command: null, tags: ['mixed'] },",
         // Never healthy: nothing answers its healthcheck.
         "    slow: { healthcheck: 'http://127.0.0.1:9/' },",
         // Never started on its own, picked or not.
@@ -290,6 +292,7 @@ export function setUpCliWorkspace(name: string): void {
       ),
     });
     writePackage('idle', { dev: script('setInterval(()=>{},1e9)') });
+    writePackage('assets', {});
     writePackage('slow', { dev: script('setInterval(()=>{},1e9)') });
     writePackage('manual', { dev: script('setInterval(()=>{},1e9)') });
     // A port, and no process: an origin to report.

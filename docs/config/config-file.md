@@ -28,7 +28,7 @@ repo.
 | Option           | What it is                                                                                         |
 | ---------------- | -------------------------------------------------------------------------------------------------- |
 | `services`       | Your application services, keyed by name. See [Services](./services.md). Without it, the config sets the environment of `exec` and `run` alone. |
-| `serviceRootDir` | The directory services live under, e.g. `'apps'`: each service is at `<serviceRootDir>/<name>`. **Recommended.** Without it, every service sets `targetDir`. |
+| `serviceRootDir` | The directory services live under, e.g. `'apps'`: each service is at `<serviceRootDir>/<name>`. **Recommended.** Without it, every service sets `dir`. |
 | `env`            | Variables of the config's own, and how `.env` files load. See [Environment](./env.md).              |
 | `logs`           | On-screen timestamps. See [Logs](./logs.md).                                                        |
 | `infra`          | Databases, caches and other Docker Compose services. See [Infra](./infra.md).                       |

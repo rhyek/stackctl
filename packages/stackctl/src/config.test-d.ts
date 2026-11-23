@@ -1092,7 +1092,7 @@ describe('the removed build surface', () => {
 });
 
 describe('serviceRootDir', () => {
-  test('makes targetDir optional when set, required otherwise', () => {
+  test('makes dir optional when set, required otherwise', () => {
     type WithRoot = NonNullable<
       Parameters<
         typeof defineConfig<Record<never, never>, { api: unknown }, 'api', 'packages'>
@@ -1101,13 +1101,13 @@ describe('serviceRootDir', () => {
     type WithoutRoot = NonNullable<
       Parameters<typeof defineConfig<Record<never, never>, { api: unknown }, 'api'>>[0]['services']
     >['api'];
-    expectTypeOf<Pick<WithRoot, 'targetDir'>>().toEqualTypeOf<{ targetDir?: string }>();
-    expectTypeOf<Pick<WithoutRoot, 'targetDir'>>().toEqualTypeOf<{ targetDir: string }>();
+    expectTypeOf<Pick<WithRoot, 'dir'>>().toEqualTypeOf<{ dir?: string }>();
+    expectTypeOf<Pick<WithoutRoot, 'dir'>>().toEqualTypeOf<{ dir: string }>();
   });
 
-  test('infers from a literal serviceRootDir, and the resolved targetDir is always a string', () => {
+  test('infers from a literal serviceRootDir, and the resolved dir is always a string', () => {
     const config = defineConfig({ serviceRootDir: 'packages', services: { api: {} } });
-    expectTypeOf(config.services.api.targetDir).toEqualTypeOf<string>();
+    expectTypeOf(config.services.api.dir).toEqualTypeOf<string>();
     expectTypeOf(config.serviceRootDir).toEqualTypeOf<string | undefined>();
   });
 });
@@ -1292,7 +1292,7 @@ type Shape<T> = T extends (...args: never[]) => unknown
     : T;
 
 // The input types at their widest — any service names, any tokens, with `serviceRootDir` set so
-// `targetDir` is optional, as the schema has it.
+// `dir` is optional, as the schema has it.
 type WidestService = ServiceConfigInput<TokenRecord, TokenRecord, string, string>;
 type WidestConfig = DefineConfigOptions<TokenRecord, Record<string, TokenRecord>, string, string>;
 type SchemaService = v.InferInput<typeof ServiceConfigSchema>;
@@ -1331,7 +1331,7 @@ describe('the input types and the schemas', () => {
   });
 
   // The resolved type gives back some fields as the schema resolves them, and the rest settled by
-  // `defineConfig` (callbacks run, `targetDir` inferred). The first kind must match the schema's
+  // `defineConfig` (callbacks run, `dir` inferred). The first kind must match the schema's
   // output, and no schema field may be missing from it.
   test('give back the fields the schema resolves as it resolves them', () => {
     type FromSchema = 'selectable' | 'color' | 'autostart' | 'command' | 'logs';
@@ -1528,10 +1528,10 @@ describe('the infra callbacks’ trigger', () => {
 });
 
 describe('resolveEnv', () => {
-  test('takes only profile, target and workspaceDir', () => {
+  test('takes only profile, service and workspaceDir', () => {
     expectTypeOf<NonNullable<Parameters<typeof resolveEnv>[0]>>().toEqualTypeOf<{
       profile?: string;
-      target?: string;
+      service?: string;
       workspaceDir?: string;
     }>();
   });
@@ -1549,7 +1549,9 @@ describe('resolveEnv', () => {
 describe('the SDK one-off types', () => {
   type OneOffOptions = {
     profile?: string;
-    target?: string;
+    service?: string;
+    tags?: never;
+    ignoreSiblingError?: never;
     workspaceDir?: string;
     stdio?: 'inherit' | 'pipe';
   };
@@ -1630,8 +1632,8 @@ describe('config split across files', () => {
     expectTypeOf<ReverseProxyRoute<Names>[]>().toExtend<
       NonNullable<ReverseProxyInput<TokenRecord, Names>['routes']>
     >();
-    // `targetDir` is left to `defineConfig`, which knows whether `serviceRootDir` infers it.
-    expectTypeOf<ServiceInput>().toHaveProperty('targetDir').toEqualTypeOf<string | undefined>();
+    // `dir` is left to `defineConfig`, which knows whether `serviceRootDir` infers it.
+    expectTypeOf<ServiceInput>().toHaveProperty('dir').toEqualTypeOf<string | undefined>();
   });
 
   test('parts checked with satisfies keep the inference of an inline config', () => {
@@ -1655,7 +1657,7 @@ describe('config split across files', () => {
     });
     expectTypeOf(config.services.api).toEqualTypeOf<typeof inline.services.api>();
     // No `reverseProxy`: the part fits all the same.
-    defineConfig({ services: { db: { targetDir: 'db' } }, infra: { 'docker-compose': { services: infraServices } } }); // oxfmt-ignore
+    defineConfig({ services: { db: { dir: 'db' } }, infra: { 'docker-compose': { services: infraServices } } }); // oxfmt-ignore
   });
 
   test('an annotation widens a part: its keys, which the routes are checked against, are lost', () => {
@@ -1744,5 +1746,17 @@ describe('services.<name>.env', () => {
     expectTypeOf<Resolved['envOverride']>().toEqualTypeOf<boolean | string[] | undefined>();
     expectTypeOf<Resolved['envVars']>().toEqualTypeOf<Record<string, string> | undefined>();
     expectTypeOf<Resolved>().not.toHaveProperty('env');
+  });
+});
+
+describe('tags', () => {
+  test('resolve to a string array on a service and an infra service', () => {
+    const config = defineConfig({
+      serviceRootDir: 'packages',
+      services: { api: { tags: ['backend'] } },
+      infra: { 'docker-compose': { services: { db: { tags: ['data'] } } } },
+    });
+    expectTypeOf(config.services.api.tags).toEqualTypeOf<string[]>();
+    expectTypeOf(config.infra!['docker-compose']!.services.db.tags).toEqualTypeOf<string[]>();
   });
 });

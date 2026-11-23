@@ -28,6 +28,7 @@ export interface PsRow {
 export interface ComposeConfig {
   services?: Record<string, { volumes?: { type: string; source?: string; target?: string }[] }>;
   volumes?: Record<string, { name?: string; external?: unknown }>;
+  networks?: Record<string, { name?: string; external?: unknown }>;
 }
 
 /** How many lines of a failed container's logs go into its failure report. */
@@ -76,13 +77,21 @@ function classifyContainer(row: PsRow): Readiness {
   }
 }
 
+/** A label's value, from a container's `Labels` as Docker prints them: one `key=value,…` string. */
+function labelOf(labels: string | undefined, key: string): string | undefined {
+  return (labels ?? '')
+    .split(',')
+    .find((pair) => pair.startsWith(`${key}=`))
+    ?.slice(key.length + 1);
+}
+
 /**
  * A one-off container, from `docker compose run`. `ps` lists it under its service's name, but
  * it isn't the service: a `run db psql` left open inherits `db`'s healthcheck and, with no
  * server inside, never passes it.
  */
-function isOneOff(row: PsRow): boolean {
-  return (row.Labels ?? '').split(',').includes('com.docker.compose.oneoff=True');
+function isOneOff(row: Pick<PsRow, 'Labels'>): boolean {
+  return labelOf(row.Labels, 'com.docker.compose.oneoff') === 'True';
 }
 
 /**
@@ -137,12 +146,46 @@ export function isFresh(
   service: string,
   existing: { volumes: ReadonlySet<string>; services: ReadonlySet<string> },
 ): boolean {
-  const volumes = mountedVolumeKeys(config, service).map(
-    (key) => config.volumes?.[key]?.name ?? key,
-  );
+  const volumes = namedVolumes(config)
+    .filter((volume) => volume.mountedBy.includes(service))
+    .map((volume) => volume.name);
   return volumes.length > 0
     ? !volumes.some((name) => existing.volumes.has(name))
     : !existing.services.has(service);
+}
+
+/** A named volume of the compose file, and which services mount it. */
+interface NamedVolume {
+  /** The name Compose resolved for it: the volume's name in Docker. */
+  name: string;
+  external: boolean;
+  mountedBy: string[];
+}
+
+/**
+ * Every named volume of the compose file: the ones its services mount, in their order, then any
+ * other it declares. Anonymous volumes and bind mounts aren't among them.
+ */
+function namedVolumes(config: ComposeConfig): NamedVolume[] {
+  const byKey = new Map<string, NamedVolume>();
+  const volume = (key: string): NamedVolume => {
+    let found = byKey.get(key);
+    if (!found) {
+      const definition = config.volumes?.[key];
+      found = { name: definition?.name ?? key, external: !!definition?.external, mountedBy: [] };
+      byKey.set(key, found);
+    }
+    return found;
+  };
+  for (const service of Object.keys(config.services ?? {})) {
+    for (const key of new Set(mountedVolumeKeys(config, service))) {
+      volume(key).mountedBy.push(service);
+    }
+  }
+  for (const key of Object.keys(config.volumes ?? {})) {
+    volume(key);
+  }
+  return [...byKey.values()];
 }
 
 /**
@@ -154,19 +197,17 @@ export function isFresh(
 export function selectVolumes(
   config: ComposeConfig,
   targets: string[],
+  /** Whether another service's use of a volume keeps it: by default, any service's. */
+  counts: (service: string) => boolean = () => true,
 ): { remove: string[]; kept: { name: string; reason: string }[] } {
-  const services = config.services ?? {};
-  const mounted = (service: string) => mountedVolumeKeys(config, service);
-
   const remove: string[] = [];
   const kept: { name: string; reason: string }[] = [];
-  for (const key of new Set(targets.flatMap(mounted))) {
-    const definition = config.volumes?.[key];
-    const name = definition?.name ?? key;
-    const others = Object.keys(services).filter(
-      (service) => !targets.includes(service) && mounted(service).includes(key),
-    );
-    if (definition?.external) {
+  for (const { name, external, mountedBy } of namedVolumes(config)) {
+    if (!mountedBy.some((service) => targets.includes(service))) {
+      continue;
+    }
+    const others = mountedBy.filter((service) => !targets.includes(service) && counts(service));
+    if (external) {
       kept.push({ name, reason: 'external' });
     } else if (others.length > 0) {
       kept.push({ name, reason: `also mounted by ${others.join(', ')}` });
@@ -379,9 +420,18 @@ export class DockerComposeProvider extends InfraProvider {
     );
   }
 
-  /** The compose file as Compose resolved it: interpolated, with every volume's real name. */
-  private async config(): Promise<ComposeConfig> {
-    const { stdout } = await this.compose(['config', '--format', 'json']);
+  /**
+   * The compose file as Compose resolved it: interpolated, with every volume's real name. With
+   * `everyProfile`, the services behind every Compose `profiles` entry too: the project as
+   * `down` removes it.
+   */
+  private async config(everyProfile = false): Promise<ComposeConfig> {
+    const { stdout } = await this.compose([
+      ...(everyProfile ? ['--profile', '*'] : []),
+      'config',
+      '--format',
+      'json',
+    ]);
     return JSON.parse(stdout) as ComposeConfig;
   }
 
@@ -429,7 +479,8 @@ export class DockerComposeProvider extends InfraProvider {
    */
   protected async destroyServices(targets: string[], emit: Emit): Promise<void> {
     await this.compose(['rm', '--stop', '--force', '--volumes', ...targets], this.progress(emit));
-    const { remove, kept } = selectVolumes(await this.config(), targets);
+    // A disabled service's use doesn't keep a volume: it doesn't run in this profile.
+    const { remove, kept } = selectVolumes(await this.config(), targets, (s) => this.enabled(s));
     const say = (line: string) => emit({ type: 'output', line, isError: false });
     for (const { name, reason } of kept) {
       say(`kept volume ${name}: ${reason}`);
@@ -443,21 +494,145 @@ export class DockerComposeProvider extends InfraProvider {
         say(`removed volume ${name}`);
       } else if (/no such volume/i.test(result.stderr)) {
         // Never created — the service was never started. Nothing to remove.
-      } else if (/in use/i.test(result.stderr)) {
-        // Held by a container outside the file's active services (another Compose profile, say).
-        say(`kept volume ${name}: in use by another container`);
       } else {
         throw new InfraError(`couldn't remove volume ${name}:\n${result.stderr.trim()}`);
       }
     }
   }
 
-  /** `docker compose down`, with Compose's own output. Never `--volumes`: the data stays. */
-  async down(services: string[]): Promise<number> {
-    return this.runtime.spawnInherit('docker', this.composeArgs(['down', ...services]), {
-      cwd: this.runtime.workspaceDir,
-      env: this.env(),
-    });
+  /**
+   * What a reset or a destroy couldn't remove, all read before anything runs: an `external`
+   * volume of a target, which stackctl never deletes, with services
+   * named a volume another service also uses, and a volume, or with nothing named a network,
+   * that a container the run doesn't remove uses — read from `docker ps` as JSON, never from an
+   * error message. With nothing named, every volume `down --volumes` takes is checked: the
+   * disabled services' and those behind a Compose profile too.
+   */
+  protected async removalRefusals(
+    targets: string[],
+    everything: boolean,
+    action: 'reset' | 'destroy',
+  ): Promise<string[]> {
+    // With nothing named, every Compose profile's services, as `down` takes them all; the active
+    // ones alone when another profile's don't resolve (an `env_file` only it provides, say).
+    const config = everything
+      ? await this.config(true).catch(() => this.config())
+      : await this.config();
+    const refusals: string[] = [];
+    // Each volume the run removes, by name, with the service a refusal names: a target first.
+    const removedVolumes = new Map<string, string | undefined>();
+    for (const { name, external, mountedBy } of namedVolumes(config)) {
+      const targetsUsing = mountedBy.filter((service) => targets.includes(service));
+      if (!everything && targetsUsing.length === 0) {
+        continue;
+      }
+      if (external) {
+        for (const service of targetsUsing) {
+          refusals.push(
+            `can't ${action} ${service}: volume ${name} is external, so stackctl doesn't delete it`,
+          );
+        }
+        continue;
+      }
+      if (!everything) {
+        // A reset counts the enabled services only: a disabled one doesn't run in this profile,
+        // and the volume is recreated for the services that do. A destroy counts every one: it
+        // would take the data of a service nobody named.
+        const others = mountedBy.filter(
+          (other) => !targets.includes(other) && (action === 'destroy' || this.enabled(other)),
+        );
+        if (others.length > 0) {
+          const together = [...new Set([...targets, ...others])].map((s) => `-s ${s}`).join(' ');
+          for (const service of targetsUsing) {
+            refusals.push(
+              `can't ${action} ${service}: volume ${name} is also used by ${others.join(', ')}; ` +
+                `${action} them together: stackctl --profile ${this.runtime.profile} infra ${action} ${together}`,
+            );
+          }
+        }
+      }
+      if (!removedVolumes.has(name)) {
+        removedVolumes.set(name, targetsUsing[0] ?? mountedBy[0]);
+      }
+    }
+    // A volume, or with nothing named a network, that a container the run leaves in place uses.
+    const removedServices = everything ? null : targets;
+    const refuseInUse = async (what: string, filter: string, service?: string) => {
+      for (const holder of await this.containersHolding(filter, removedServices)) {
+        refusals.push(
+          `can't ${action}${service === undefined ? '' : ` ${service}`}: ${what} is in use by container ${holder.name}, ` +
+            (holder.outside ? 'outside this project' : `which this ${action} doesn't remove`),
+        );
+      }
+    };
+    for (const [name, service] of removedVolumes) {
+      await refuseInUse(`volume ${name}`, `volume=${name}`, service);
+    }
+    if (everything) {
+      for (const network of this.networkNames(config)) {
+        await refuseInUse(`network ${network}`, `network=${network}`);
+      }
+    }
+    return refusals;
+  }
+
+  /**
+   * The containers `filter` matches that the run won't remove: another project's; this project's
+   * one-off `compose run` containers — a running one always, as `down` leaves it, and given
+   * `removedServices` (null: the whole project) a stopped one too, as `rm` leaves it; and, given
+   * those services, this project's containers of any other service.
+   */
+  private async containersHolding(
+    filter: string,
+    removedServices: string[] | null,
+  ): Promise<{ name: string; outside: boolean }[]> {
+    const result = await this.runtime.exec(
+      'docker',
+      ['ps', '-a', '--filter', filter, '--format', 'json'],
+      { cwd: this.runtime.workspaceDir, env: this.env() },
+    );
+    if (result.exitCode !== 0) {
+      throw new InfraError(`\`docker ps --filter ${filter}\` failed:\n${result.stderr.trim()}`);
+    }
+    return result.stdout
+      .split('\n')
+      .filter((line) => line.trim().startsWith('{'))
+      .map(
+        (line) => JSON.parse(line) as Pick<PsRow, 'ID' | 'State' | 'Labels'> & { Names?: string },
+      )
+      .map((row) => ({
+        name: row.Names ?? row.ID ?? 'unknown',
+        outside: labelOf(row.Labels, 'com.docker.compose.project') !== this.resolved.projectName,
+        service: labelOf(row.Labels, 'com.docker.compose.service') ?? '',
+        oneOff: isOneOff(row),
+        running: row.State === 'running',
+      }))
+      .filter(
+        (row) =>
+          row.outside ||
+          (removedServices === null
+            ? row.oneOff && row.running
+            : row.oneOff || !removedServices.includes(row.service)),
+      );
+  }
+
+  /** The networks `down` removes: the file's own, else Compose's `<project>_default`. */
+  private networkNames(config: ComposeConfig): string[] {
+    const networks = Object.entries(config.networks ?? {});
+    if (networks.length === 0) {
+      return [`${this.resolved.projectName}_default`];
+    }
+    return networks
+      .filter(([, network]) => !network.external)
+      .map(([key, network]) => network.name ?? `${this.resolved.projectName}_${key}`);
+  }
+
+  /**
+   * `docker compose down <targets>`, by name, so nothing else in the project is touched. Never
+   * `--volumes`: the named volumes stay.
+   */
+  protected async stopServices(targets: string[], emit: Emit): Promise<void> {
+    await this.compose(['down', ...targets], this.progress(emit));
   }
 
   /** One `docker compose ps` for all the targets, each read with {@link stateOf}. */

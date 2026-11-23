@@ -3,17 +3,24 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import type { AnyServiceConfig } from './config';
-import { TargetNotFoundError, resolveTarget } from './target';
+import { UnknownTagError } from './tags';
+import {
+  TargetNotFoundError,
+  resolveServiceNames,
+  resolveServiceSelection,
+  resolveTarget,
+} from './target';
 
 let tmp: string;
 let root: string;
 let services: AnyServiceConfig[];
 
-function svc(name: string, rel: string): AnyServiceConfig {
+function svc(name: string, rel: string, tags: string[] = []): AnyServiceConfig {
   return {
     name,
-    targetDir: rel,
-    resolvedTargetDir: path.join(root, rel),
+    dir: rel,
+    resolvedDir: path.join(root, rel),
+    tags,
   } as AnyServiceConfig;
 }
 
@@ -137,9 +144,7 @@ describe('resolveTarget', () => {
   test('resolves a service whose directory is reached through a symlink', () => {
     const link = path.join(tmp, 'svc-link');
     fs.symlinkSync(path.join(root, 'apps/api'), link);
-    services = [
-      { name: 'api', targetDir: 'apps/api', resolvedTargetDir: link } as AnyServiceConfig,
-    ];
+    services = [{ name: 'api', dir: 'apps/api', resolvedDir: link } as AnyServiceConfig];
     const t = resolveTarget('apps/api/src', ctx());
     expect(t.kind === 'service' && t.service.name).toBe('api');
     expect(t.dir).toBe(path.join(root, 'apps/api'));
@@ -148,6 +153,92 @@ describe('resolveTarget', () => {
   test('a symlink inside the workspace pointing outside it is outside', () => {
     fs.symlinkSync(path.join(tmp, 'outside'), path.join(root, 'escape'));
     expect(() => resolveTarget('escape', ctx())).toThrow(TargetNotFoundError);
+  });
+});
+
+describe('resolveServiceNames', () => {
+  beforeEach(() => {
+    for (const d of ['apps/web', 'apps/worker/src', 'tools']) {
+      fs.mkdirSync(path.join(root, d), { recursive: true });
+    }
+    services = [svc('api', 'apps/api'), svc('web', 'apps/web'), svc('worker', 'apps/worker')];
+  });
+
+  test('a name, a path to a service and a path inside one are that service', () => {
+    expect(resolveServiceNames(['api', './apps/web', './apps/worker/src'], ctx())).toEqual([
+      'api',
+      'web',
+      'worker',
+    ]);
+  });
+
+  test('one service named twice is there once', () => {
+    expect(resolveServiceNames(['api', './apps/api'], ctx())).toEqual(['api']);
+  });
+
+  test('a relative path resolves against base', () => {
+    expect(resolveServiceNames(['.'], ctx(path.join(root, 'apps/api')))).toEqual(['api']);
+  });
+
+  test('a directory that is no service throws, saying so', () => {
+    expect(() => resolveServiceNames(['./tools'], ctx())).toThrow(
+      new TargetNotFoundError('"./tools" is a directory, not a service'),
+    );
+    expect(() => resolveServiceNames(['.'], ctx())).toThrow(
+      new TargetNotFoundError('"." is a directory, not a service'),
+    );
+  });
+
+  test("what is neither throws the resolver's own error", () => {
+    expect(() => resolveServiceNames(['api', 'ghost', 'nope'], ctx())).toThrow(
+      new TargetNotFoundError('"ghost" is neither a service nor a directory in this workspace'),
+    );
+  });
+
+  test('an empty value is no service, though it is the base directory as a path', () => {
+    expect(() => resolveServiceNames([''], ctx(path.join(root, 'apps/api')))).toThrow(
+      new TargetNotFoundError('"" is neither a service nor a directory in this workspace'),
+    );
+  });
+});
+
+describe('resolveServiceSelection', () => {
+  beforeEach(() => {
+    for (const d of ['apps/web', 'apps/worker']) {
+      fs.mkdirSync(path.join(root, d), { recursive: true });
+    }
+    services = [
+      svc('api', 'apps/api', ['backend']),
+      svc('web', 'apps/web'),
+      svc('worker', 'apps/worker', ['backend']),
+    ];
+  });
+
+  test('with no tag, the services -s names, in the order given', () => {
+    const selection = resolveServiceSelection(
+      { targets: ['worker', './apps/web'], tags: [] },
+      ctx(),
+    );
+    expect(selection.names).toEqual(['worker', 'web']);
+    expect(selection.fromTagOnly.size).toBe(0);
+  });
+
+  test('with a tag, the union in config order, and which came from the tag alone', () => {
+    const selection = resolveServiceSelection(
+      { targets: ['web', 'worker'], tags: ['backend'] },
+      ctx(),
+    );
+    expect(selection.names).toEqual(['api', 'web', 'worker']);
+    expect([...selection.fromTagOnly]).toEqual(['api']);
+  });
+
+  test('a bad -s or an unknown tag throws its own error', () => {
+    expect(() => resolveServiceSelection({ targets: ['./apps'], tags: [] }, ctx())).toThrow(
+      new TargetNotFoundError('"./apps" is a directory, not a service'),
+    );
+    expect(() => resolveServiceSelection({ targets: [], tags: ['nope'] }, ctx())).toThrow(
+      new UnknownTagError('No service has the tag: nope'),
+    );
   });
 });
 

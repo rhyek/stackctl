@@ -7,12 +7,11 @@ import {
   INJECTED_ENV_VAR,
   REPLACED_ENV_VAR,
   RESOLVE_ENV_FD,
-  assertOutsideCli,
+  assertSdkCall,
   assertValidProfile,
   currentProfile,
   envDirs,
   envFileNames,
-  rejectUnknownOptions,
   shellEnvironment,
   withoutWorkspaceEnv,
   type EnvOverride,
@@ -53,7 +52,7 @@ interface ResolveEnvOptions {
    * and those of every directory up to the workspace root, are read (see {@link envDirs}).
    * Defaults to `resolvedWorkspaceDir`, which reads the workspace's files only.
    */
-  resolvedTargetDir?: string;
+  resolvedDir?: string;
   /**
    * The profile whose {@link envFileNames} to look for in each directory. Defaults to the active
    * profile ({@link currentProfile}). Ignored when `files` is given.
@@ -226,16 +225,16 @@ export class EnvFileSnapshot {
  */
 export function envCandidatePaths({
   resolvedWorkspaceDir,
-  resolvedTargetDir = resolvedWorkspaceDir,
+  resolvedDir = resolvedWorkspaceDir,
   profile,
   files,
 }: Pick<
   ResolveEnvOptions,
-  'resolvedWorkspaceDir' | 'resolvedTargetDir' | 'profile' | 'files'
+  'resolvedWorkspaceDir' | 'resolvedDir' | 'profile' | 'files'
 >): string[] {
   const names =
     files ?? envFileNames(profile === undefined ? currentProfile() : assertValidProfile(profile));
-  return envDirs(resolvedWorkspaceDir, resolvedTargetDir).flatMap((dir) =>
+  return envDirs(resolvedWorkspaceDir, resolvedDir).flatMap((dir) =>
     names.map((name) => path.join(dir, name)),
   );
 }
@@ -507,10 +506,10 @@ function decryptDefinitions(defs: Definition[], keys: Record<string, string>): v
 }
 
 /** The options {@link resolveEnv} takes, checked at runtime since a JavaScript caller bypasses the types. */
-const RESOLVE_ENV_OPTIONS = ['profile', 'target', 'workspaceDir'];
+const RESOLVE_ENV_OPTIONS = ['profile', 'service', 'workspaceDir'];
 
 /**
- * The environment stackctl starts a target's command with, as `exec()` runs it: the config's
+ * The environment stackctl starts a service's command with, as `exec()` runs it: the config's
  * `env.vars`, the `.env` files of the profile, `env.additionalFiles` and `env.override` applied,
  * and for a service its `PORT`, `PUBLIC_ORIGIN` and `NODE_EXTRA_CA_CERTS`, with `STACKCTL_PROFILE`,
  * `STACKCTL_CWD` and `STACKCTL_WORKSPACE_DIR`.
@@ -520,7 +519,7 @@ const RESOLVE_ENV_OPTIONS = ['profile', 'target', 'workspaceDir'];
  * here: importing it would resolve it in this process's profile, once, into this process's module
  * state, where the CLI resolves it in the profile asked for and leaves the caller's alone.
  *
- * Throws what stackctl said when it can't resolve: no config, an unknown target. Throws inside
+ * Throws what stackctl said when it can't resolve: no config, an unknown service. Throws inside
  * stackctl's own process — from the config, or a callback it runs — where it would load the
  * config again.
  */
@@ -533,11 +532,12 @@ export function resolveEnv(
      */
     profile?: string;
     /**
-     * The target: a service's name or a path, relative to the current directory (or to
-     * `workspaceDir` when given). A path inside a service is that service. Omitted, the current
-     * directory, or the workspace root with `workspaceDir`.
+     * A service, by its name or by a path, relative to the current directory (or to
+     * `workspaceDir` when given). A path inside a service is that service; a directory that
+     * belongs to no service gets the workspace's environment. Omitted, the current directory, or
+     * the workspace root with `workspaceDir`.
      */
-    target?: string;
+    service?: string;
     /**
      * The workspace root, the directory holding `stackctl.config.ts`, exactly: no walk-up. Default:
      * the nearest directory at or above the current one with a config.
@@ -545,8 +545,15 @@ export function resolveEnv(
     workspaceDir?: string;
   } = {},
 ): EnvResolution {
-  assertOutsideCli('resolveEnv');
-  rejectUnknownOptions('resolveEnv', opts, RESOLVE_ENV_OPTIONS);
+  assertSdkCall('resolveEnv', opts, RESOLVE_ENV_OPTIONS);
+  // Checked at runtime, since a JavaScript caller bypasses the types: an array would be the
+  // resolver's many form, and an empty string the current directory.
+  if (opts.service !== undefined && typeof opts.service !== 'string') {
+    throw new Error('resolveEnv: `service` takes one service: a name or a path');
+  }
+  if (opts.service === '') {
+    throw new Error("resolveEnv: `service` can't be an empty string");
+  }
   // Asked for no command: the environment only.
   const args = resolverArgs(opts);
   const child = spawnSync(process.execPath, args, {
@@ -622,8 +629,8 @@ function privateKeys(text: string | null): Record<string, string> {
  * Each candidate file is read by `read`, and {@link envKeysFile} with `decrypt`; with no `read`,
  * from disk, synchronously. A value dotenvx encrypted stays as written unless `decrypt` is on.
  */
-function targetDirOf(opts: ResolveEnvOptions): string {
-  return opts.resolvedTargetDir ?? opts.resolvedWorkspaceDir;
+function dirOf(opts: ResolveEnvOptions): string {
+  return opts.resolvedDir ?? opts.resolvedWorkspaceDir;
 }
 
 export function resolveEnvFrom(opts: ResolveEnvOptions, given?: EnvFileReader): EnvResolution {
@@ -642,7 +649,7 @@ export function resolveEnvFrom(opts: ResolveEnvOptions, given?: EnvFileReader): 
   const ambient = opts.ambient ?? shellEnvironment();
   const vars = opts.vars ?? {};
   // The target's own directory, as `envDirs` names it: the last of them.
-  const ownDir = envDirs(opts.resolvedWorkspaceDir, targetDirOf(opts)).at(-1);
+  const ownDir = envDirs(opts.resolvedWorkspaceDir, dirOf(opts)).at(-1);
   const packageNames = assignedNames(
     texts.filter((_text, i) => path.dirname(files[i] ?? '') === ownDir).join('\n'),
   );
@@ -758,7 +765,7 @@ export function packageEnvLayer(
 ): Record<string, string> {
   const { read, extraCaCerts, ...rest } = opts;
   const { env, packageNames } = resolveEnvFrom(
-    { ...rest, ...serviceEnvOptions(pkg), resolvedTargetDir: pkg.resolvedTargetDir },
+    { ...rest, ...serviceEnvOptions(pkg), resolvedDir: pkg.resolvedDir },
     read,
   );
   const injected: Record<string, string> = {};
@@ -788,7 +795,7 @@ export function packageEnvLayer(
 export function workspaceEnvLayer(opts: EnvLayerOptions): Record<string, string> {
   const { read, extraCaCerts, ...rest } = opts;
   const { env, packageNames } = resolveEnvFrom(
-    { ...rest, resolvedTargetDir: rest.resolvedWorkspaceDir },
+    { ...rest, resolvedDir: rest.resolvedWorkspaceDir },
     read,
   );
   if (extraCaCerts !== undefined && !packageNames.has('NODE_EXTRA_CA_CERTS')) {
@@ -799,16 +806,16 @@ export function workspaceEnvLayer(opts: EnvLayerOptions): Record<string, string>
 
 /**
  * The environment layer for a directory that is no service: the config's own variables and the
- * `.env` files of `resolvedTargetDir` and of every directory up to the workspace root, resolved
+ * `.env` files of `resolvedDir` and of every directory up to the workspace root, resolved
  * together, with `extraCaCerts` as `NODE_EXTRA_CA_CERTS` unless a file sets it.
  * No `PORT` and no `PUBLIC_ORIGIN`. Excludes `process.env`, like {@link packageEnvLayer}.
  */
 export function directoryEnvLayer(
-  resolvedTargetDir: string,
+  resolvedDir: string,
   opts: EnvLayerOptions,
 ): Record<string, string> {
   const { read, extraCaCerts, ...rest } = opts;
-  const { env, packageNames } = resolveEnvFrom({ ...rest, resolvedTargetDir }, read);
+  const { env, packageNames } = resolveEnvFrom({ ...rest, resolvedDir }, read);
   if (extraCaCerts !== undefined && !packageNames.has('NODE_EXTRA_CA_CERTS')) {
     env.NODE_EXTRA_CA_CERTS = extraCaCerts;
   }

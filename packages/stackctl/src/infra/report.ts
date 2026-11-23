@@ -1,10 +1,22 @@
 import chalk from 'chalk';
-import type { InfraEvent, InfraRunSummary } from './types';
+import {
+  INFRA_DONE_STATUS,
+  type InfraEvent,
+  type InfraRunAction,
+  type InfraRunSummary,
+} from './types';
+
+/** How a run's first line names it. */
+const HEADING: Record<InfraRunAction, string> = {
+  up: 'infra',
+  down: 'infra stop',
+  destroy: 'infra destroy',
+};
 
 export interface InfraReporter {
   onEvent: (event: InfraEvent) => void;
   /** Prints the closing line for a run. */
-  finish: (summary: InfraRunSummary, action: 'up' | 'destroy') => void;
+  finish: (summary: InfraRunSummary, action: InfraRunAction) => void;
 }
 
 /**
@@ -29,9 +41,8 @@ export function createInfraReporter(opts: {
       if (event.type === 'targets') {
         startedAt = now();
         width = Math.max(width, ...event.services.map((s) => s.length));
-        const what = event.action === 'destroy' ? 'infra destroy' : 'infra';
         write(
-          `${chalk.blue('▶')} ${what} ${chalk.dim(`(${opts.profile})`)}: ${event.services.join(', ') || chalk.dim('no services')}`,
+          `${chalk.blue('▶')} ${HEADING[event.action]} ${chalk.dim(`(${opts.profile})`)}: ${event.services.join(', ') || chalk.dim('no services')}`,
         );
         return;
       }
@@ -49,8 +60,8 @@ export function createInfraReporter(opts: {
       const name = event.service.padEnd(width);
       if (event.status === 'ready') {
         write(`  ${name}  ${chalk.green('ready')} ${chalk.dim(`(${elapsed()})`)}`);
-      } else if (event.status === 'destroyed') {
-        write(`  ${name}  ${chalk.green('destroyed')}`);
+      } else if (event.status === 'destroyed' || event.status === 'stopped') {
+        write(`  ${name}  ${chalk.green(event.status)}`);
       } else if (event.status === 'failed') {
         const [first = '', ...rest] = (event.detail ?? '').split('\n');
         write(`  ${name}  ${chalk.red(`failed: ${first}`)}`);
@@ -61,8 +72,7 @@ export function createInfraReporter(opts: {
     },
     finish(summary, action) {
       if (summary.ok) {
-        const done = action === 'destroy' ? 'destroyed' : 'ready';
-        write(chalk.green(`✔ infra ${done}`) + chalk.dim(` (${elapsed()})`));
+        write(chalk.green(`✔ infra ${INFRA_DONE_STATUS[action]}`) + chalk.dim(` (${elapsed()})`));
         return;
       }
       const failed = summary.services.filter((s) => !s.ok).map((s) => s.service);

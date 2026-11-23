@@ -1,6 +1,12 @@
 import fs from 'node:fs';
 import { startedByAgent } from '../agent-detection';
-import { RELEASE_MESSAGE, currentProfile, currentProfileSource, isCI } from '../env-base';
+import {
+  RELEASE_MESSAGE,
+  TARGET_BASE_VAR,
+  currentProfile,
+  currentProfileSource,
+  isCI,
+} from '../env-base';
 import { findSession, unresponsiveMessage } from '../find-session';
 import { startState } from '../relaunch';
 import { SESSION_ID_ENV } from '../running';
@@ -46,8 +52,11 @@ function lastLines(file: string | null, count: number): string {
   }
 }
 
-/** Runs `start --detach`; ends by exiting the process. */
-export async function runDetach(opts: StartOptions): Promise<never> {
+/**
+ * Runs `start --detach`; ends by exiting the process. The session resolves a relative `-s` path
+ * against `where.targetBase`, as the command that was typed would.
+ */
+export async function runDetach(opts: StartOptions, where: { targetBase: string }): Promise<never> {
   const root = process.cwd();
   const profile = currentProfile();
   const source = currentProfileSource();
@@ -77,7 +86,9 @@ export async function runDetach(opts: StartOptions): Promise<never> {
     root,
     'start',
     '--headless',
+    // As typed: the session resolves them, against the base handed to it below.
     ...opts.service.flatMap((name) => ['-s', name]),
+    ...opts.tag.flatMap((tag) => ['-t', tag]),
     ...(opts.lastAnswers ? ['--last-answers'] : []),
     ...(opts.killOthers ? ['--kill-others'] : []),
   ];
@@ -127,7 +138,7 @@ export async function runDetach(opts: StartOptions): Promise<never> {
     launched = await launchSession({
       args,
       cwd: start.cwd,
-      env: { ...start.env, [SESSION_ID_ENV]: id },
+      env: { ...start.env, [SESSION_ID_ENV]: id, [TARGET_BASE_VAR]: where.targetBase },
       waitTimeout: opts.waitTimeout ?? DEFAULT_DETACH_WAIT_TIMEOUT_S,
       detached: true,
       outputTailLines: LOG_TAIL_LINES,

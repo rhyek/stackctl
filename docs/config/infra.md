@@ -38,7 +38,7 @@ In the terminal UI, infra services have their own footer row. Focus one with the
 | Key | Action                                                                                |
 | --- | ------------------------------------------------------------------------------------- |
 | `s` | Start or stop it.                                                                     |
-| `r` | Restart it. The container is recreated and its data kept.                             |
+| `r` | Restart it. The container is recreated and its named volumes kept.                    |
 | `R` | Reset it, **deleting its data**. Asks for a second `R` within five seconds.           |
 
 The same actions are on the [control API](../reference/control-api.md#post-commandinfra).
@@ -50,9 +50,10 @@ The same actions are on the [control API](../reference/control-api.md#post-comma
 ```sh
 stackctl infra start                  # start everything, wait until ready, exit
 stackctl infra start -s db            # only db
-stackctl infra restart -s db          # recreate db's container, keep its data
+stackctl infra restart -s db          # recreate db's container, keep its volumes
 stackctl infra reset -s db            # delete db's data, then start it clean
-stackctl infra stop                   # stop and remove containers, keep the data
+stackctl infra restart -t data        # every infra service tagged data
+stackctl infra stop                   # stop and remove containers, keep the volumes
 stackctl infra destroy                # remove containers and their data
 stackctl infra docker-compose ps      # Compose itself, on this project and profile
 stackctl --profile test infra start   # the test profile's own containers
@@ -87,7 +88,7 @@ infra: {
 | Option         | Default                | What it is                                                              |
 | -------------- | ---------------------- | ----------------------------------------------------------------------- |
 | `file`         | Compose's own discovery | The compose file, relative to the workspace.                           |
-| `readyTimeout` | `300000` (5 minutes)   | How long `start` waits for the services to be ready, in ms.                |
+| `readyTimeout` | `300000` (5 minutes)   | How long `start` waits for the services to be ready, in ms. `--wait-timeout` overrides it. |
 | `services`     | none                   | Per-service options, keyed by Compose service name.                     |
 
 **Every service in the compose file runs**, listed under `services` or not. List one to give
@@ -98,6 +99,7 @@ Per-service options:
 | Option                        | What it does                                                             |
 | ----------------------------- | ------------------------------------------------------------------------ |
 | [`enabled`](#enabled)         | Turns the service off, by profile or by environment.                     |
+| [`tags`](#tags)               | Labels for picking services together.                                    |
 | [`port`](#port-and-urls)      | Its host port, for the reverse proxy and footer links.                   |
 | [`urls`](#port-and-urls)      | Footer links.                                                            |
 | `publicOrigin`                | Overrides parts of its public origin. See [`publicOrigin`](./urls.md#publicorigin). |
@@ -131,12 +133,29 @@ services: {
 }
 ```
 
-A disabled service is left out of `infra start` and of sessions, and its callbacks don't run.
+A disabled service is left out of `infra start`, `stop` and `restart` and of sessions, and its
+callbacks don't run. Naming it with `-s` is an error on every `infra` command but `destroy`.
 Two things it doesn't do:
 
 - **It doesn't override `depends_on`.** If an enabled service depends on a disabled one,
   Compose starts both.
 - **It doesn't stop a container that is already running.**
+
+## `tags`
+
+- **Type:** `string[]`
+- **Default:** `[]`
+
+```ts
+services: {
+  db: { tags: ['data'] },
+  cache: { tags: ['data'] },
+}
+```
+
+Labels for picking services together with `-t, --tag`, as on an
+[application service](./services.md#tags). A service carries tags only when it is named under
+`services`: one that is in the compose file and not listed here has none.
 
 ## `port` and `urls`
 
@@ -226,16 +245,17 @@ anything is removed, and a failing `beforeStart` before anything is started.
 ### Seeding with `fresh`
 
 `fresh` is `true` when this run created the service's data: none of its named volumes existed
-before.
+before. A service with no named volume keeps its data in its container, so for it `fresh` is
+`true` whenever it had no container: after `infra stop` and `infra restart` too.
 
-| What happened                         | `fresh` |
-| ------------------------------------- | ------- |
-| The service's first start             | `true`  |
-| `infra start` again                   | `false` |
-| `infra stop`, then `infra start`      | `false` |
-| `infra restart`                       | `false` |
-| `infra destroy`, then `infra start`   | `true`  |
-| `infra reset`                         | `true`  |
+| What happened                         | `fresh`                       |
+| ------------------------------------- | ----------------------------- |
+| The service's first start             | `true`                        |
+| `infra start` again                   | `false`                       |
+| `infra stop`, then `infra start`      | `false` (with a named volume) |
+| `infra restart`                       | `false` (with a named volume) |
+| `infra destroy`, then `infra start`   | `true`                        |
+| `infra reset`                         | `true`                        |
 
 Nothing is remembered between runs. If `afterReady` fails on the fresh run, before the seed,
 `fresh` is `false` next time: start over with `stackctl infra reset -s <service>`.
@@ -304,9 +324,43 @@ stackctl sets the Compose project name to `<workspace directory>-<profile>`:
 volumes and network, so `stackctl infra start` and `stackctl --profile test infra start` run
 side by side on the ports from their own `.env.<profile>` files.
 
-To choose the name yourself, set `COMPOSE_PROJECT_NAME` in a `.env` file.
+To choose the name yourself, set `COMPOSE_PROJECT_NAME` in a `.env` file. Set where every
+profile reads it (`.env`, `.env.local`), it makes every profile one Compose project: a
+[`reset`](#reset) or a `destroy` with nothing named then acts on every profile's infra. Set it
+in `.env.<profile>` to keep each profile its own.
 
 A stackctl profile is not a Compose profile: stackctl passes no `--profile` to Compose.
+
+## `reset`
+
+```sh
+stackctl infra reset                 # the whole profile's infra, clean
+stackctl infra reset -s db           # db alone
+```
+
+- **With nothing named, the profile's whole Compose project is reset**: every enabled service's
+  `beforeDestroy`, the project removed with its volumes and network, disabled services' data
+  included, then `afterDestroy` and `beforeStart`, and the enabled services started with
+  `afterReady` and `fresh: true`.
+- **With services named**, those services: their containers and the volumes they mount, with
+  the same callbacks. A volume a disabled service also uses goes too.
+- **On infra that doesn't exist yet**, whole or in part, it starts it, fresh.
+- **It refuses, before any callback runs and before anything is removed,** what it couldn't
+  delete, naming it and why: an `external` volume, and a volume, or with nothing named the
+  project's network, in use by a container it doesn't remove: another project's, a
+  `docker compose run` container (with nothing named, a running one), or with services named
+  this project's container of another service.
+  With services named, a volume another enabled service also uses is refused too, with the
+  command that resets them together, in the same profile:
+
+  ```
+  can't reset db: volume example-test_pgdata is also used by db-init; reset them together: stackctl --profile test infra reset -s db -s db-init
+  ```
+
+  The terminal UI's `R` key and the control API reset one service, so they are refused the
+  same way, and the services are reset together from the command line.
+- **A service that mounts an `external` volume can't be reset or destroyed**: clear its data
+  yourself, then `stackctl infra restart -s <service>`.
 
 ## Readiness
 
@@ -326,6 +380,8 @@ container is running" isn't the same as "it accepts connections".
 | no services | The whole project: every container, named and anonymous volume, and network.                |
 | services    | Those services' containers, and the volumes **only they** mount. The network stays.         |
 
-`infra reset` works the second way, on the services it is about to start. Images,
-`external` volumes and bind-mounted host directories are never removed: clean up the last in
+It refuses up front what it couldn't remove, as [`reset`](#reset) does: an `external` volume, a
+volume or network in use by a container it doesn't remove, and with services named a volume
+another service also uses, disabled ones included, since destroying it would take their data.
+Images and bind-mounted host directories are never removed: clean up the last in
 `afterDestroy`.

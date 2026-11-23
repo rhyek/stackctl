@@ -32,6 +32,10 @@ const sub = (call: Call) =>
         .filter((a, i, all) => a !== '-f' && all[i - 1] !== '-f')
     : call.args;
 
+/** `config --format json`, under the active Compose profiles or (`--profile *`) every one. */
+const isConfigJson = (args: string[]) =>
+  ['config --format json', '--profile * config --format json'].includes(args.join(' '));
+
 /**
  * A provider over a scripted Docker. `respond` sees the subcommand arguments (global flags
  * stripped) and returns a result, or nothing for an empty success.
@@ -49,8 +53,7 @@ function setup(
     calls.push(call);
     // An unscripted `config` is an empty project; everything else unscripted succeeds silently.
     const subArgs = sub(call);
-    const result =
-      respond(subArgs, call) ?? (subArgs.join(' ') === 'config --format json' ? ok('{}') : ok());
+    const result = respond(subArgs, call) ?? (isConfigJson(subArgs) ? ok('{}') : ok());
     for (const line of result.stderr.split('\n').filter(Boolean)) {
       opts.onLine?.(line, true);
     }
@@ -542,6 +545,9 @@ describe('lifecycle primitives', () => {
     expect((await provider.destroy({})).ok).toBe(true);
     expect(subs()).toEqual([
       ['config', '--services'],
+      // Every Compose profile's services: `down` removes them all.
+      ['--profile', '*', 'config', '--format', 'json'],
+      ['ps', '-a', '--filter', 'network=example-test_default', '--format', 'json'],
       ['down', '--volumes', '--remove-orphans'],
     ]);
   });
@@ -549,17 +555,12 @@ describe('lifecycle primitives', () => {
   test('a named destroy removes the container, then only the volumes that service owns', async () => {
     const config: ComposeConfig = {
       services: {
-        db: {
-          volumes: [
-            { type: 'volume', source: 'db-data' },
-            { type: 'volume', source: 'shared' },
-          ],
-        },
-        redis: { volumes: [{ type: 'volume', source: 'shared' }] },
+        db: { volumes: [{ type: 'volume', source: 'db-data' }] },
+        redis: { volumes: [{ type: 'volume', source: 'redis-data' }] },
       },
       volumes: {
         'db-data': { name: 'example-test_db-data' },
-        shared: { name: 'example-test_shared' },
+        'redis-data': { name: 'example-test_redis-data' },
       },
     };
     const events: InfraEvent[] = [];
@@ -571,6 +572,8 @@ describe('lifecycle primitives', () => {
     await provider.destroy({ services: ['db'], onEvent: (e) => events.push(e) });
     expect(calls.map((c) => (c.args[0] === 'compose' ? sub(c) : c.args))).toEqual([
       ['config', '--services'],
+      ['config', '--format', 'json'],
+      ['ps', '-a', '--filter', 'volume=example-test_db-data', '--format', 'json'],
       ['rm', '--stop', '--force', '--volumes', 'db'],
       ['config', '--format', 'json'],
       ['volume', 'rm', 'example-test_db-data'],
@@ -578,24 +581,15 @@ describe('lifecycle primitives', () => {
     // Never the unsafe form: `down <service> --volumes` also deletes siblings' volumes.
     expect(calls.some((c) => c.args.includes('down'))).toBe(false);
     expect(events.filter((e) => e.type === 'output').map((e) => e.line)).toEqual([
-      'kept volume example-test_shared: also mounted by redis',
       'removed volume example-test_db-data',
     ]);
   });
 
-  test('a named destroy tolerates a volume that never existed and keeps one still in use', async () => {
+  test('a named destroy tolerates a volume that never existed', async () => {
     const config: ComposeConfig = {
-      services: {
-        db: {
-          volumes: [
-            { type: 'volume', source: 'a' },
-            { type: 'volume', source: 'b' },
-          ],
-        },
-      },
-      volumes: { a: { name: 'p_a' }, b: { name: 'p_b' } },
+      services: { db: { volumes: [{ type: 'volume', source: 'a' }] } },
+      volumes: { a: { name: 'p_a' } },
     };
-    const events: InfraEvent[] = [];
     const { provider } = setup(
       servicesThen((args) => {
         if (args.join(' ') === 'config --format json') {
@@ -604,17 +598,10 @@ describe('lifecycle primitives', () => {
         if (args.join(' ') === 'volume rm p_a') {
           return fail('Error response from daemon: get p_a: no such volume');
         }
-        if (args.join(' ') === 'volume rm p_b') {
-          return fail('Error response from daemon: remove p_b: volume is in use - [9a03]');
-        }
         return undefined;
       }),
     );
-    const summary = await provider.destroy({ services: ['db'], onEvent: (e) => events.push(e) });
-    expect(summary.ok).toBe(true);
-    expect(events.filter((e) => e.type === 'output').map((e) => e.line)).toEqual([
-      'kept volume p_b: in use by another container',
-    ]);
+    expect((await provider.destroy({ services: ['db'] })).ok).toBe(true);
   });
 
   test('a volume that cannot be removed for any other reason fails the destroy', async () => {
@@ -647,7 +634,7 @@ describe('fresh', () => {
   /** Runs `up` over a Docker in the given state; returns the `fresh` each afterReady saw. */
   async function freshSeen(state: { volumes: string[]; containers: string[] }) {
     const seen: Record<string, boolean> = {};
-    const note = { enabled: true, afterReady: (ctx: { service: { name: string }; fresh: boolean }) => {
+    const note = { enabled: true, tags: [], afterReady: (ctx: { service: { name: string }; fresh: boolean }) => {
       seen[ctx.service.name] = ctx.fresh;
     } }; // oxfmt-ignore
     let polls = 0;
@@ -705,19 +692,18 @@ describe('fresh', () => {
 });
 
 describe('down, the passthrough, and the compose helper', () => {
-  test('down hands the terminal to `docker compose down`, and never asks for volumes', async () => {
-    const { provider, inherited } = setup();
-    expect(await provider.down(['db'])).toBe(7);
-    expect(inherited).toEqual([
-      {
-        command: 'docker',
-        args: ['compose', '--project-directory', WS, 'down', 'db'],
-        cwd: WS,
-        env: { DB_PORT: '21052', COMPOSE_PROJECT_NAME: 'example-test' },
-      },
+  test('down runs `docker compose down` on the services, piped, and never asks for volumes', async () => {
+    const { provider, subs, inherited } = setup(servicesThen(() => undefined));
+    const summary = await provider.down({ services: ['db'] });
+    expect(summary).toEqual({ ok: true, services: [{ service: 'db', ok: true }] });
+    expect(subs()).toEqual([
+      ['config', '--services'],
+      ['down', 'db'],
     ]);
-    await provider.down([]);
-    expect(inherited.flatMap((c) => c.args)).not.toContain('--volumes');
+    expect(inherited).toEqual([]);
+    await provider.down({});
+    expect(subs().at(-1)).toEqual(['down', 'db', 'redis']);
+    expect(subs().flat()).not.toContain('--volumes');
   });
 
   test('the passthrough runs where the user is standing, with the arguments untouched', async () => {
@@ -745,6 +731,7 @@ describe('down, the passthrough, and the compose helper', () => {
         services: {
           db: {
             enabled: true,
+            tags: [],
             afterReady: async ({ compose, envs }) => {
               expect(envs.COMPOSE_PROJECT_NAME).toBe('example-test');
               await compose(['exec', '-T', 'db', 'psql', '-c', 'SELECT 1']);
@@ -766,5 +753,295 @@ describe('down, the passthrough, and the compose helper', () => {
       line: 'psql: could not connect',
       isError: true,
     });
+  });
+});
+
+describe('what a reset or a destroy refuses, before anything runs', () => {
+  const shared: ComposeConfig = {
+    services: {
+      db: { volumes: [{ type: 'volume', source: 'shared' }] },
+      redis: { volumes: [{ type: 'volume', source: 'shared' }] },
+    },
+    volumes: { shared: { name: 'example-test_shared' } },
+  };
+  const own: ComposeConfig = {
+    services: { db: { volumes: [{ type: 'volume', source: 'a' }] } },
+    volumes: { a: { name: 'p_a' } },
+  };
+  /** Three services and `config`, unless `rest` answers first. */
+  const withConfig =
+    (config: ComposeConfig, rest: (args: string[]) => ExecResult | undefined = () => undefined) =>
+    (args: string[]) =>
+      args.join(' ') === 'config --services'
+        ? ok('db\nredis\nworker\n')
+        : (rest(args) ?? (isConfigJson(args) ? ok(JSON.stringify(config)) : undefined));
+  /** A `docker ps --format json` row: a container of `project`'s `service`. */
+  const psRow = (
+    Names: string,
+    project: string,
+    service = 'db',
+    State = 'running',
+    oneOff = false,
+  ) =>
+    JSON.stringify({
+      ID: 'c1',
+      Names,
+      State,
+      Labels: `com.docker.compose.project=${project},com.docker.compose.service=${service}${oneOff ? ',com.docker.compose.oneoff=True' : ''}`,
+    });
+  const removedNothing = (subs: string[][]) =>
+    expect(subs.some((a) => a[0] === 'rm' || a[0] === 'down' || a[1] === 'rm')).toBe(false);
+
+  test('an external volume refuses a reset', async () => {
+    const config: ComposeConfig = {
+      services: { db: { volumes: [{ type: 'volume', source: 'data' }] } },
+      volumes: { data: { name: 'shop_data', external: true } },
+    };
+    const { provider, subs } = setup(withConfig(config));
+    await expect(provider.up({ trigger: 'reset', services: ['db'] })).rejects.toThrow(
+      "can't reset db: volume shop_data is external, so stackctl doesn't delete it",
+    );
+    removedNothing(subs());
+  });
+
+  test('an external volume refuses a destroy', async () => {
+    const config: ComposeConfig = {
+      services: { db: { volumes: [{ type: 'volume', source: 'data' }] } },
+      volumes: { data: { name: 'shop_data', external: true } },
+    };
+    const { provider, subs } = setup(withConfig(config));
+    await expect(provider.destroy({ services: ['db'] })).rejects.toThrow(
+      "can't destroy db: volume shop_data is external, so stackctl doesn't delete it",
+    );
+    removedNothing(subs());
+  });
+
+  test('a volume another enabled service uses refuses a named reset, naming the command', async () => {
+    const { provider, subs } = setup(withConfig(shared));
+    await expect(provider.up({ trigger: 'reset', services: ['db'] })).rejects.toThrow(
+      "can't reset db: volume example-test_shared is also used by redis; reset them together: stackctl --profile test infra reset -s db -s redis",
+    );
+    removedNothing(subs());
+  });
+
+  test('a volume another enabled service uses refuses a named destroy too', async () => {
+    const { provider } = setup(withConfig(shared));
+    await expect(provider.destroy({ services: ['db'] })).rejects.toThrow(
+      "can't destroy db: volume example-test_shared is also used by redis; destroy them together: stackctl --profile test infra destroy -s db -s redis",
+    );
+  });
+
+  test('the command that resets them together names every service being reset', async () => {
+    const { provider } = setup(withConfig(shared));
+    await expect(provider.up({ trigger: 'reset', services: ['db', 'worker'] })).rejects.toThrow(
+      'stackctl --profile test infra reset -s db -s worker -s redis',
+    );
+  });
+
+  test('a volume only a disabled service also uses refuses a named destroy, which would take its data', async () => {
+    const { provider } = setup(withConfig(shared), {
+      services: { redis: { enabled: false } as never },
+    });
+    await expect(provider.destroy({ services: ['db'] })).rejects.toThrow(
+      "can't destroy db: volume example-test_shared is also used by redis; destroy them together: stackctl --profile test infra destroy -s db -s redis",
+    );
+  });
+
+  test("a container of this project that isn't being reset, using the volume, refuses", async () => {
+    const { provider, subs } = setup(
+      withConfig(own, (args) =>
+        args.join(' ') === 'ps -a --filter volume=p_a --format json'
+          ? ok(psRow('example-test-redis-1', 'example-test', 'redis'))
+          : undefined,
+      ),
+    );
+    await expect(provider.up({ trigger: 'reset', services: ['db'] })).rejects.toThrow(
+      "can't reset db: volume p_a is in use by container example-test-redis-1, which this reset doesn't remove",
+    );
+    removedNothing(subs());
+  });
+
+  test("a volume only a disabled service also uses doesn't refuse a named reset, and is removed", async () => {
+    const { provider, calls } = setup(withConfig(shared), {
+      services: { redis: { enabled: false } as never },
+    });
+    await provider.up({ trigger: 'reset', services: ['db'] });
+    expect(calls.map((c) => c.args)).toContainEqual(['volume', 'rm', 'example-test_shared']);
+  });
+
+  test('a volume in use by a container outside the project refuses', async () => {
+    const { provider, subs } = setup(
+      withConfig(own, (args) =>
+        args.join(' ') === 'ps -a --filter volume=p_a --format json'
+          ? ok(psRow('other_db_1', 'other'))
+          : undefined,
+      ),
+    );
+    await expect(provider.up({ trigger: 'reset', services: ['db'] })).rejects.toThrow(
+      "can't reset db: volume p_a is in use by container other_db_1, outside this project",
+    );
+    removedNothing(subs());
+  });
+
+  test("a container of this project using the volume doesn't refuse", async () => {
+    const { provider } = setup(
+      withConfig(own, (args) =>
+        args.join(' ') === 'ps -a --filter volume=p_a --format json'
+          ? ok(psRow('example-test-db-1', 'example-test'))
+          : undefined,
+      ),
+    );
+    expect((await provider.destroy({ services: ['db'] })).ok).toBe(true);
+  });
+
+  test('a network in use outside the project refuses a whole reset', async () => {
+    const { provider, subs } = setup(
+      withConfig({}, (args) =>
+        args.join(' ') === 'ps -a --filter network=example-test_default --format json'
+          ? ok(psRow('stray', 'other'))
+          : undefined,
+      ),
+    );
+    await expect(provider.up({ trigger: 'reset' })).rejects.toThrow(
+      "can't reset: network example-test_default is in use by container stray, outside this project",
+    );
+    removedNothing(subs());
+  });
+
+  /** A `compose run` container of this project's `db`, in `State`, holding `p_a`. */
+  const oneOff = (State: string) =>
+    withConfig(own, (args) =>
+      args.join(' ') === 'ps -a --filter volume=p_a --format json'
+        ? ok(psRow('example-test-db-run-1', 'example-test', 'db', State, true))
+        : undefined,
+    );
+
+  test('a one-off container of a service being reset refuses a named reset, running or not: `rm` leaves it', async () => {
+    for (const state of ['running', 'exited']) {
+      const { provider, subs } = setup(oneOff(state));
+      await expect(provider.up({ trigger: 'reset', services: ['db'] })).rejects.toThrow(
+        "can't reset db: volume p_a is in use by container example-test-db-run-1, which this reset doesn't remove",
+      );
+      removedNothing(subs());
+    }
+  });
+
+  test('a running one-off container refuses a whole reset, which `down` leaves; a stopped one goes with it', async () => {
+    const running = setup(oneOff('running'));
+    await expect(running.provider.up({ trigger: 'reset' })).rejects.toThrow(
+      "can't reset db: volume p_a is in use by container example-test-db-run-1, which this reset doesn't remove",
+    );
+    removedNothing(running.subs());
+    const exited = setup(oneOff('exited'));
+    await exited.provider.destroy({});
+    expect(exited.subs()).toContainEqual(['down', '--volumes', '--remove-orphans']);
+  });
+
+  test("a running one-off container on the project's network refuses a whole reset, saying it stays", async () => {
+    const { provider } = setup(
+      withConfig({}, (args) =>
+        args.join(' ') === 'ps -a --filter network=example-test_default --format json'
+          ? ok(psRow('example-test-db-run-1', 'example-test', 'db', 'running', true))
+          : undefined,
+      ),
+    );
+    await expect(provider.up({ trigger: 'reset' })).rejects.toThrow(
+      "can't reset: network example-test_default is in use by container example-test-db-run-1, which this reset doesn't remove",
+    );
+  });
+
+  test('a declared volume no service mounts, in use outside the project, refuses a whole destroy', async () => {
+    const { provider } = setup(
+      withConfig({ volumes: { spare: { name: 'p_spare' } } }, (args) =>
+        args.join(' ') === 'ps -a --filter volume=p_spare --format json'
+          ? ok(psRow('other_1', 'other'))
+          : undefined,
+      ),
+    );
+    await expect(provider.destroy({})).rejects.toThrow(
+      "can't destroy: volume p_spare is in use by container other_1, outside this project",
+    );
+  });
+
+  test("a disabled service's volume in use outside the project refuses a whole reset", async () => {
+    // `down --volumes` takes it too, though the reset starts only the enabled services.
+    const config: ComposeConfig = {
+      services: {
+        db: { volumes: [{ type: 'volume', source: 'a' }] },
+        worker: { volumes: [{ type: 'volume', source: 'b' }] },
+      },
+      volumes: { a: { name: 'p_a' }, b: { name: 'p_b' } },
+    };
+    const { provider, subs } = setup(
+      withConfig(config, (args) =>
+        args.join(' ') === 'ps -a --filter volume=p_b --format json'
+          ? ok(psRow('other_worker_1', 'other', 'worker'))
+          : undefined,
+      ),
+      { services: { worker: { enabled: false, tags: [] } } },
+    );
+    await expect(provider.up({ trigger: 'reset' })).rejects.toThrow(
+      "can't reset worker: volume p_b is in use by container other_worker_1, outside this project",
+    );
+    await expect(provider.destroy({})).rejects.toThrow(
+      "can't destroy worker: volume p_b is in use by container other_worker_1, outside this project",
+    );
+    removedNothing(subs());
+  });
+
+  test('a whole destroy checks the services behind every Compose profile, as `down` removes them', async () => {
+    const gated: ComposeConfig = {
+      services: {
+        db: { volumes: [{ type: 'volume', source: 'a' }] },
+        tools: { volumes: [{ type: 'volume', source: 't' }] },
+      },
+      volumes: { a: { name: 'p_a' }, t: { name: 'p_t' } },
+    };
+    const { provider, subs } = setup(
+      withConfig(own, (args) =>
+        args.join(' ') === '--profile * config --format json'
+          ? ok(JSON.stringify(gated))
+          : args.join(' ') === 'ps -a --filter volume=p_t --format json'
+            ? ok(psRow('other_tools_1', 'other', 'tools'))
+            : undefined,
+      ),
+    );
+    await expect(provider.destroy({})).rejects.toThrow(
+      "can't destroy tools: volume p_t is in use by container other_tools_1, outside this project",
+    );
+    removedNothing(subs());
+  });
+
+  test("a whole destroy checks the active services alone when another profile's don't resolve", async () => {
+    // An `env_file` only that profile provides, say: `down` still works, so the check must too.
+    const { provider, subs } = setup(
+      withConfig(own, (args) =>
+        args.join(' ') === '--profile * config --format json'
+          ? fail('env file /repos/example/tools.env not found')
+          : undefined,
+      ),
+    );
+    expect((await provider.destroy({})).ok).toBe(true);
+    expect(subs().map((a) => a.join(' '))).toEqual(
+      expect.arrayContaining(['ps -a --filter volume=p_a --format json', 'down --volumes --remove-orphans']), // oxfmt-ignore
+    );
+  });
+
+  test('a whole reset with nothing in use checks each volume and network, then removes the project', async () => {
+    const config: ComposeConfig = {
+      ...own,
+      networks: { default: { name: 'example-test_default' }, back: { name: 'example-test_back' } },
+    };
+    const { provider, calls } = setup(withConfig(config));
+    await provider.up({ trigger: 'reset' });
+    const args = calls.map((c) => (c.args[0] === 'compose' ? sub(c) : c.args).join(' '));
+    expect(args.slice(0, 6)).toEqual([
+      'config --services',
+      '--profile * config --format json',
+      'ps -a --filter volume=p_a --format json',
+      'ps -a --filter network=example-test_default --format json',
+      'ps -a --filter network=example-test_back --format json',
+      'down --volumes --remove-orphans',
+    ]);
   });
 });

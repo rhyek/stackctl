@@ -1,5 +1,5 @@
 ---
-description: Recipes for a coding agent - check whether an app is running, find a service's URL, start a stack in the background and wait for it, run tests in the test profile, restart a service, bring back one that is down, run one-off commands, use infra, read logs and onboard a new service.
+description: Recipes for a coding agent - check whether an app is running, find a service's URL, start a stack in the background and wait for it, run tests in the test profile, restart a service, bring back one that is down, run one-off commands, run a script across a tag, use infra, read logs and onboard a new service.
 ---
 
 # Agent playbook
@@ -17,8 +17,8 @@ reference page with the details.
   run in. stackctl refuses an agent's command that leaves the profile to the default.
 - **Never `kill`, `pkill` or `lsof … | kill` a stackctl process or its port.** Stop a session
   you started with `stackctl --profile <profile> stop`, and restart a service with
-  `stackctl --profile <profile> service restart -s <name>`. A killed session leaves its services
-  running.
+  `stackctl --profile <profile> service restart -s <service>`. A killed session leaves its
+  services running.
 - **Check before you start anything.** Starting a session in a profile quits the one already
   running in it. stackctl refuses that when a person started it.
 - **Never guess a port or hostname.** `stackctl --profile <profile> show-config` prints the
@@ -148,10 +148,10 @@ Don't run the service's command yourself while the session runs it: your copy ta
 
 Read the service's `command` in `stackctl --profile <profile> show-config`:
 
-| `command.watches` | After an edit to its code                           |
-| ----------------- | --------------------------------------------------- |
-| `true`            | Nothing. Its dev script reloads itself.             |
-| `false`           | `stackctl --profile <profile> service restart -s <name>` |
+| `command.watches` | After an edit to its code                                   |
+| ----------------- | ----------------------------------------------------------- |
+| `true`            | Nothing. Its dev script reloads itself.                     |
+| `false`           | `stackctl --profile <profile> service restart -s <service>` |
 
 An edit to a `.env` file restarts the affected services on its own, so an unexpected restart
 may be an env edit, not a crash. An edit to `stackctl.config.ts` needs the session restarted.
@@ -170,11 +170,29 @@ stackctl --profile development exec ./scripts/report -- node main.ts   # a folde
 - **A folder that is no service works too**, a script's directory say, with nothing to add to
   `stackctl.config.ts`. The command runs there, with the `.env` files of every directory from
   the workspace root down to it, its own last, and no `PORT`. See
-  [Targets](../guide/commands.md#targets).
+  [Naming a service](../guide/commands.md#naming-a-service).
 
 See [One-off commands](../guide/commands.md). From a script, use
 [`exec()`, `run()`](../reference/sdk.md#exec-and-run) or
 [`resolveEnv()`](../reference/sdk.md#resolveenv).
+
+## Run a script across a tag
+
+To lint, type-check or test every service of a kind, run the script by its tag:
+
+```bash
+stackctl --profile development show-config | jq '.services | map_values(.tags)'
+stackctl --profile test run -t backend test
+stackctl --profile development run -t backend --ignore-sibling-error lint
+```
+
+- **Each line is labelled with its service**, and the summary on stderr names each one `ok`,
+  `failed` or `stopped`, so read it, not the exit code alone.
+- **The first failure stops the others.** Add `--ignore-sibling-error` to see every failure in
+  one run.
+- **A tagged service without the script is skipped**, and says so on stderr.
+
+See [Several services at once](../guide/commands.md#several-services-at-once).
 
 ## Infra
 

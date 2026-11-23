@@ -35,6 +35,13 @@ export type ProfileSource = 'flag' | 'env' | 'ci' | 'default';
  */
 export const DETACHED_SESSION_VAR = 'STACKCTL_DETACHED_SESSION';
 
+/**
+ * Set in the environment of the session `start --detach` forks: the directory a relative `-s`
+ * path resolves against, as it would have for the command that was typed. The session is given
+ * `--workspace-dir`, which would otherwise make it the root. The CLI deletes it as it starts.
+ */
+export const TARGET_BASE_VAR = 'STACKCTL_TARGET_BASE';
+
 /** The `type` of the message `start --detach` sends its session as it lets go of it. */
 export const RELEASE_MESSAGE = 'release';
 
@@ -289,16 +296,16 @@ export class OutsideWorkspaceError extends Error {}
  * in between are named under `resolvedWorkspaceDir` all the same. Throws
  * {@link OutsideWorkspaceError} for a target outside the workspace.
  */
-export function envDirs(resolvedWorkspaceDir: string, resolvedTargetDir: string): string[] {
+export function envDirs(resolvedWorkspaceDir: string, resolvedDir: string): string[] {
   assertAbsolute('resolvedWorkspaceDir', resolvedWorkspaceDir);
-  assertAbsolute('resolvedTargetDir', resolvedTargetDir);
+  assertAbsolute('resolvedDir', resolvedDir);
   const root = path.resolve(resolvedWorkspaceDir);
-  let rel = path.relative(root, path.resolve(resolvedTargetDir));
+  let rel = path.relative(root, path.resolve(resolvedDir));
   if (isOutside(rel)) {
-    rel = path.relative(realpathOr(root), realpathOr(resolvedTargetDir));
+    rel = path.relative(realpathOr(root), realpathOr(resolvedDir));
     if (isOutside(rel)) {
       throw new OutsideWorkspaceError(
-        `${resolvedTargetDir} is outside the workspace (${resolvedWorkspaceDir})`,
+        `${resolvedDir} is outside the workspace (${resolvedWorkspaceDir})`,
       );
     }
   }
@@ -334,6 +341,9 @@ export type EnvOverride = boolean | string[];
  * the caller never imports the config itself.
  */
 export const RESOLVE_ONE_OFF_COMMAND = '__resolve-one-off';
+
+/** The hidden command the SDK's `attach()` runs: a running session's details, once it is ready. */
+export const ATTACH_COMMAND = '__attach';
 
 /** The file descriptor {@link RESOLVE_ONE_OFF_COMMAND} writes its result to, as JSON. */
 export const RESOLVE_ENV_FD = 3;
@@ -375,6 +385,30 @@ export function rejectUnknownOptions(
   for (const name of Object.keys(options)) {
     if (!allowed.includes(name)) {
       throw new Error(`${fn}: unknown option "${name}"`);
+    }
+  }
+}
+
+/** Whether `value` is an array of strings: an option a JavaScript caller passed, checked. */
+export function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+/**
+ * What every SDK function checks before it acts: refuses a call from inside stackctl's own process
+ * (a config or its callbacks), and an option `fn` doesn't take.
+ */
+export function assertSdkCall(fn: string, options: object, allowed: readonly string[]): void {
+  assertOutsideCli(fn);
+  rejectUnknownOptions(fn, options, allowed);
+}
+
+/** Refuses any of `keys` that is set, and isn't an array of strings. */
+export function assertStringArrays(fn: string, options: object, keys: readonly string[]): void {
+  for (const key of keys) {
+    const value: unknown = (options as Record<string, unknown>)[key];
+    if (value !== undefined && !isStringArray(value)) {
+      throw new Error(`${fn}: \`${key}\` takes an array of strings`);
     }
   }
 }
