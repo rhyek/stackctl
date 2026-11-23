@@ -16,7 +16,7 @@ import {
 } from './harness';
 
 /** The commands that run a script or a command once (`run`, `exec`, `infra`), how they find the
- * workspace and the target, and the environment they hand it. See `harness.ts`. */
+ * workspace and the service, and the environment they hand it. See `harness.ts`. */
 setUpCliWorkspace('commands');
 
 describe('stackctl run', () => {
@@ -113,7 +113,7 @@ describe('the config type check', () => {
         "import { defineConfig } from 'stackctl';",
         // A type error only tsc sees: the config itself is valid.
         "export const label: number = 'x';",
-        "export default defineConfig({ services: { api: { targetDir: '.' } } });",
+        "export default defineConfig({ services: { api: { dir: '.' } } });",
         '',
       ].join('\n'),
     );
@@ -243,11 +243,50 @@ describe('stackctl infra', () => {
     },
   );
 
+  test.each(['start', 'restart', 'reset'])(
+    'infra %s --wait-timeout 0 is refused before anything runs',
+    async (command) => {
+      const result = await stackctl(['infra', command, '--wait-timeout', '0']);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('--wait-timeout takes a number of seconds above 0.');
+      expect(result.stderr).not.toContain(NO_INFRA);
+    },
+  );
+
   test.each(['up', 'down'])('infra %s is not a command', async (command) => {
     const result = await stackctl(['infra', command]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toMatch(/unknown command/);
     expect(result.stderr).not.toContain(NO_INFRA);
+  });
+
+  test('infra destroy -t with a tag nothing has: exit 1, naming it, and nothing destroyed', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-infra-tag-')));
+    try {
+      fs.writeFileSync(
+        path.join(root, 'stackctl.config.ts'),
+        "import { defineConfig } from 'stackctl';\nexport default defineConfig({ infra: { 'docker-compose': { services: { db: { tags: ['data'] } } } }, services: {} });\n",
+      );
+      fs.writeFileSync(path.join(root, 'docker-compose.yaml'), 'services:\n  db:\n    image: postgres\n'); // oxfmt-ignore
+      const standIn = path.join(root, 'node_modules', 'stackctl');
+      fs.mkdirSync(standIn, { recursive: true });
+      fs.symlinkSync(path.join(packageDir, 'package.json'), path.join(standIn, 'package.json'));
+      fs.symlinkSync(buildDir, path.join(standIn, 'dist'));
+      // A `docker` first on the PATH that records every call: none may come.
+      const bin = path.join(root, 'bin');
+      const calls = path.join(root, 'docker-calls');
+      fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(bin, 'docker'), `#!/bin/sh\necho "$@" >> '${calls}'\nexit 1\n`, { mode: 0o755 }); // oxfmt-ignore
+      const result = await stackctl(['infra', 'destroy', '-t', 'nope'], {
+        cwd: root,
+        env: { PATH: `${bin}${path.delimiter}${String(process.env.PATH)}` },
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('No infra service has the tag: nope');
+      expect(fs.existsSync(calls)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -331,12 +370,12 @@ describe('a coding agent names the profile', () => {
   });
 });
 
-describe('exec and run take a target', () => {
+describe('exec and run take a service', () => {
   const api = () => path.join(ws, 'packages', 'api');
   /** What api's `build` printed: its directory, the profile, and its arguments. */
   const built = (stdout: string) => JSON.parse(lastLine(stdout)) as [string, string, string[]];
 
-  test("run build runs the current directory target's build", async () => {
+  test("run build runs the current directory service's build", async () => {
     const result = await stackctl(['run', 'build'], { cwd: api() });
     expect(result.exitCode, result.stderr).toBe(0);
     expect(built(result.stdout)).toEqual([api(), 'development', []]);
@@ -375,29 +414,71 @@ describe('exec and run take a target', () => {
     expect(result.stdout).toBe('21053');
   });
 
+  test.each([
+    ['exec', 'stackctl exec [options] [service] -- <command...>'],
+    ['run', 'stackctl run [options] [service] <script> [-- <args...>]'],
+  ])('%s --help shows [service] and no "target"', async (command, usage) => {
+    const result = await stackctl([command, '--help']);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain(usage);
+    expect(result.stdout.replace(/make targets?/g, '')).not.toMatch(/target/i);
+  });
+
   test('exec api extra -- true fails: the command goes after --', async () => {
     const result = await stackctl(['exec', 'api', 'extra', '--', 'true']);
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toBe('the command goes after --: stackctl exec [target] -- <command...>');
+    expect(result.stderr).toBe(
+      'the command goes after --: stackctl exec [service] -- <command...>',
+    );
   });
 
-  test('an unknown target fails', async () => {
+  test('an unknown service fails', async () => {
     const result = await stackctl(['exec', 'nope', '--', 'true']);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe('"nope" is neither a service nor a directory in this workspace');
   });
 
-  const EXEC_FORM =
-    'exec takes the service or directory as its first argument: stackctl exec api -- <command>';
-  const RUN_FORM =
-    'run takes the service or directory as its first argument: stackctl run api <script>';
+  const EXEC_FORM = "exec's options go after it: stackctl exec -s api -- <command>";
+  const RUN_FORM = "run's options go after it: stackctl run -s api <script>";
 
   test.each([
-    ['rejects -s on exec', ['exec', '-s', 'api', '--', 'true'], EXEC_FORM],
-    ['rejects --service on exec', ['exec', '--service=api', '--', 'true'], EXEC_FORM],
     ['rejects -s given before exec', ['-s', 'api', 'exec', '--', 'true'], EXEC_FORM],
-    ['rejects -s on run', ['run', '-s', 'api', 'build'], RUN_FORM],
     ['rejects -s given before run', ['-s', 'api', 'run', 'build'], RUN_FORM],
+    [
+      'rejects a service argument beside -s on exec',
+      ['exec', '-s', 'api', 'web', '--', 'true'],
+      'with -s or -t, exec takes no service argument: stackctl exec -s api -- <command...>',
+    ],
+    [
+      'rejects a service argument beside -t on exec',
+      ['exec', '-t', 'backend', 'web', '--', 'true'],
+      'with -s or -t, exec takes no service argument: stackctl exec -s api -- <command...>',
+    ],
+    [
+      'says where the command goes when exec -s is given one with no --',
+      ['exec', '-s', 'api', 'true'],
+      'the command goes after --: stackctl exec -s api -- <command...>',
+    ],
+    [
+      'rejects a service argument beside -s on run',
+      ['run', '-s', 'api', 'web', 'build'],
+      'with -s or -t, run takes only the script: stackctl run -t backend <script>',
+    ],
+    [
+      'rejects --ignore-sibling-error on exec without -s or -t',
+      ['exec', '--ignore-sibling-error', '--', 'true'],
+      '--ignore-sibling-error needs -s or -t',
+    ],
+    [
+      'rejects --ignore-sibling-error on exec with a service argument',
+      ['exec', 'api', '--ignore-sibling-error', '--', 'true'],
+      '--ignore-sibling-error needs -s or -t',
+    ],
+    [
+      'rejects --ignore-sibling-error on run without -s or -t',
+      ['run', '--ignore-sibling-error', 'build'],
+      '--ignore-sibling-error needs -s or -t',
+    ],
   ])('%s', async (_, args, message) => {
     const result = await stackctl(args);
     expect(result.exitCode).toBe(1);
@@ -405,7 +486,35 @@ describe('exec and run take a target', () => {
     expect(result.stdout).toBe('');
   });
 
-  test('no target inside no service runs in place', async () => {
+  test.each([
+    ['exec', ['exec', '--help']],
+    ['run', ['run', '--help']],
+  ])('%s --help lists -s, -t and --ignore-sibling-error', async (_, args) => {
+    const result = await stackctl(args);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain('-s, --service <service>');
+    expect(result.stdout).toContain('-t, --tag <tag>');
+    expect(result.stdout).toContain('--ignore-sibling-error');
+  });
+
+  test.each([
+    ['exec', '       stackctl exec [options] (-s <service>|-t <tag>)... -- <command...>\n'],
+    ['run', '       stackctl run [options] (-s <service>|-t <tag>)... <script> [-- <args...>]\n'],
+  ])('%s --help shows the many form under the single one', async (command, usage) => {
+    const result = await stackctl([command, '--help']);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain(usage);
+    expect(result.stdout).toMatch(/several services at once/);
+  });
+
+  test('the single form is unchanged: exec api -- true runs silently', async () => {
+    const exec = await stackctl(['exec', 'api', '--', 'true']);
+    expect(exec.exitCode, exec.stderr).toBe(0);
+    expect(exec.stdout).toBe('');
+    expect(exec.stderr).toBe('');
+  });
+
+  test('no argument inside no service runs in place', async () => {
     const scripts = path.join(ws, 'scripts');
     const result = await stackctl(['exec', '--', 'pwd'], { cwd: scripts });
     expect(result.stdout).toBe(scripts);
@@ -460,8 +569,8 @@ describe("a service's own env", () => {
 
   const names = ['TOP', 'SHARED', 'API_FILE', 'SHARED_FILE', 'SHELL_SET', 'MINE'];
   const print = ['sh', '-c', `echo "${names.map((name) => `$${name}`).join('|')}"`];
-  const execIn = (target: string) =>
-    stackctl(['--workspace-dir', dir, 'exec', target, '--', ...print], {
+  const execIn = (service: string) =>
+    stackctl(['--workspace-dir', dir, 'exec', service, '--', ...print], {
       env: { SHELL_SET: 'shell' },
     });
 
@@ -485,8 +594,8 @@ describe("a service's own env", () => {
     const { resolveEnv } = (await import(
       pathToFileURL(path.join(buildDir, 'index.js')).href
     )) as typeof import('../index');
-    const api = resolveEnv({ workspaceDir: dir, target: 'api' });
-    const web = resolveEnv({ workspaceDir: dir, target: 'web' });
+    const api = resolveEnv({ workspaceDir: dir, service: 'api' });
+    const web = resolveEnv({ workspaceDir: dir, service: 'web' });
     expect(api.files).toContain(path.join(dir, '.env.api'));
     expect(api.env).toMatchObject({ SHARED: 'api', API_FILE: '1' });
     expect(web.files).not.toContain(path.join(dir, '.env.api'));
@@ -597,7 +706,7 @@ describe("a config whose workspaceDir isn't its own folder", () => {
     expect(result.stdout).toBe(path.join(outer, 'packages', 'svc'));
   });
 
-  test("exec with no target gets the workspace's files, not the config folder's", async () => {
+  test("exec with no service gets the workspace's files, not the config folder's", async () => {
     const result = await stackctl(['exec', '--', ...print], { cwd: config });
     expect(result.stdout).toBe('outer|||');
   });
@@ -606,7 +715,7 @@ describe("a config whose workspaceDir isn't its own folder", () => {
     const { resolveEnv } = (await import(
       pathToFileURL(path.join(buildDir, 'index.js')).href
     )) as typeof import('../index');
-    const { env, files } = resolveEnv({ workspaceDir: config, target: 'svc' });
+    const { env, files } = resolveEnv({ workspaceDir: config, service: 'svc' });
     expect(env).toMatchObject({ ROOT_VAR: 'outer', MID_VAR: 'packages', OWN_VAR: 'svc' });
     expect(env.CFG_VAR).toBeUndefined();
     expect(files).toEqual([
@@ -619,16 +728,16 @@ describe("a config whose workspaceDir isn't its own folder", () => {
   test('show-config resolves the service against the workspace', async () => {
     const result = await stackctl(['--workspace-dir', config, 'show-config']);
     const shown = JSON.parse(result.stdout) as {
-      services: Record<string, { targetDir: string; resolvedTargetDir: string }>;
+      services: Record<string, { dir: string; resolvedDir: string }>;
     };
     expect(shown.services.svc).toMatchObject({
-      targetDir: 'packages/svc',
-      resolvedTargetDir: path.join(outer, 'packages', 'svc'),
+      dir: 'packages/svc',
+      resolvedDir: path.join(outer, 'packages', 'svc'),
     });
   });
 });
 
-describe('.env files walked up from the target', () => {
+describe('.env files walked up from the service', () => {
   const print = (...names: string[]) => [
     'sh',
     '-c',
@@ -650,12 +759,12 @@ describe('.env files walked up from the target', () => {
     expect(result.stdout).toBe('from-scripts|from-db|');
   });
 
-  test('takes an absolute target path', async () => {
+  test('takes an absolute path', async () => {
     const result = await stackctl(['exec', path.join(ws, 'scripts', 'db'), '--', ...print('DB_VAR', 'SCRIPTS_VAR')]); // oxfmt-ignore
     expect(result.stdout).toBe('from-db|from-scripts');
   });
 
-  test('takes a relative target from a directory below the root', async () => {
+  test('takes a relative path from a directory below the root', async () => {
     const result = await stackctl(['exec', 'db', '--', ...print('DB_VAR')], {
       cwd: path.join(ws, 'scripts'),
     });
@@ -806,7 +915,7 @@ describe('resolveEnv()', () => {
 
   test('returns the environment stackctl starts the service with', async () => {
     const { resolveEnv } = await load();
-    const { env, files } = resolveEnv({ workspaceDir: ws, target: 'portonly' });
+    const { env, files } = resolveEnv({ workspaceDir: ws, service: 'portonly' });
     expect(env).toMatchObject({
       PRE_URL: 'x:21010',
       ROOT_DIR: ws,
@@ -851,7 +960,7 @@ describe('resolveEnv()', () => {
 
   test("lists a service's files root first, the directory between next, its own last", async () => {
     const { resolveEnv } = await load();
-    const { env, files, packageNames } = resolveEnv({ workspaceDir: ws, target: 'app' });
+    const { env, files, packageNames } = resolveEnv({ workspaceDir: ws, service: 'app' });
     expect(env.MID_VAR).toBe('from-packages');
     const mid = files.indexOf(path.join(ws, 'packages', '.env.development'));
     const own = files.indexOf(path.join(app, '.env.development'));
@@ -863,27 +972,27 @@ describe('resolveEnv()', () => {
 
   test('takes a relative workspaceDir, from the current directory', async () => {
     const { resolveEnv } = await load();
-    const { env } = resolveEnv({ workspaceDir: path.relative(process.cwd(), ws), target: 'app' });
+    const { env } = resolveEnv({ workspaceDir: path.relative(process.cwd(), ws), service: 'app' });
     expect(env.MID_VAR).toBe('from-packages');
   });
 
-  test('takes an absolute directory target', async () => {
+  test('takes an absolute directory', async () => {
     const { resolveEnv } = await load();
-    const { env } = resolveEnv({ workspaceDir: ws, target: path.join(ws, 'scripts', 'db') });
+    const { env } = resolveEnv({ workspaceDir: ws, service: path.join(ws, 'scripts', 'db') });
     expect(env).toMatchObject({ DB_VAR: 'from-db', SCRIPTS_VAR: 'from-scripts' });
     expect(env.MID_VAR).toBeUndefined();
   });
 
-  test('finds the service from a directory target, as exec finds it', async () => {
+  test('finds the service from a directory, as exec finds it', async () => {
     const { resolveEnv } = await load();
-    const { env, packageNames } = resolveEnv({ workspaceDir: ws, target: 'packages/app' });
+    const { env, packageNames } = resolveEnv({ workspaceDir: ws, service: 'packages/app' });
     expect(env).toMatchObject({ APP_VAR: 'from-app-env-file', PRE_URL: 'x:21010' });
     expect(packageNames.has('APP_VAR')).toBe(true);
   });
 
   test("throws what stackctl said when it can't resolve", async () => {
     const { resolveEnv } = await load();
-    expect(() => resolveEnv({ workspaceDir: ws, target: 'nope' })).toThrow(
+    expect(() => resolveEnv({ workspaceDir: ws, service: 'nope' })).toThrow(
       /^"nope" is neither a service nor a directory in this workspace/,
     );
   });
@@ -984,9 +1093,9 @@ describe('finding the workspace', () => {
       });
       expect(result.exitCode).toBe(0);
       const config = JSON.parse(result.stdout) as {
-        services: Record<string, { resolvedTargetDir: string }>;
+        services: Record<string, { resolvedDir: string }>;
       };
-      expect(config.services.web?.resolvedTargetDir).toBe(path.join(root, 'apps', 'web'));
+      expect(config.services.web?.resolvedDir).toBe(path.join(root, 'apps', 'web'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

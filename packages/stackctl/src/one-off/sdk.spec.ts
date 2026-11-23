@@ -20,6 +20,8 @@ type IndexModule = typeof import('../index');
 let sdk: IndexModule;
 let ws: string;
 let apiDir: string;
+let workerDir: string;
+let webDir: string;
 let empty: string;
 
 /** Runs `fn` with the process in `dir`, and puts it back after. */
@@ -75,7 +77,11 @@ beforeAll(async () => {
       'export default defineConfig({',
       "  serviceRootDir: 'apps',",
       "  env: { vars: { FROM_CONFIG: 'config' } },",
-      '  services: { api: { port: 21054 } },',
+      '  services: {',
+      "    api: { port: 21054, tags: ['backend'] },",
+      "    worker: { tags: ['backend'] },",
+      "    web: { tags: ['frontend'] },",
+      '  },',
       '});',
       '',
     ].join('\n'),
@@ -92,6 +98,16 @@ beforeAll(async () => {
     JSON.stringify({ name: 'api', scripts: { where: 'pwd' } }),
   );
   fs.writeFileSync(path.join(apiDir, '.env.development'), 'API_VAR=from-api\n');
+  workerDir = path.join(ws, 'apps', 'worker');
+  fs.mkdirSync(workerDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(workerDir, 'package.json'),
+    JSON.stringify({ name: 'worker', scripts: { where: 'pwd' } }),
+  );
+  // No `where` script: a tag that matches it skips it.
+  webDir = path.join(ws, 'apps', 'web');
+  fs.mkdirSync(webDir, { recursive: true });
+  fs.writeFileSync(path.join(webDir, 'package.json'), JSON.stringify({ name: 'web' }));
   fs.mkdirSync(path.join(ws, 'scripts'));
   fs.writeFileSync(path.join(ws, 'scripts', '.env.development'), 'SCRIPTS_VAR=from-scripts\n');
 }, 120_000);
@@ -103,9 +119,9 @@ afterAll(() => {
 });
 
 describe('exec()', () => {
-  test("exec runs in the target's directory", async () => {
+  test("exec runs in the service's directory", async () => {
     const result = await inDir(ws, () =>
-      sdk.exec({ target: 'api', command: ['pwd'], stdio: 'pipe' }),
+      sdk.exec({ service: 'api', command: ['pwd'], stdio: 'pipe' }),
     );
     expect(result).toEqual({ exitCode: 0, signal: null, stdout: `${apiDir}\n`, stderr: '' });
   });
@@ -130,15 +146,15 @@ describe('exec()', () => {
     expect(result.stdout).toBe(`${ws}\n`);
   });
 
-  test('a relative target resolves against workspaceDir', async () => {
+  test('a relative service resolves against workspaceDir', async () => {
     const result = await inDir('/', () =>
-      sdk.exec({ workspaceDir: ws, target: 'scripts', command: ['pwd'], stdio: 'pipe' }),
+      sdk.exec({ workspaceDir: ws, service: 'scripts', command: ['pwd'], stdio: 'pipe' }),
     );
     expect(result.stdout).toBe(`${path.join(ws, 'scripts')}\n`);
   });
 
-  test('an unknown target rejects', async () => {
-    await expect(inDir(ws, () => sdk.exec({ target: 'nope', command: ['true'] }))).rejects.toThrow(
+  test('an unknown service rejects', async () => {
+    await expect(inDir(ws, () => sdk.exec({ service: 'nope', command: ['true'] }))).rejects.toThrow(
       '"nope" is neither a service nor a directory in this workspace',
     );
   });
@@ -156,18 +172,20 @@ describe('exec()', () => {
     expect(result.stdout).toBe('test\n');
   });
 
-  test("a caller stackctl started gets its target's env, not what stackctl gave it", async () => {
+  test("a caller stackctl started gets its service's env, not what stackctl gave it", async () => {
     // What a session leaves a process it started: its values, and the list of what it added.
     process.env.PORT = '1111';
     process.env.API_VAR = 'caller';
     process.env[INJECTED_ENV_VAR] = 'PORT,API_VAR';
     try {
       const print = ['sh', '-c', 'echo "$PORT|$API_VAR"'] as [string, ...string[]];
-      const api = await inDir(ws, () => sdk.exec({ target: 'api', command: print, stdio: 'pipe' }));
+      const api = await inDir(ws, () =>
+        sdk.exec({ service: 'api', command: print, stdio: 'pipe' }),
+      );
       // api's port, and api's .env value: the caller's would win over a file, were it ambient.
       expect(api.stdout).toBe('21054|from-api\n');
       const scripts = await inDir(ws, () =>
-        sdk.exec({ target: 'scripts', command: print, stdio: 'pipe' }),
+        sdk.exec({ service: 'scripts', command: print, stdio: 'pipe' }),
       );
       // A directory gets no port: the caller's is dropped, not passed through.
       expect(scripts.stdout).toBe('|\n');
@@ -230,7 +248,7 @@ describe('exec()', () => {
 
   test('writes its one-off-command begin and end to the event log, with the script as `by`', async () => {
     await inDir(apiDir, () =>
-      sdk.exec({ target: 'api', command: ['sh', '-c', 'exit 2', 'evented-exec'], stdio: 'pipe' }),
+      sdk.exec({ service: 'api', command: ['sh', '-c', 'exit 2', 'evented-exec'], stdio: 'pipe' }),
     );
     const lines = oneOffEvents().filter((line) => line.command?.includes('evented-exec'));
     expect(lines.map((line) => line.phase)).toEqual(['begin', 'end']);
@@ -282,27 +300,27 @@ describe('exec()', () => {
 
   test.each(['api', 'apps/api', 'scripts', '.'])(
     'the CLI and the SDK agree: %s',
-    async (target) => {
+    async (service) => {
       const names = ['PORT', 'SCRIPTS_VAR', 'FROM_CONFIG'];
       const js = `console.log(JSON.stringify([process.cwd(),${names.map((n) => `process.env.${n}??null`).join(',')}]))`; // oxfmt-ignore
       const command: [string, ...string[]] = ['node', '-e', js];
-      const viaCli = await runCommand('node', [cli, 'exec', target, '--', ...command], {
+      const viaCli = await runCommand('node', [cli, 'exec', service, '--', ...command], {
         cwd: ws,
       }).done;
       expect(viaCli.exitCode, viaCli.stderr).toBe(0);
-      const viaSdk = await inDir(ws, () => sdk.exec({ target, command, stdio: 'pipe' }));
+      const viaSdk = await inDir(ws, () => sdk.exec({ service, command, stdio: 'pipe' }));
       expect(JSON.parse(viaSdk.stdout!)).toEqual(JSON.parse(viaCli.stdout));
     },
   );
 });
 
 describe('unknown options', () => {
-  test.each(['cwd', 'service', 'bogus'])('exec rejects the option %s', async (name) => {
+  test.each(['cwd', 'target', 'bogus'])('exec rejects the option %s', async (name) => {
     const opts = { command: ['true'], [name]: '.' } as never;
     await expect(inDir(ws, () => sdk.exec(opts))).rejects.toThrow(`exec: unknown option "${name}"`);
   });
 
-  test.each(['cwd', 'service', 'bogus'])('run rejects the option %s', async (name) => {
+  test.each(['cwd', 'target', 'bogus'])('run rejects the option %s', async (name) => {
     const opts = { script: 'where', [name]: '.' } as never;
     await expect(inDir(ws, () => sdk.run(opts))).rejects.toThrow(`run: unknown option "${name}"`);
   });
@@ -317,7 +335,7 @@ describe('unknown options', () => {
   test('every documented option is accepted', async () => {
     const all = {
       profile: undefined,
-      target: undefined,
+      service: undefined,
       workspaceDir: undefined,
       stdio: 'pipe' as const,
     };
@@ -325,22 +343,288 @@ describe('unknown options', () => {
       exitCode: 0,
     });
     await expect(
-      inDir(ws, () => sdk.run({ ...all, target: 'api', script: 'where', args: [] })),
+      inDir(ws, () => sdk.run({ ...all, service: 'api', script: 'where', args: [] })),
     ).resolves.toMatchObject({ exitCode: 0 });
+    // Set to undefined, the many form's options leave the single form as it is.
+    await expect(
+      inDir(ws, () =>
+        sdk.exec({ ...all, tags: undefined, ignoreSiblingError: undefined, command: ['true'] }),
+      ),
+    ).resolves.toMatchObject({ exitCode: 0 });
+    await expect(
+      inDir(ws, () =>
+        sdk.exec({
+          ...all,
+          service: ['api'],
+          tags: undefined,
+          ignoreSiblingError: undefined,
+          command: ['true'],
+        }),
+      ),
+    ).resolves.toMatchObject({ ok: true });
+  });
+});
+
+describe('the many form', () => {
+  test('run with tags: a result per tagged service, in config order', async () => {
+    const result = await inDir(ws, () =>
+      sdk.run({ tags: ['frontend', 'backend'], script: 'where', stdio: 'pipe' }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      results: [
+        { service: 'api', status: 'ok', exitCode: 0, signal: null, stdout: `${apiDir}\n`, stderr: '' }, // oxfmt-ignore
+        { service: 'worker', status: 'ok', exitCode: 0, signal: null, stdout: `${workerDir}\n`, stderr: '' }, // oxfmt-ignore
+        { service: 'web', status: 'skipped', exitCode: null, signal: null },
+      ],
+    });
+  });
+
+  test('exec with a service array: one name is still the many result', async () => {
+    const result = await inDir(ws, () =>
+      sdk.exec({ service: ['api'], command: ['pwd'], stdio: 'pipe' }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      results: [
+        { service: 'api', status: 'ok', exitCode: 0, signal: null, stdout: `${apiDir}\n`, stderr: '' }, // oxfmt-ignore
+      ],
+    });
+  });
+
+  test('a service string with tags joins the union', async () => {
+    const result = await inDir(ws, () =>
+      sdk.exec({ service: 'web', tags: ['backend'], command: ['pwd'], stdio: 'pipe' }),
+    );
+    expect(result.results.map((r) => [r.service, r.stdout])).toEqual([
+      ['api', `${apiDir}\n`],
+      ['worker', `${workerDir}\n`],
+      ['web', `${webDir}\n`],
+    ]);
+  });
+
+  test('a path in the array names its service; a directory in no service is accepted', async () => {
+    const result = await inDir(ws, () =>
+      sdk.exec({ service: ['./apps/api', 'scripts'], command: ['pwd'], stdio: 'pipe' }),
+    );
+    expect(result.results.map((r) => [r.service, r.status, r.stdout])).toEqual([
+      ['api', 'ok', `${apiDir}\n`],
+      ['scripts', 'ok', `${path.join(ws, 'scripts')}\n`],
+    ]);
+  });
+
+  test("stdio pipe collects each service's output into its result; inherit prints labelled lines", async () => {
+    const command: [string, ...string[]] = ['sh', '-c', 'echo out; echo err >&2'];
+    const piped = await inDir(ws, () =>
+      sdk.exec({ service: ['api', 'worker'], command, stdio: 'pipe' }),
+    );
+    expect(piped.results.map((r) => [r.service, r.stdout, r.stderr])).toEqual([
+      ['api', 'out\n', 'err\n'],
+      ['worker', 'out\n', 'err\n'],
+    ]);
+
+    // A caller of its own, whose stdout and stderr are what is checked. The result goes to a file.
+    const index = pathToFileURL(path.join(buildDir, 'index.js')).href;
+    const resultFile = path.join(ws, 'inherit-result.json');
+    const caller = [
+      `const { exec } = await import(${JSON.stringify(index)});`,
+      `const r = await exec({ service: ['api', 'worker'], command: ${JSON.stringify(command)} });`,
+      `(await import('node:fs')).writeFileSync(${JSON.stringify(resultFile)}, JSON.stringify(r));`,
+    ].join('\n');
+    const run = await runCommand('node', ['--input-type=module', '-e', caller], { cwd: ws }).done;
+    expect(run.exitCode, run.stderr).toBe(0);
+    // oxlint-disable-next-line no-control-regex -- strips the color the labels may carry
+    const plain = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, '');
+    const stamp = String.raw`\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}`;
+    const lines = (text: string) => plain(text).split('\n').filter(Boolean).sort();
+    expect(lines(run.stdout)).toEqual([
+      expect.stringMatching(new RegExp(`^${stamp} \\[api   \\] out$`)),
+      expect.stringMatching(new RegExp(`^${stamp} \\[worker\\] out$`)),
+    ]);
+    // What the resolver printed may come first; no summary comes after: the result is the summary.
+    expect(lines(run.stderr)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(new RegExp(`^${stamp} \\[api   \\] err$`)),
+        expect.stringMatching(new RegExp(`^${stamp} \\[worker\\] err$`)),
+      ]),
+    );
+    expect(plain(run.stderr)).not.toMatch(/\d+ ok|^ {2}api +ok/m);
+    const result = JSON.parse(fs.readFileSync(resultFile, 'utf8')) as unknown;
+    expect(result).toEqual({
+      ok: true,
+      results: [
+        { service: 'api', status: 'ok', exitCode: 0, signal: null },
+        { service: 'worker', status: 'ok', exitCode: 0, signal: null },
+      ],
+    });
+  });
+
+  test('the first failure stops the rest; ignoreSiblingError lets them finish', async () => {
+    const stopping: [string, ...string[]] = ['sh', '-c', 'case "$PWD" in */api) sleep 0.3; exit 3;; esac; exec sleep 20']; // oxfmt-ignore
+    const startedAt = Date.now();
+    const stopped = await inDir(ws, () =>
+      sdk.exec({ service: ['api', 'worker'], command: stopping, stdio: 'pipe' }),
+    );
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    expect(stopped.ok).toBe(false);
+    expect(stopped.results.map((r) => [r.service, r.status, r.exitCode])).toEqual([
+      ['api', 'failed', 3],
+      ['worker', 'stopped', null],
+    ]);
+
+    const finishing: [string, ...string[]] = ['sh', '-c', 'case "$PWD" in */api) exit 3;; esac; sleep 0.5; echo finished']; // oxfmt-ignore
+    const finished = await inDir(ws, () =>
+      sdk.exec({
+        service: ['api', 'worker'],
+        command: finishing,
+        ignoreSiblingError: true,
+        stdio: 'pipe',
+      }),
+    );
+    expect(finished.ok).toBe(false);
+    expect(finished.results.map((r) => [r.service, r.status, r.exitCode, r.stdout])).toEqual([
+      ['api', 'failed', 3, ''],
+      ['worker', 'ok', 0, 'finished\n'],
+    ]);
+  }, 30_000);
+
+  test("a command that can't start is a failed result with its error, not a rejection", async () => {
+    const result = await inDir(ws, () =>
+      sdk.exec({ service: ['api'], command: ['stackctl-no-such-many'], stdio: 'pipe' }),
+    );
+    expect(result).toEqual({
+      ok: false,
+      results: [
+        {
+          service: 'api',
+          status: 'failed',
+          exitCode: null,
+          signal: null,
+          error: expect.stringContaining('stackctl-no-such-many') as unknown,
+        },
+      ],
+    });
+  });
+
+  test('an unknown tag, an unknown service and a named service without the script each reject', async () => {
+    await expect(inDir(ws, () => sdk.run({ tags: ['nope'], script: 'where' }))).rejects.toThrow(
+      'No service has the tag: nope',
+    );
+    await expect(
+      inDir(ws, () => sdk.run({ service: ['api', 'nope'], script: 'where' })),
+    ).rejects.toThrow('"nope" is neither a service nor a directory in this workspace');
+    await expect(
+      inDir(ws, () => sdk.run({ service: ['web'], tags: ['backend'], script: 'where' })),
+    ).rejects.toThrow(`No "where" script or make target found in ${webDir}`);
+  });
+
+  test('a script none of them has rejects, naming them', async () => {
+    await expect(
+      inDir(ws, () => sdk.run({ tags: ['backend'], script: 'no-such-script' })),
+    ).rejects.toThrow('No "no-such-script" script or make target found in any of: api, worker');
+  });
+
+  test('ignoreSiblingError with one service string rejects', async () => {
+    const execOpts = { service: 'api', ignoreSiblingError: true, command: ['true'] } as never;
+    await expect(inDir(ws, () => sdk.exec(execOpts))).rejects.toThrow(
+      'exec: `ignoreSiblingError` needs several services or `tags`',
+    );
+    // `false` too: the option belongs to the many form.
+    const runOpts = { script: 'where', ignoreSiblingError: false } as never;
+    await expect(inDir(ws, () => sdk.run(runOpts))).rejects.toThrow(
+      'run: `ignoreSiblingError` needs several services or `tags`',
+    );
+  });
+
+  test('the many form with nothing named rejects', async () => {
+    await expect(
+      inDir(ws, () => sdk.exec({ service: [], command: ['true'] } as never)),
+    ).rejects.toThrow('exec: the many form needs a service or a tag');
+    await expect(inDir(ws, () => sdk.run({ tags: [], script: 'where' }))).rejects.toThrow(
+      'run: the many form needs a service or a tag',
+    );
+  });
+
+  test.each([
+    [{ service: 3 }, 'exec: `service` takes a string or an array of strings'],
+    [{ service: ['api', 3] }, 'exec: `service` takes a string or an array of strings'],
+    [{ tags: 'backend' }, 'exec: `tags` takes an array of strings'],
+    [{ tags: [3] }, 'exec: `tags` takes an array of strings'],
+    [{ service: '' }, "exec: `service` can't be an empty string"],
+    [{ service: ['api', ''] }, "exec: `service` can't be an empty string"],
+    [{ tags: ['backend'], service: '' }, "exec: `service` can't be an empty string"],
+  ])('rejects a malformed selection: %j', async (selection, message) => {
+    const opts = { ...selection, command: ['true'] } as never;
+    await expect(inDir(ws, () => sdk.exec(opts))).rejects.toThrow(message);
+  });
+
+  test('ignoreSiblingError that is no boolean rejects', async () => {
+    const execOpts = { service: ['api'], ignoreSiblingError: 'yes', command: ['true'] } as never;
+    await expect(inDir(ws, () => sdk.exec(execOpts))).rejects.toThrow(
+      'exec: `ignoreSiblingError` takes a boolean',
+    );
+    const runOpts = { tags: ['backend'], ignoreSiblingError: 1, script: 'where' } as never;
+    await expect(inDir(ws, () => sdk.run(runOpts))).rejects.toThrow(
+      'run: `ignoreSiblingError` takes a boolean',
+    );
+  });
+
+  test('inside a command stackctl runs, it writes no event and no log: that command has them', async () => {
+    const sessions = path.join(ws, 'node_modules', '.stackctl', 'profiles', 'development', 'sessions'); // oxfmt-ignore
+    const logs = () =>
+      fs.readdirSync(sessions).flatMap((id) => {
+        const dir = path.join(sessions, id, 'commands');
+        return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+      });
+    const before = logs().length;
+    process.env.STACKCTL_NESTED = '1';
+    try {
+      const result = await inDir(ws, () =>
+        sdk.exec({ service: ['api'], command: ['sh', '-c', 'echo nested-many'], stdio: 'pipe' }),
+      );
+      expect(result.results.map((r) => [r.service, r.status, r.stdout])).toEqual([
+        ['api', 'ok', 'nested-many\n'],
+      ]);
+    } finally {
+      delete process.env.STACKCTL_NESTED;
+    }
+    expect(oneOffEvents().filter((line) => line.command?.includes('echo nested-many'))).toEqual([]); // oxfmt-ignore
+    expect(logs()).toHaveLength(before);
+  });
+
+  test("each service's command is in the event log", async () => {
+    await inDir(apiDir, () =>
+      sdk.exec({
+        service: ['api', '../../scripts'],
+        command: ['sh', '-c', 'exit 0', 'evented-many'],
+        stdio: 'pipe',
+      }),
+    );
+    const lines = oneOffEvents().filter((line) => line.command?.includes('evented-many'));
+    const by = { kind: 'sdk', cwd: 'apps/api', agent: false };
+    const begins = lines.filter((line) => line.phase === 'begin');
+    expect(begins).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'exec', service: 'api', by: expect.objectContaining(by) as unknown }), // oxfmt-ignore
+        expect.objectContaining({ kind: 'exec', dir: 'scripts', by: expect.objectContaining(by) as unknown }), // oxfmt-ignore
+      ]),
+    );
+    expect(begins).toHaveLength(2);
+    expect(lines.filter((line) => line.phase === 'end').map((line) => line.ok)).toEqual([true, true]); // oxfmt-ignore
   });
 });
 
 describe('run()', () => {
-  test("runs the target's script", async () => {
+  test("runs the service's script", async () => {
     const result = await inDir(ws, () =>
-      sdk.run({ target: 'api', script: 'where', stdio: 'pipe' }),
+      sdk.run({ service: 'api', script: 'where', stdio: 'pipe' }),
     );
     expect(result.stdout).toBe(`${apiDir}\n`);
   });
 
   test('writes its script and arguments to the event log', async () => {
     await inDir(ws, () =>
-      sdk.run({ target: 'api', script: 'where', args: ['evented-run'], stdio: 'pipe' }),
+      sdk.run({ service: 'api', script: 'where', args: ['evented-run'], stdio: 'pipe' }),
     );
     const lines = oneOffEvents().filter((line) => line.args?.includes('evented-run'));
     expect(lines.map((line) => line.phase)).toEqual(['begin', 'end']);
@@ -349,20 +633,20 @@ describe('run()', () => {
   });
 
   test('run rejects a missing script', async () => {
-    await expect(inDir(ws, () => sdk.run({ target: 'api', script: 'nope' }))).rejects.toThrow(
+    await expect(inDir(ws, () => sdk.run({ service: 'api', script: 'nope' }))).rejects.toThrow(
       `No "nope" script or make target found in ${apiDir}`,
     );
   });
 });
 
 describe('resolveEnv()', () => {
-  test.each(['api', 'scripts', '.'])('resolveEnv matches exec: %s', async (target) => {
+  test.each(['api', 'scripts', '.'])('resolveEnv matches exec: %s', async (service) => {
     const names = ['PORT', 'SCRIPTS_VAR', 'API_VAR'];
     const js = `console.log(JSON.stringify([${names.map((n) => `process.env.${n}??null`).join(',')}]))`; // oxfmt-ignore
     const viaExec = await inDir(ws, () =>
-      sdk.exec({ target, command: ['node', '-e', js], stdio: 'pipe' }),
+      sdk.exec({ service, command: ['node', '-e', js], stdio: 'pipe' }),
     );
-    const { env } = await inDir(ws, async () => sdk.resolveEnv({ target }));
+    const { env } = await inDir(ws, async () => sdk.resolveEnv({ service }));
     expect(names.map((n) => env[n] ?? null)).toEqual(JSON.parse(viaExec.stdout!));
   });
 
@@ -408,11 +692,21 @@ describe('resolveEnv()', () => {
   });
 
   test('rejects with the resolver message, as exec() does', async () => {
-    await expect(inDir(ws, async () => sdk.resolveEnv({ target: 'nope' }))).rejects.toThrow(
+    await expect(inDir(ws, async () => sdk.resolveEnv({ service: 'nope' }))).rejects.toThrow(
       /^"nope" is neither a service nor a directory in this workspace/,
     );
     await expect(inDir(empty, async () => sdk.resolveEnv({}))).rejects.toThrow(
       new RegExp(`^No stackctl.config.ts in ${empty} or any directory above it`),
+    );
+  });
+
+  test('takes one service: an array or an empty string rejects', async () => {
+    const several = { service: ['api'] } as never;
+    await expect(inDir(ws, async () => sdk.resolveEnv(several))).rejects.toThrow(
+      'resolveEnv: `service` takes one service: a name or a path',
+    );
+    await expect(inDir(ws, async () => sdk.resolveEnv({ service: '' }))).rejects.toThrow(
+      "resolveEnv: `service` can't be an empty string",
     );
   });
 
@@ -421,22 +715,15 @@ describe('resolveEnv()', () => {
     expect(env.API_VAR).toBe('from-api');
   });
 
-  test.each([
-    'cwd',
-    'useConfig',
-    'service',
-    'targetDir',
-    'files',
-    'override',
-    'vars',
-    'ambient',
-    'bogus',
-  ])('rejects the option %s at runtime', async (name) => {
-    const opts = { [name]: name === 'files' ? ['.env'] : '.' } as never;
-    await expect(inDir(ws, async () => sdk.resolveEnv(opts))).rejects.toThrow(
-      `resolveEnv: unknown option "${name}"`,
-    );
-  });
+  test.each(['cwd', 'useConfig', 'target', 'dir', 'files', 'override', 'vars', 'ambient', 'bogus'])(
+    'rejects the option %s at runtime',
+    async (name) => {
+      const opts = { [name]: name === 'files' ? ['.env'] : '.' } as never;
+      await expect(inDir(ws, async () => sdk.resolveEnv(opts))).rejects.toThrow(
+        `resolveEnv: unknown option "${name}"`,
+      );
+    },
+  );
 });
 
 describe("inside stackctl's own process", () => {

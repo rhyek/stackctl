@@ -89,4 +89,20 @@ describe('createInfraReporter', () => {
       '✔ infra destroyed (0.4s)',
     ]);
   });
+
+  test('reports a stop in its own words', () => {
+    const lines = render(
+      [
+        { type: 'targets', provider: 'docker-compose', action: 'down', services: ['db'] },
+        { type: 'status', service: 'db', status: 'stopping' },
+        { type: 'status', service: 'db', status: 'stopped' },
+      ],
+      [{ ok: true, services: [] }, 'down'],
+    );
+    expect(lines).toEqual([
+      '▶ infra stop (development): db',
+      '  db  stopped',
+      '✔ infra stopped (0.4s)',
+    ]);
+  });
 });

@@ -1,11 +1,13 @@
 import { describe, test, expect } from 'vitest';
-import { defineConfig, findService } from './index';
-import type { AnyServiceConfig, ServiceName } from './index';
+import { type AnyServiceConfig, type ServiceName, defineConfig } from './index';
 
 describe('public exports', () => {
   test('re-exports the runtime API', () => {
     expect(typeof defineConfig).toBe('function');
-    expect(typeof findService).toBe('function');
+  });
+
+  test("the package doesn't export findService", async () => {
+    expect('findService' in (await import('./index'))).toBe(false);
   });
 
   test('ServiceName falls back to string when Register is unaugmented', () => {

@@ -350,7 +350,7 @@ export type ServiceEnvInput<T = TokenRecord> =
       inherits?: boolean;
       /**
        * Environment variables for this service alone: its process, its config callbacks, and
-       * `stackctl exec` / `run` with it as the target. A record, or a callback over the
+       * `stackctl exec` / `run` on it. A record, or a callback over the
        * service's context `{ envs, tokens }`, whose `envs` holds the service's `.env` files and,
        * when it inherits, the top-level `vars`. They rank as a `.env` file read before every real
        * one, as the top-level `vars` do.
@@ -524,15 +524,21 @@ export type ServiceConfigInput<
   N extends string = string,
   RootDir extends string | undefined = undefined,
 > = DepsInput<N, ServiceTokens<Top, Own>> &
-  TargetDirField<RootDir> & {
+  DirField<RootDir> & {
     /**
      * Directory holding the service: relative to `workspaceDir`, or absolute, inside the
      * workspace either way. Inferred as `<serviceRootDir>/<key>` when the config sets
      * `serviceRootDir`; required otherwise. Set it to override the inferred one.
      */
-    targetDir?: string;
+    dir?: string;
     /** Show in the interactive picker (default `true`). */
     selectable?: boolean | undefined;
+    /**
+     * Labels for picking this service with `-t, --tag`, and for your own code, in a script that
+     * imports the config and runs from the workspace root:
+     * `Object.values(config.services).filter((s) => s.tags.includes('backend'))`.
+     */
+    tags?: string[] | undefined;
     /**
      * Color for this service's log-prefix label, overriding the auto-assigned palette color. Any
      * Ink/chalk color: a name (`'magenta'`, `'blueBright'`), hex (`'#af87ff'`),
@@ -717,7 +723,7 @@ export type ServiceConfigInput<
  * checked where it's written: `export const api = { command: 'dev', deps: ['worker'] } satisfies
  * ServiceInput<'api' | 'worker'>`. `N` is the config's service names, which `deps` is checked
  * against (it can't be read from a config the file is imported by); `T` is the config's `tokens`.
- * `targetDir` is optional here: `defineConfig` checks it once the service is in the config.
+ * `dir` is optional here: `defineConfig` checks it once the service is in the config.
  *
  * Use `satisfies`, not an annotation: an annotation gives the variable this whole type, which is
  * wider than the service as written, so `defineConfig` infers less from it.
@@ -1032,14 +1038,14 @@ function addressBuilder(
 }
 
 /**
- * Makes a service's `targetDir` required when the config sets no `serviceRootDir`, and adds
+ * Makes a service's `dir` required when the config sets no `serviceRootDir`, and adds
  * nothing when it does (the directory is then inferred as `<serviceRootDir>/<key>`). `RootDir` is
  * the type of the config's `serviceRootDir` — `undefined` when it isn't set. The field and its
  * docs are declared in {@link ServiceConfigInput}: a field declared only inside a conditional
  * type shows no docs on hover.
  */
-type TargetDirField<RootDir extends string | undefined> = undefined extends RootDir
-  ? { targetDir: string }
+type DirField<RootDir extends string | undefined> = undefined extends RootDir
+  ? { dir: string }
   : unknown;
 
 /**
@@ -1061,7 +1067,7 @@ export type DefineConfigOptions<
    */
   apiPort?: number | undefined;
   /**
-   * The workspace root, which each service's `targetDir` resolves against: relative to the
+   * The workspace root, which each service's `dir` resolves against: relative to the
    * directory holding the config file, or absolute. Defaults to that directory.
    */
   workspaceDir?: string | undefined;
@@ -1094,8 +1100,8 @@ export type DefineConfigOptions<
   infra?: InfraInput<Top>;
   /**
    * The directory the services live under, relative to `workspaceDir` — `'apps'`, say. With
-   * it set, a service's directory is inferred as `<serviceRootDir>/<key>` and its `targetDir`
-   * becomes optional (an override); without it, every service must set `targetDir`.
+   * it set, a service's directory is inferred as `<serviceRootDir>/<key>` and its `dir`
+   * becomes optional (an override); without it, every service must set `dir`.
    */
   serviceRootDir?: RootDir;
   /**
@@ -1107,7 +1113,7 @@ export type DefineConfigOptions<
   reverseProxy?: ReverseProxyInput<Top, K | I>;
   /**
    * Your application services, **keyed by service name**. The key is the service's name —
-   * what `-s` takes, what `deps` reference, and what `targetDir` defaults from
+   * what `-s` takes, what `deps` reference, and what `dir` defaults from
    * (`<serviceRootDir>/<key>`). Optional: a config with none still sets the environment of
    * `stackctl exec` and `run`, and its infra.
    */
@@ -1147,6 +1153,8 @@ export type ResolvedServiceConfig<N extends string, T = TokenRecord> = {
   deps?: ResolvedDep<N>[];
   /** Show in the interactive picker. As the config wrote it: `undefined` means `true`. */
   selectable?: boolean | undefined;
+  /** The service's tags, without duplicates; `[]` when it has none. */
+  tags: string[];
   /**
    * Color for this service's log-prefix label, when the config sets one; without it the label
    * takes the next palette color.
@@ -1177,9 +1185,9 @@ export type ResolvedServiceConfig<N extends string, T = TokenRecord> = {
    */
   tokens: T;
   /** The service directory as written (relative to `workspaceDir`, or absolute), or `<serviceRootDir>/<key>`. */
-  targetDir: string;
-  /** The service directory, absolute: `targetDir` resolved against the workspace root. */
-  resolvedTargetDir: string;
+  dir: string;
+  /** The service directory, absolute: `dir` resolved against the workspace root. */
+  resolvedDir: string;
   /**
    * The `.env` filenames looked for in each directory of this service's walk, ascending
    * precedence: stackctl's own, with the config's `env.additionalFiles` (when it inherits) and
@@ -1733,7 +1741,7 @@ type ParsedInfraService = v.InferOutput<typeof InfraServiceSchema>;
  */
 function resolveInfraService(
   name: string,
-  { enabled, port, urls, publicOrigin: originInput, ...callbacks }: ParsedInfraService,
+  { enabled, tags, port, urls, publicOrigin: originInput, ...callbacks }: ParsedInfraService,
   opts: {
     reverseProxy: ResolvedReverseProxy | undefined;
     ctx: () => ConfigContext;
@@ -1801,6 +1809,7 @@ function resolveInfraService(
   const resolved: ResolvedInfraService = {
     ...(callbacks as InfraServiceCallbacks),
     enabled: isEnabled,
+    tags: [...new Set(tags ?? [])],
     port: resolvedPort,
     publicOrigin,
     urls: isEnabled
@@ -1917,15 +1926,15 @@ function packageContext(
 }
 
 /**
- * A service's directory when it sets no `targetDir`: `<serviceRootDir>/<key>` (a trailing
+ * A service's directory when it sets no `dir`: `<serviceRootDir>/<key>` (a trailing
  * slash on the root tolerated). Without a `serviceRootDir` there is nothing to infer from — the
- * types require `targetDir` then, and this is the backstop for a config that bypassed them.
+ * types require `dir` then, and this is the backstop for a config that bypassed them.
  */
-function inferredTargetDir(serviceRootDir: string | undefined, name: string): string {
+function inferredDir(serviceRootDir: string | undefined, name: string): string {
   if (serviceRootDir === undefined) {
     throw new Error(
-      `${name} has no \`targetDir\`, and the config sets no \`serviceRootDir\` to infer it from. ` +
-        `Set \`serviceRootDir\` (e.g. 'apps') at the top level, or \`targetDir\` on ${name}.`,
+      `${name} has no \`dir\`, and the config sets no \`serviceRootDir\` to infer it from. ` +
+        `Set \`serviceRootDir\` (e.g. 'apps') at the top level, or \`dir\` on ${name}.`,
     );
   }
   return `${serviceRootDir.replace(/\/+$/, '')}/${name}`;
@@ -2424,26 +2433,26 @@ export function defineConfig<
 
   const tokens = parsed.tokens ?? {};
 
-  /** A service's `targetDir`: as written, or inferred from `serviceRootDir`. */
-  const targetDirOf = (config: (typeof parsedPackages)[number]): string =>
-    config.targetDir ?? inferredTargetDir(parsed.serviceRootDir, config.name);
+  /** A service's `dir`: as written, or inferred from `serviceRootDir`. */
+  const dirOf = (config: (typeof parsedPackages)[number]): string =>
+    config.dir ?? inferredDir(parsed.serviceRootDir, config.name);
   /** A service's directory, absolute. Throws for one outside the workspace. */
-  const resolvedTargetDirOf = (config: (typeof parsedPackages)[number]): string => {
-    const targetDir = targetDirOf(config);
-    const resolvedTargetDir = path.resolve(resolvedWorkspaceDir, targetDir);
+  const resolvedDirOf = (config: (typeof parsedPackages)[number]): string => {
+    const dir = dirOf(config);
+    const resolvedDir = path.resolve(resolvedWorkspaceDir, dir);
     try {
-      envDirs(resolvedWorkspaceDir, resolvedTargetDir);
+      envDirs(resolvedWorkspaceDir, resolvedDir);
     } catch (error) {
       if (error instanceof OutsideWorkspaceError) {
         throw new Error(
-          `services.${config.name}.targetDir is "${targetDir}", which is outside the workspace ` +
+          `services.${config.name}.dir is "${dir}", which is outside the workspace ` +
             `(${resolvedWorkspaceDir})`,
           { cause: error },
         );
       }
       throw error;
     }
-    return resolvedTargetDir;
+    return resolvedDir;
   };
 
   const topAdditional = resolveAdditionalFiles(parsed.env?.additionalFiles, currentProfile());
@@ -2490,7 +2499,7 @@ export function defineConfig<
             try {
               return envCandidatePaths({
                 resolvedWorkspaceDir,
-                resolvedTargetDir: resolvedTargetDirOf(config),
+                resolvedDir: resolvedDirOf(config),
                 files: envOptionsOf(config.name).files,
               });
             } catch {
@@ -2506,7 +2515,7 @@ export function defineConfig<
   type EnvOptions = { files: string[]; override?: EnvOverride };
   const workspaceEnvOptions: EnvOptions = { files: envFiles, override: envOverride };
   const loadEnv = (
-    resolvedTargetDir: string,
+    resolvedDir: string,
     vars?: Record<string, string>,
     options: EnvOptions = workspaceEnvOptions,
   ) =>
@@ -2514,7 +2523,7 @@ export function defineConfig<
       resolveEnvFrom(
         {
           resolvedWorkspaceDir,
-          resolvedTargetDir,
+          resolvedDir,
           files: options.files,
           override: options.override,
           decrypt: envDecrypt,
@@ -2538,11 +2547,11 @@ export function defineConfig<
    * ranked as a file below them, merged over `process.env`.
    */
   const envsFor = (
-    resolvedTargetDir: string,
+    resolvedDir: string,
     vars: Record<string, string> | undefined,
     options: EnvOptions = workspaceEnvOptions,
   ) => {
-    const load = loadEnv(resolvedTargetDir, vars, options);
+    const load = loadEnv(resolvedDir, vars, options);
     return {
       envs: once(() => Object.assign(baseEnv(), load().env)),
       files: () => load().files,
@@ -2570,15 +2579,15 @@ export function defineConfig<
 
   const packages = parsedPackages.map((config) => {
     const { env: ownEnv, ...declared } = config;
-    const targetDir = targetDirOf(config);
-    const resolvedTargetDir = resolvedTargetDirOf(config);
+    const dir = dirOf(config);
+    const resolvedDir = resolvedDirOf(config);
     // The service's own tokens win over the config's, so a service can override a shared value.
     const pkgTokens = config.tokens ? { ...tokens, ...config.tokens } : tokens;
     // Its own `vars` resolve against its files and the config's `vars` it inherits, then merge
     // over those: what every callback below, and its process, sees.
     const envOptions = envOptionsOf(config.name);
     const inheritedVars = envOptions.inherits ? envVars : undefined;
-    const beforeOwnVars = envsFor(resolvedTargetDir, inheritedVars, envOptions);
+    const beforeOwnVars = envsFor(resolvedDir, inheritedVars, envOptions);
     const ownVars = resolveEnvVars(
       ownEnv?.vars,
       () => ({ envs: beforeOwnVars.envs(), tokens: pkgTokens }),
@@ -2587,7 +2596,7 @@ export function defineConfig<
     );
     const serviceVars = ownVars === undefined ? inheritedVars : { ...inheritedVars, ...ownVars };
     const env =
-      ownVars === undefined ? beforeOwnVars : envsFor(resolvedTargetDir, serviceVars, envOptions);
+      ownVars === undefined ? beforeOwnVars : envsFor(resolvedDir, serviceVars, envOptions);
     const baseCtx = once((): ConfigContext => ({ envs: env.envs(), tokens: pkgTokens }));
     const identity: ServiceIdentity = { name: config.name, kind: 'service' };
     // Resolved first so the `healthcheck`/`urls` callbacks below can read it, and stored on the
@@ -2625,9 +2634,11 @@ export function defineConfig<
       // Stored resolved (config tokens + this service's own) so the exported config exposes
       // each service's tokens: `config.services.api.tokens`.
       tokens: pkgTokens,
+      // Over the tags `declared` holds as written: without duplicates, and `[]` for none.
+      tags: [...new Set(config.tags ?? [])],
       port,
-      targetDir,
-      resolvedTargetDir,
+      dir,
+      resolvedDir,
       envFiles: envOptions.files,
       envOverride: envOptions.override,
       envVars: serviceVars,

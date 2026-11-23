@@ -88,9 +88,9 @@ export function initialPhaseFor(opts: { packages: string[]; lastAnswers: boolean
 
 /**
  * The package names for a `--headless` session, which — unlike the UI — has no
- * selector to fall back on: an explicit `--service` wins, then a saved `--last-answers`
- * selection, otherwise an error naming `usage`. Unknown `--service` names are the caller's to
- * validate.
+ * selector to fall back on: the services `--service` and `--tag` named win, then a saved
+ * `--last-answers` selection, otherwise an error naming `usage`. Resolving `--service` and
+ * `--tag` to names is the caller's.
  */
 export function resolveSelectedNames(
   opts: { service: string[]; lastAnswers: boolean },
@@ -114,5 +114,5 @@ export function resolveSelectedNames(
       ? { error: 'No saved selection found — run once without --last-answers first.' }
       : { names: saved.names };
   }
-  return { error: `${usage} needs services to start: pass --service or --last-answers.` };
+  return { error: `${usage} needs services to start: pass --service, --tag or --last-answers.` };
 }

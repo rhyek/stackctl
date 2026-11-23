@@ -1,7 +1,8 @@
 /**
  * The workspace the e2e suite runs stackctl in: a temp directory per test file, with a
  * `stackctl.config.ts` and three plain Node services — `api`, `web` (which needs `api` and waits
- * for its healthcheck) and `worker`. No infra, no Docker, no dev reverse proxy.
+ * for its healthcheck) and `worker` — of which `api` and `worker` are tagged `backend`. No infra,
+ * no Docker, no dev reverse proxy.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -40,13 +41,13 @@ export default defineConfig({
   // The failed-startup scenario pins the control API to a port the test holds.
   ...(process.env.E2E_API_PORT ? { apiPort: Number(process.env.E2E_API_PORT) } : {}),
   services: {
-    api: { port: ${String(PORTS.api)}, healthcheck: '/health' },
+    api: { port: ${String(PORTS.api)}, healthcheck: '/health', tags: ['backend'] },
     web: {
       port: ${String(PORTS.web)},
       healthcheck: '/health',
       deps: [{ service: 'api', wait: true }],
     },
-    worker: {},
+    worker: { tags: ['backend'] },
   },
 });
 `;

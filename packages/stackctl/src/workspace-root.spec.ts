@@ -85,6 +85,8 @@ describe('needsNoWorkspace', () => {
     [['--headless', '-s', 'a'], false],
     [['exec', '--', 'init'], false],
     [['--headless', '-s', 'init'], false],
+    [['--headless', '-t', 'init'], false],
+    [['--tag', 'init', 'start'], false],
     [['--service', 'init', 'start'], false],
     [['--workspace-dir', 'init', 'logs'], false],
   ])('%j', (args, expected) => {

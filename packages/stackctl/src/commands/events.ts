@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { currentProfile } from '../env-base';
 import { EventTail, currentEventsPath } from '../event-log';
+import { sdkResultRequested, writeSdkResult } from '../sdk-result';
 
 // `stackctl events`: the event log of the profile's current session (the running one, else the
 // latest), as it is in the file (JSON Lines, for `jq`). Read-only: it never asks the session
@@ -22,6 +23,10 @@ export async function runEvents(opts: {
   const root = process.cwd();
   const file = currentEventsPath(root, currentProfile());
   if (file === null) {
+    if (sdkResultRequested()) {
+      writeSdkResult({ lines: [] });
+      process.exit(0);
+    }
     console.error(`stackctl events: no ${currentProfile()} session has run here yet.`);
     process.exit(opts.path ? 1 : 0);
   }
@@ -35,14 +40,23 @@ export async function runEvents(opts: {
     process.exit(1);
   }
   if (!opts.follow && !fs.existsSync(file)) {
-    console.error(`stackctl events: no event log yet at ${path.relative(root, file)}.`);
+    if (sdkResultRequested()) {
+      writeSdkResult({ lines: [] });
+    } else {
+      console.error(`stackctl events: no event log yet at ${path.relative(root, file)}.`);
+    }
     process.exit(0);
   }
   // One reader for the lines already there and for those added after: `-f` goes on from the byte
   // the first read ended at, so a line written in between is printed, not skipped.
   const tail = new EventTail(file, 0);
   const lines = tail.read();
-  for (const line of count === Infinity ? lines : lines.slice(lines.length - count)) {
+  const shown = count === Infinity ? lines : lines.slice(lines.length - count);
+  if (sdkResultRequested()) {
+    writeSdkResult({ lines: shown.map((line) => JSON.parse(line) as unknown) });
+    process.exit(0);
+  }
+  for (const line of shown) {
     console.log(line);
   }
   if (!opts.follow) {

@@ -235,22 +235,34 @@ describe('InfraManager', () => {
     await expect(manager.destroy({ services: ['cache'] })).rejects.toThrow(
       /"cache"[\s\S]*db, redis/,
     );
-    await expect(manager.down(['cache'])).rejects.toThrow(/"cache"/);
+    await expect(manager.down({ services: ['cache'] })).rejects.toThrow(/"cache"/);
   });
 
-  test('down goes to the provider with the names, and reports its exit code', async () => {
-    const { exec } = scriptedDocker();
-    const inherited: string[][] = [];
+  test('down goes to the provider with the names, and reports each service stopped', async () => {
+    const { exec, calls } = scriptedDocker();
     const manager = (await InfraManager.fromConfig(configWith({ 'docker-compose': {} }), {
       exec,
-      spawnInherit: async (_command, args) => {
-        inherited.push(args.slice(3));
-        return 3;
-      },
     }))!;
-    expect(await manager.down(['db'])).toBe(3);
-    expect(await manager.down()).toBe(3);
-    expect(inherited).toEqual([['down', 'db'], ['down']]);
+    expect(await manager.down({ services: ['db'] })).toEqual({
+      ok: true,
+      services: [{ service: 'db', ok: true }],
+    });
+    await manager.down({});
+    const downs = calls.map((c) => c.args.slice(3)).filter((a) => a[0] === 'down');
+    expect(downs).toEqual([
+      ['down', 'db'],
+      ['down', 'db', 'redis'],
+    ]);
+  });
+
+  test('down refuses a disabled service named before stopping anything, so a restart of it does too', async () => {
+    const { exec, calls } = scriptedDocker();
+    const manager = (await InfraManager.fromConfig(
+      configWith({ 'docker-compose': { services: { redis: { enabled: false } } } }),
+      { exec },
+    ))!;
+    await expect(manager.down({ services: ['redis'] })).rejects.toThrow(/"redis"[\s\S]*disabled/);
+    expect(calls.map((c) => c.args.slice(3)[0])).not.toContain('down');
   });
 
   test('the passthrough rejects a provider the config does not declare', async () => {

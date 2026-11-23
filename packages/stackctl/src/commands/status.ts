@@ -4,6 +4,7 @@ import type { SessionStatus } from '../control-client';
 import { currentProfile } from '../env-base';
 import { type EventBy, type EventLine, currentEventsPath, localTime } from '../event-log';
 import { findSession } from '../find-session';
+import { sdkResultRequested, writeSdkResult } from '../sdk-result';
 
 // `stackctl status`: the profile's session as it is now, and what last acted on it, from its event
 // log. Strictly read-only, like `logs`: it reads the session record and asks `GET /query/status`,
@@ -199,6 +200,24 @@ function sessionLines(
   return lines;
 }
 
+/** What `stackctl status --json` prints, and the SDK's `status()` resolves with. */
+export interface StatusReport {
+  /** The profile. */
+  profile: string;
+  /** Whether a session of the profile is running and answering. */
+  running: boolean;
+  /** Its control API's port, or `null`. */
+  port: number | null;
+  /** A recorded session that doesn't answer, or `null`. */
+  unresponsive: { pid: number; reason: 'hung' | 'mismatch' } | null;
+  /** What the running session reports, or `null`. */
+  status: SessionStatus | null;
+  /** The event log's path, relative to the workspace, or `null` before any session ran. */
+  eventsFile: string | null;
+  /** The last commands and lifecycle entries of the event log. */
+  recent: EventLine[];
+}
+
 /**
  * `stackctl status [--json]`: whether the profile's session runs, its services and infra now, and
  * the last commands and lifecycle entries of its event log, dated. Exits 0 either way.
@@ -209,23 +228,21 @@ export async function runStatus(opts: { json?: boolean }): Promise<never> {
   const found = await findSession({ workspaceDir: root, profile });
   const file = currentEventsPath(root, profile);
   const lines = readEventLines(file);
-  const status = found.kind === 'running' ? found.status : null;
+  const report: StatusReport = {
+    profile,
+    running: found.kind === 'running',
+    port: found.kind === 'running' ? found.client.port : null,
+    unresponsive: found.kind === 'unresponsive' ? { pid: found.pid, reason: found.reason } : null,
+    status: found.kind === 'running' ? found.status : null,
+    eventsFile: file === null ? null : path.relative(root, file),
+    recent: lines.filter((l) => !['service-state', 'infra-state', 'session-state'].includes(l.type)).slice(-RECENT * 2), // oxfmt-ignore
+  };
+  if (sdkResultRequested()) {
+    writeSdkResult(report);
+    process.exit(0);
+  }
   if (opts.json) {
-    console.log(
-      JSON.stringify(
-        {
-          profile,
-          running: found.kind === 'running',
-          port: found.kind === 'running' ? found.client.port : null,
-          unresponsive: found.kind === 'unresponsive' ? { pid: found.pid, reason: found.reason } : null, // oxfmt-ignore
-          status,
-          eventsFile: file === null ? null : path.relative(root, file),
-          recent: lines.filter((l) => !['service-state', 'infra-state', 'session-state'].includes(l.type)).slice(-RECENT * 2), // oxfmt-ignore
-        },
-        null,
-        2,
-      ),
-    );
+    console.log(JSON.stringify(report, null, 2));
     process.exit(0);
   }
   const out: string[] = [];

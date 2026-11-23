@@ -1,10 +1,4 @@
-import {
-  type AnyServiceConfig,
-  type Config,
-  getLoadedConfig,
-  getRegisteredPackages,
-  getWorkspaceDir,
-} from '../config';
+import { type AnyServiceConfig, type Config, getLoadedConfig, getWorkspaceDir } from '../config';
 import { envFileNames, recordWorkspaceEnv, workspaceEnvLayer } from '../env';
 import {
   NoProjectConfigError,
@@ -83,14 +77,4 @@ export async function loadedConfigOrExit(): Promise<Config<string>> {
     process.exit(1);
   }
   return config;
-}
-
-/** Exits with a clear message if any of `names` isn't a registered package. */
-export function validatePackageNames(names: string[]): void {
-  const registered = new Set(getRegisteredPackages().map((p) => p.name));
-  const unknown = names.filter((n) => !registered.has(n));
-  if (unknown.length > 0) {
-    console.error(`Unknown service${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`);
-    process.exit(1);
-  }
 }

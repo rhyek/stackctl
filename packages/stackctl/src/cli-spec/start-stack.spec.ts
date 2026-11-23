@@ -128,6 +128,16 @@ describe('startStack()', () => {
     expect(fs.existsSync(record())).toBe(false);
   }, 60_000);
 
+  test("a started stack's status() and service act on its own session", async () => {
+    const stack = await startStack(['wide']);
+    expect((await stack.status()).status?.pid).toBe(stack.pid);
+    expect(await stack.service.restart({ services: ['wide'] })).toEqual({
+      ok: true,
+      results: [{ service: 'wide', status: 'running' }],
+    });
+    await stack.stop();
+  }, 60_000);
+
   test('refuses while a session of its profile runs, and quits it with killOthers', async () => {
     const first = await startStack(['idle']);
     await expect(startStack(['wide'])).rejects.toThrow(

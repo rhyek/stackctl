@@ -4,13 +4,18 @@ import { getRegisteredPackages } from '../config';
 import { isCI } from '../env-base';
 import { resolveSelectedNames } from '../saved-selection';
 import { readOwnVersion } from '../skill';
-import { loadConfigOrExit, validatePackageNames } from './workspace';
+import { UnknownTagError } from '../tags';
+import { TargetNotFoundError, resolveServiceSelection } from '../target';
+import { loadConfigOrExit } from './workspace';
 
 // `stackctl start`, the default command — `stackctl` with no subcommand: a dev session.
 
 /** `start`'s options: the session's. */
 export interface StartOptions {
+  /** The `-s` values: names or paths as typed, then the service names they resolve to. */
   service: string[];
+  /** The `-t` tags: every service that has one joins `service`. */
+  tag: string[];
   /** Declared for --help/validation; the value in force is read from argv by resolveProfile. */
   profile?: string;
   ui?: boolean;
@@ -24,9 +29,9 @@ export interface StartOptions {
 }
 
 /**
- * The package names for a `--headless` session (see `resolveSelectedNames` in lib), exiting
- * with the hint when there are none. An explicit `--package` was validated by the caller; a
- * saved selection is already pruned of names that are no longer packages.
+ * The service names for a `--headless` session (see `resolveSelectedNames`), exiting with the
+ * hint when there are none. `-s` and `-t` were resolved by the caller; a saved selection is
+ * already pruned of names that are no longer services.
  */
 export function resolveSelectedNamesOrExit(
   opts: { service: string[]; lastAnswers: boolean },
@@ -40,8 +45,14 @@ export function resolveSelectedNamesOrExit(
   return result.names;
 }
 
-/** Starts the session the options ask for; a session ends by exiting the process. */
-export async function runDefaultAction(opts: StartOptions): Promise<void> {
+/**
+ * Starts the session the options ask for; a session ends by exiting the process. A relative `-s`
+ * path resolves against `where.targetBase`.
+ */
+export async function runDefaultAction(
+  opts: StartOptions,
+  where: { targetBase: string },
+): Promise<void> {
   await loadConfigOrExit();
   // A config may declare none, to set the environment of `exec` and `run` alone.
   if (getRegisteredPackages().length === 0) {
@@ -69,8 +80,20 @@ export async function runDefaultAction(opts: StartOptions): Promise<void> {
     console.error('stackctl: agent guidance check failed (non-fatal):', err);
   }
 
-  // Validate --package names before mounting/running anything.
-  validatePackageNames(opts.service);
+  // `-s` and `-t` become service names before anything is mounted or run. A tagged service with
+  // no dev command stays in: the session leaves it unstarted, as it does a picked one.
+  try {
+    opts.service = resolveServiceSelection(
+      { targets: opts.service, tags: opts.tag },
+      { root: process.cwd(), services: getRegisteredPackages(), base: where.targetBase },
+    ).names;
+  } catch (err) {
+    if (err instanceof TargetNotFoundError || err instanceof UnknownTagError) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    throw err;
+  }
 
   // Only now: the checks above have no use for what a session loads.
   const { runDevSession } = await import('./session');

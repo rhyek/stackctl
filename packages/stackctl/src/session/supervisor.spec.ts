@@ -251,7 +251,7 @@ function setup(opts: {
 }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-sup-')));
   for (const [name, service] of Object.entries(opts.services)) {
-    const own = (service as { targetDir?: string }).targetDir;
+    const own = (service as { dir?: string }).dir;
     const dir = path.join(root, own ?? path.join('packages', name));
     fs.mkdirSync(dir, { recursive: true });
     const scripts: Record<string, string> = { lint: 'echo lint' };
@@ -1400,7 +1400,7 @@ describe('the .env watch', () => {
   });
 
   test('watches each directory once, with every service at or below it', async () => {
-    const t = setup({ services: { api: {}, worker: {}, tool: { targetDir: 'tools/tool' } } });
+    const t = setup({ services: { api: {}, worker: {}, tool: { dir: 'tools/tool' } } });
     const mine = () => watches.filter((w) => w.dirs[0] === t.root);
     t.supervisor.launchAll();
     await until(() => expect(mine()).toHaveLength(1));
@@ -1415,7 +1415,7 @@ describe('the .env watch', () => {
   });
 
   test('a change in a directory between restarts the services below it, and no other', async () => {
-    const t = setup({ services: { api: {}, worker: {}, tool: { targetDir: 'tools/tool' } } });
+    const t = setup({ services: { api: {}, worker: {}, tool: { dir: 'tools/tool' } } });
     const mine = () => watches.filter((w) => w.dirs[0] === t.root);
     t.supervisor.launchAll();
     await until(() => expect(mine()).toHaveLength(1));
@@ -1428,7 +1428,7 @@ describe('the .env watch', () => {
   });
 
   test('a change at the root restarts every service', async () => {
-    const t = setup({ services: { api: {}, tool: { targetDir: 'tools/tool' } } });
+    const t = setup({ services: { api: {}, tool: { dir: 'tools/tool' } } });
     const mine = () => watches.filter((w) => w.dirs[0] === t.root);
     t.supervisor.launchAll();
     await until(() => expect(mine()).toHaveLength(1));

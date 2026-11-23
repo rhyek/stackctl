@@ -37,8 +37,8 @@ screen with their combined log. Everything in it works with the keyboard or the 
 - **`/`** filters the list as you type. **`n`** clears the selection.
 - **`⏎`** starts the session and remembers the selection for next time.
 
-Skip the picker with `-s <service>` (repeatable), or `--last-answers` to reuse the saved
-selection.
+Skip the picker with `-s <service>` or `-t <tag>` (both repeatable), or `--last-answers` to
+reuse the saved selection.
 
 ## The run screen
 

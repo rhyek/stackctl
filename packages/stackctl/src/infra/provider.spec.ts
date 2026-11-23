@@ -29,6 +29,9 @@ interface FakeOptions {
   /** Successive readings per service; the last one repeats. Defaults to ready at once. */
   readiness?: Record<string, Readiness[]>;
   readyTimeout?: number;
+  failStop?: string;
+  /** What {@link FakeProvider.removalRefusals} answers. */
+  refusals?: string[];
   exec?: Exec;
   failStart?: string;
   failDestroy?: string;
@@ -76,8 +79,15 @@ class FakeProvider extends InfraProvider {
   async listServices() {
     return this.o.services ?? ['db', 'redis'];
   }
-  async down() {
-    return 0;
+  protected async removalRefusals(targets: string[], everything: boolean, action: string) {
+    this.calls.push(`check:${action}:${targets.join(',')}${everything ? ':everything' : ''}`);
+    return this.o.refusals ?? [];
+  }
+  protected async stopServices(targets: string[]) {
+    this.calls.push(`stop:${targets.join(',')}`);
+    if (this.o.failStop) {
+      throw new InfraError(this.o.failStop);
+    }
   }
   async passthrough() {
     return 0;
@@ -184,18 +194,56 @@ describe('InfraProvider.up', () => {
     },
   );
 
-  test('a reset destroys the services it is about to start, between beforeDestroy and afterDestroy', async () => {
+  test('a reset with nothing named destroys the whole project, between beforeDestroy and afterDestroy', async () => {
     const provider = new FakeProvider();
     Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
     await provider.up({ trigger: 'reset' });
     expect(provider.calls).toEqual([
+      'check:reset:db,redis:everything',
       'beforeDestroy:db:trigger=reset',
-      'destroyServices:db,redis',
+      'destroyAll',
       'afterDestroy:db:trigger=reset',
       'beforeStart:db:trigger=reset',
       'start:db,redis',
       'afterReady:db:trigger=reset',
     ]);
+  });
+
+  test('a reset with nothing named runs every hook for every enabled service, trigger reset', async () => {
+    const provider = new FakeProvider();
+    Object.assign(provider['serviceConfig'], {
+      db: recording(provider.calls, 'db'),
+      redis: recording(provider.calls, 'redis'),
+    });
+    await provider.up({ trigger: 'reset' });
+    const hooks = provider.calls.filter((c) => c.includes(':trigger='));
+    expect(hooks.sort()).toEqual(
+      [
+        'beforeDestroy:db:trigger=reset',
+        'beforeDestroy:redis:trigger=reset',
+        'afterDestroy:db:trigger=reset',
+        'afterDestroy:redis:trigger=reset',
+        'beforeStart:db:trigger=reset',
+        'beforeStart:redis:trigger=reset',
+        'afterReady:db:trigger=reset',
+        'afterReady:redis:trigger=reset',
+      ].sort(),
+    );
+  });
+
+  test('a refused reset runs no hook and removes nothing', async () => {
+    const provider = new FakeProvider({ refusals: ["can't reset db: volume x is external"] });
+    Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
+    await expect(provider.up({ trigger: 'reset' })).rejects.toThrow(
+      "can't reset db: volume x is external",
+    );
+    expect(provider.calls).toEqual(['check:reset:db,redis:everything']);
+  });
+
+  test('a start checks nothing', async () => {
+    const provider = new FakeProvider({ refusals: ['never asked'] });
+    expect((await provider.up({})).ok).toBe(true);
+    expect(provider.calls).toEqual(['start:db,redis']);
   });
 
   test("a service's callbacks share one `data` for the run, and the next run starts empty", async () => {
@@ -232,7 +280,7 @@ describe('InfraProvider.up', () => {
   test('a reset with services named destroys only those', async () => {
     const provider = new FakeProvider();
     await provider.up({ trigger: 'reset', services: ['redis'] });
-    expect(provider.calls).toEqual(['destroyServices:redis', 'start:redis']);
+    expect(provider.calls).toEqual(['check:reset:redis', 'destroyServices:redis', 'start:redis']);
   });
 
   test('a beforeDestroy failure under a reset destroys and starts nothing', async () => {
@@ -246,7 +294,7 @@ describe('InfraProvider.up', () => {
       },
     });
     const summary = await provider.up({ trigger: 'reset' });
-    expect(provider.calls).toEqual([]);
+    expect(provider.calls).toEqual(['check:reset:db,redis:everything']);
     expect(summary).toEqual({
       ok: false,
       services: [
@@ -290,7 +338,7 @@ describe('InfraProvider.up', () => {
   test('a failed destroy aborts before anything starts', async () => {
     const provider = new FakeProvider({ failDestroy: 'rm failed' });
     const summary = await provider.up({ trigger: 'reset', services: ['db'] });
-    expect(provider.calls).toEqual(['destroyServices:db']);
+    expect(provider.calls).toEqual(['check:reset:db', 'destroyServices:db']);
     expect(summary).toEqual({
       ok: false,
       services: [{ service: 'db', ok: false, error: 'rm failed' }],
@@ -342,6 +390,12 @@ describe('InfraProvider.up', () => {
     expect(summary.services[1]).toEqual({ service: 'redis', ok: true });
   });
 
+  test("readyTimeoutMs overrides the provider's readyTimeout", async () => {
+    const stuck = new FakeProvider({ readiness: { db: [WAITING] }, readyTimeout: 10_000 });
+    const summary = await stuck.up({ services: ['db'], readyTimeoutMs: 100 });
+    expect(summary.services[0]!.error).toBe('not ready after 0.1s (waiting for healthy)');
+  });
+
   test('rejects a named service, or a callback key, the provider does not have', async () => {
     await expect(new FakeProvider().up({ services: ['cache'] })).rejects.toThrow(
       /unknown infra service "cache"[\s\S]*db, redis/,
@@ -383,7 +437,12 @@ describe('fresh', () => {
   test('is read after any destroy and before the start — a reset makes a service fresh', async () => {
     const provider = new FakeProvider({ recordFresh: true });
     await provider.up({ trigger: 'reset', services: ['db'] });
-    expect(provider.calls).toEqual(['destroyServices:db', 'readFresh:db', 'start:db']);
+    expect(provider.calls).toEqual([
+      'check:reset:db',
+      'destroyServices:db',
+      'readFresh:db',
+      'start:db',
+    ]);
   });
 });
 
@@ -616,6 +675,7 @@ describe('InfraProvider.destroy', () => {
     const events: InfraEvent[] = [];
     const summary = await provider.destroy({ onEvent: (e) => events.push(e) });
     expect(provider.calls).toEqual([
+      'check:destroy:db,redis:everything',
       'beforeDestroy:db:trigger=destroy',
       'destroyAll',
       'afterDestroy:db:trigger=destroy',
@@ -633,7 +693,16 @@ describe('InfraProvider.destroy', () => {
   test('with services named destroys only those', async () => {
     const provider = new FakeProvider();
     await provider.destroy({ services: ['db'] });
-    expect(provider.calls).toEqual(['destroyServices:db']);
+    expect(provider.calls).toEqual(['check:destroy:db', 'destroyServices:db']);
+  });
+
+  test('a refused destroy runs no hook and removes nothing', async () => {
+    const provider = new FakeProvider({ refusals: ["can't destroy db: volume x is in use"] });
+    Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
+    await expect(provider.destroy({ services: ['db'] })).rejects.toThrow(
+      "can't destroy db: volume x is in use",
+    );
+    expect(provider.calls).toEqual(['check:destroy:db']);
   });
 
   test('a beforeDestroy that throws removes nothing and fails every target', async () => {
@@ -647,7 +716,7 @@ describe('InfraProvider.destroy', () => {
       },
     });
     const summary = await provider.destroy({});
-    expect(provider.calls).toEqual([]);
+    expect(provider.calls).toEqual(['check:destroy:db,redis:everything']);
     expect(summary).toEqual({
       ok: false,
       services: [
@@ -701,23 +770,37 @@ describe('a disabled service', () => {
     expect(provider.calls).toEqual([]);
   });
 
+  test('cannot be stopped by name: the error says it is disabled, and nothing is stopped', async () => {
+    const provider = withDisabledRedis();
+    await expect(provider.down({ services: ['redis'] })).rejects.toThrow(
+      /"redis"[\s\S]*disabled[\s\S]*"test"/,
+    );
+    expect(provider.calls).toEqual([]);
+  });
+
+  test('is left alone by a stop with nothing named', async () => {
+    const provider = withDisabledRedis();
+    await provider.down({});
+    expect(provider.calls).toEqual(['stop:db']);
+  });
+
   test('can still be destroyed by name, to clean up after a profile where it ran', async () => {
     const provider = withDisabledRedis();
     expect((await provider.destroy({ services: ['redis'] })).ok).toBe(true);
-    expect(provider.calls).toEqual(['destroyServices:redis']);
+    expect(provider.calls).toEqual(['check:destroy:redis', 'destroyServices:redis']);
   });
 
-  test('is not touched by a reset, which destroys only what it is about to start', async () => {
+  test('goes with the project in a reset with nothing named, which starts only the enabled', async () => {
     const provider = withDisabledRedis();
     expect((await provider.up({ trigger: 'reset' })).ok).toBe(true);
-    expect(provider.calls).toEqual(['destroyServices:db', 'start:db']);
+    expect(provider.calls).toEqual(['check:reset:db:everything', 'destroyAll', 'start:db']);
   });
 
   test('a full destroy takes the whole project but runs afterDestroy only for enabled services', async () => {
     const calls: string[] = [];
     const provider = withDisabledRedis(calls);
     const summary = await provider.destroy({});
-    expect(provider.calls).toEqual(['destroyAll']);
+    expect(provider.calls).toEqual(['check:destroy:db:everything', 'destroyAll']);
     expect(calls).toEqual([]);
     expect(summary.services).toEqual([{ service: 'db', ok: true }]);
   });
@@ -742,5 +825,42 @@ describe('no services to act on', () => {
   test('a failure with no service to report it on is not swallowed', async () => {
     const provider = allDisabled({ failDestroyAll: 'cannot connect to the Docker daemon' });
     await expect(provider.destroy({})).rejects.toThrow(/cannot connect to the Docker daemon/);
+  });
+});
+
+describe('InfraProvider.down', () => {
+  test('with nothing named stops every service, by name', async () => {
+    const provider = new FakeProvider();
+    await provider.down({});
+    expect(provider.calls).toEqual(['stop:db,redis']);
+  });
+
+  test('reports each target stopping, then stopped', async () => {
+    const provider = new FakeProvider();
+    const events: InfraEvent[] = [];
+    const summary = await provider.down({ services: ['db'], onEvent: (e) => events.push(e) });
+    expect(summary).toEqual({ ok: true, services: [{ service: 'db', ok: true }] });
+    expect(events).toEqual([
+      { type: 'targets', provider: 'fake', action: 'down', services: ['db'] },
+      { type: 'status', service: 'db', status: 'stopping' },
+      { type: 'status', service: 'db', status: 'stopped' },
+    ]);
+  });
+
+  test('a stop that fails fails every target', async () => {
+    const provider = new FakeProvider({ failStop: 'compose down failed' });
+    const summary = await provider.down({});
+    expect(summary.ok).toBe(false);
+    expect(summary.services.map((s) => s.error)).toEqual([
+      'compose down failed',
+      'compose down failed',
+    ]);
+  });
+
+  test('runs no callback', async () => {
+    const provider = new FakeProvider();
+    Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
+    await provider.down({ services: ['db'] });
+    expect(provider.calls).toEqual(['stop:db']);
   });
 });

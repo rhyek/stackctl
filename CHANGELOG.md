@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.11.0
+
+### Features
+
+- **Services and infra services take `tags`, and `-t, --tag` picks them wherever `-s` does.** See
+  [docs/config/services.md](docs/config/services.md#tags).
+- **`-s` names a service by its name or by a path** on `start`, `service`, `run` and `exec`. See
+  [docs/guide/commands.md](docs/guide/commands.md#naming-a-service).
+- **`run` and `exec` run in several services at once** with `-s` and `-t`. See
+  [docs/guide/commands.md](docs/guide/commands.md#several-services-at-once).
+- **The SDK's `exec()` and `run()` take several services or `tags`, and `startStack()` takes `tags`.**
+  See [docs/reference/sdk.md](docs/reference/sdk.md#several-services-at-once).
+- **The SDK's `attach()` and `wait()` return the stack of a session already running**, wherever it
+  was started. See [docs/reference/sdk.md](docs/reference/sdk.md#attach-and-wait).
+- **The SDK does what the CLI's commands do**: `infra.*`, `service.*`, `stop()`, `status()`,
+  `events()`, `logs()`, `showConfig()`, `resetProfile()` and `init()`. See
+  [docs/reference/sdk.md](docs/reference/sdk.md).
+- **`infra start`, `restart` and `reset` take `--wait-timeout`.** See
+  [docs/reference/cli.md](docs/reference/cli.md#stackctl-infra).
+
+### Breaking changes
+
+- **A service's `targetDir` is `dir`, and `resolvedTargetDir` is `resolvedDir`**: rename them in
+  `stackctl.config.ts` and wherever you read `show-config`, the control API or the exported config.
+- **The SDK's `target` option of `exec()`, `run()` and `resolveEnv()` is `service`**: rename it in
+  your calls.
+- **The SDK no longer exports `findService`**: read `config.services[name]` from your config instead.
+- **`infra reset` with nothing named resets the profile's whole Compose project**, disabled
+  services' data included: name the services with `-s` to keep a disabled one's data.
+- **`infra reset` and `infra destroy` refuse, before anything runs, a volume or network they
+  couldn't remove**: act on services that share a volume together, as the message shows, and
+  remove the container that holds it. See
+  [docs/config/infra.md](docs/config/infra.md#reset).
+- **`infra reset` and `infra destroy` refuse a service that mounts an `external` volume**: clear
+  its data yourself, then `infra restart -s <service>`.
+- **`infra stop` and `infra restart` act on enabled services only**, and refuse a disabled one
+  named with `-s`: remove a disabled service's container with `infra destroy -s <service>`.
+- **A named `infra reset` removes a volume a disabled service also uses**, when no container holds
+  it: name only the services whose data may go.
+- **`infra stop` exits `0` or `1`**, not Compose's own code: check for `1` in scripts.
+
 ## 0.10.0
 
 ### Features

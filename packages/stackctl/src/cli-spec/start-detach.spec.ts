@@ -116,6 +116,56 @@ describe('start --detach', () => {
     expect(status.services).toMatchObject({ idle: 'running', manual: 'stopped' });
   }, 90_000);
 
+  /** The session's services, as `GET /query/status` lists them. */
+  const servicesOf = async (port: number) => {
+    const response = await fetch(`http://127.0.0.1:${String(port)}/query/status`);
+    return ((await response.json()) as { services: Record<string, string> }).services;
+  };
+
+  test('--detach -t starts the tagged services', async () => {
+    const result = await detach(['-t', 'quiet']);
+    expect(result.exitCode, result.stderr).toBe(0);
+    const ready = readyLine(result.stdout);
+    await keep('development', ready.pid);
+    expect(await servicesOf(ready.port)).toEqual({ idle: 'running' });
+  }, 90_000);
+
+  test('--detach -s with a relative path, from a subdirectory, starts that service', async () => {
+    const result = await stackctl(['start', '--detach', '-s', '.'], {
+      cwd: path.join(ws, 'packages', 'idle'),
+      env: human,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const ready = readyLine(result.stdout);
+    await keep('development', ready.pid);
+    expect(await servicesOf(ready.port)).toEqual({ idle: 'running' });
+  }, 90_000);
+
+  test('a tag that also matches a service with command: null starts the others', async () => {
+    const result = await detach(['-t', 'mixed']);
+    expect(result.exitCode, result.stderr).toBe(0);
+    const ready = readyLine(result.stdout);
+    await keep('development', ready.pid);
+    // `assets` is listed, never started: it has no dev command.
+    expect(await servicesOf(ready.port)).toEqual({ idle: 'running', assets: 'stopped' });
+  }, 90_000);
+
+  test('--detach with a tag nothing has: exit 1, naming the tag', async () => {
+    const result = await detach(['-t', 'nope']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('No service has the tag: nope');
+    expect(fs.existsSync(recordOf('development'))).toBe(false);
+  }, 90_000);
+
+  test('--detach -s with a directory that is no service: exit 1, saying so', async () => {
+    const result = await detach(['-s', './scripts']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('"./scripts" is a directory, not a service');
+    expect(fs.existsSync(recordOf('development'))).toBe(false);
+  }, 90_000);
+
   test('--wait-timeout 1 against a service never healthy: exit 1, and nothing left', async () => {
     const result = await detach(['-s', 'slow', '--wait-timeout', '1']);
     expect(result.exitCode).toBe(1);
@@ -186,7 +236,7 @@ describe('start --detach', () => {
 
   test.each([
     [['-s', 'idle', '--ui'], "--ui and --detach can't be combined."],
-    [[], '--detach needs services to start: pass --service or --last-answers.'],
+    [[], '--detach needs services to start: pass --service, --tag or --last-answers.'],
   ])('%j is refused', async (rest, message) => {
     const result = await detach(rest);
     expect(result.exitCode).toBe(1);

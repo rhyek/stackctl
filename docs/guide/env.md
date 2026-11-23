@@ -46,7 +46,7 @@ ones, and each `.local` file wins over the same file without it. This is
 - **Nothing outside the walk is read**: not above the workspace root, not below the service's
   folder, not in a sibling folder.
 - **A service inside another's folder** gets the outer one's files too, before its own.
-- **A directory you hand to [`exec` or `run`](./commands.md#targets)** is walked the same way.
+- **A directory you hand to [`exec` or `run`](./commands.md#naming-a-service)** is walked the same way.
 
 Commit `.env` and `.env.<profile>`, and keep `.env*.local` out of git for personal overrides.
 To commit secrets too, encrypt them with dotenvx and turn on

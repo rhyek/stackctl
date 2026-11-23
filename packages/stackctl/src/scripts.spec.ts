@@ -15,8 +15,8 @@ import {
 import { runCommand } from './spawn';
 
 let dir: string;
-function pkg(over: Partial<AnyServiceConfig> & { resolvedTargetDir: string }): AnyServiceConfig {
-  return { name: 'x', targetDir: 'x', ...over } as AnyServiceConfig;
+function pkg(over: Partial<AnyServiceConfig> & { resolvedDir: string }): AnyServiceConfig {
+  return { name: 'x', dir: 'x', ...over } as AnyServiceConfig;
 }
 
 beforeAll(() => {
@@ -30,26 +30,24 @@ afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 describe('runner detection', () => {
   test('runs a package.json script as its own text, through /bin/sh', () => {
-    expect(runnerOf(pkg({ resolvedTargetDir: dir }))).toBe('sh');
-    expect(scriptExec(pkg({ resolvedTargetDir: dir }), 'dev')).toMatchObject({
+    expect(runnerOf(pkg({ resolvedDir: dir }))).toBe('sh');
+    expect(scriptExec(pkg({ resolvedDir: dir }), 'dev')).toMatchObject({
       cmd: '/bin/sh',
       args: ['-c', 'x'],
     });
   });
   test('hands extra args to the shell as positional parameters, appended to the script', () => {
-    expect(
-      scriptExec(pkg({ resolvedTargetDir: dir }), 'build', ['--bank-key=x', 'foo']),
-    ).toMatchObject({
+    expect(scriptExec(pkg({ resolvedDir: dir }), 'build', ['--bank-key=x', 'foo'])).toMatchObject({
       cmd: '/bin/sh',
       args: ['-c', 'x "$@"', 'sh', '--bank-key=x', 'foo'],
     });
   });
   test('reads scripts', () => {
-    expect(definesScript(pkg({ resolvedTargetDir: dir }), 'build')).toBe(true);
-    expect(definesDevScript(pkg({ resolvedTargetDir: dir }))).toBe(true);
+    expect(definesScript(pkg({ resolvedDir: dir }), 'build')).toBe(true);
+    expect(definesDevScript(pkg({ resolvedDir: dir }))).toBe(true);
   });
   test('definesDevScript is false for `command: null` even when a dev script exists', () => {
-    expect(definesDevScript(pkg({ resolvedTargetDir: dir, command: null }))).toBe(false);
+    expect(definesDevScript(pkg({ resolvedDir: dir, command: null }))).toBe(false);
   });
   test('lists build and clean scripts as extra commands', () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-extra-'));
@@ -58,25 +56,17 @@ describe('runner detection', () => {
       JSON.stringify({ scripts: { dev: 'x', build: 'x', 'build:clean': 'x', clean: 'x' } }),
     );
     try {
-      expect(menuCommandsOf(pkg({ resolvedTargetDir: d }))).toEqual([
-        'build',
-        'build:clean',
-        'clean',
-      ]);
+      expect(menuCommandsOf(pkg({ resolvedDir: d }))).toEqual(['build', 'build:clean', 'clean']);
     } finally {
       fs.rmSync(d, { recursive: true, force: true });
     }
   });
   test('excludes the dev script from extra commands', () => {
-    expect(menuCommandsOf(pkg({ resolvedTargetDir: dir }))).toEqual([
-      'build',
-      'build:clean',
-      'codegen',
-    ]);
+    expect(menuCommandsOf(pkg({ resolvedDir: dir }))).toEqual(['build', 'build:clean', 'codegen']);
   });
   test('falls back to sh when nothing present', () => {
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-empty-'));
-    expect(runnerOf(pkg({ resolvedTargetDir: empty }))).toBe('sh');
+    expect(runnerOf(pkg({ resolvedDir: empty }))).toBe('sh');
     fs.rmSync(empty, { recursive: true, force: true });
   });
 });
@@ -87,7 +77,7 @@ describe('package script spawn spec', () => {
   let bare: string; // no name, no version, no node_modules
   const run = (p: AnyServiceConfig, script: string, args: string[] = [], env = process.env) => {
     const spec = scriptExec(p, script, args, env);
-    return runCommand(spec.cmd, spec.args, { cwd: p.resolvedTargetDir, env: spec.env }).done;
+    return runCommand(spec.cmd, spec.args, { cwd: p.resolvedDir, env: spec.env }).done;
   };
   const PRINT_ARGV = 'node -e "console.log(JSON.stringify(process.argv.slice(1)))" x';
 
@@ -120,7 +110,7 @@ describe('package script spawn spec', () => {
   afterAll(() => fs.rmSync(ws, { recursive: true, force: true }));
 
   test("puts each ancestor's node_modules/.bin on PATH, nearest first, ahead of the given PATH", () => {
-    const { env } = scriptExec(pkg({ resolvedTargetDir: app }), 'argv', [], {
+    const { env } = scriptExec(pkg({ resolvedDir: app }), 'argv', [], {
       PATH: '/usr/bin:/bin',
     });
     const entries = env.PATH!.split(':');
@@ -132,7 +122,7 @@ describe('package script spawn spec', () => {
   });
 
   test('leaves out ancestors that have no node_modules/.bin', () => {
-    const { env } = scriptExec(pkg({ resolvedTargetDir: bare }), 'version', [], {
+    const { env } = scriptExec(pkg({ resolvedDir: bare }), 'version', [], {
       PATH: '/usr/bin',
     });
     expect(env.PATH!.split(':')[0]).toBe(path.join(ws, 'node_modules', '.bin'));
@@ -140,13 +130,13 @@ describe('package script spawn spec', () => {
 
   test('keeps the given environment, without modifying it', () => {
     const given = { PATH: '/usr/bin', FOO: 'bar' };
-    const { env } = scriptExec(pkg({ resolvedTargetDir: app }), 'argv', [], given);
+    const { env } = scriptExec(pkg({ resolvedDir: app }), 'argv', [], given);
     expect(env.FOO).toBe('bar');
     expect(given).toEqual({ PATH: '/usr/bin', FOO: 'bar' });
   });
 
   test('describes the package and script being run', () => {
-    const { env } = scriptExec(pkg({ resolvedTargetDir: app }), 'fail', [], {});
+    const { env } = scriptExec(pkg({ resolvedDir: app }), 'fail', [], {});
     expect(env).toMatchObject({
       npm_package_name: 'app',
       npm_package_version: '1.2.3',
@@ -159,7 +149,7 @@ describe('package script spawn spec', () => {
   });
 
   test("does not let another package's version reach a script whose package has none", async () => {
-    const result = await run(pkg({ resolvedTargetDir: bare }), 'version', [], {
+    const result = await run(pkg({ resolvedDir: bare }), 'version', [], {
       ...process.env,
       npm_package_version: '9.9.9',
     });
@@ -168,16 +158,16 @@ describe('package script spawn spec', () => {
 
   test('extra args reach the script intact, whatever shell syntax they contain', async () => {
     const args = ['a b', '--c=$HOME', "it's", '*', '"q"', ''];
-    const result = await run(pkg({ resolvedTargetDir: app }), 'argv', args);
+    const result = await run(pkg({ resolvedDir: app }), 'argv', args);
     expect(JSON.parse(result.stdout)).toEqual(['x', ...args]);
   });
 
   test("the script's exit code is the spawned command's exit code", async () => {
-    expect((await run(pkg({ resolvedTargetDir: app }), 'fail')).exitCode).toBe(7);
+    expect((await run(pkg({ resolvedDir: app }), 'fail')).exitCode).toBe(7);
   });
 
   test('a script that does not exist fails with exit code 1, naming it', async () => {
-    const result = await run(pkg({ resolvedTargetDir: app }), 'nope');
+    const result = await run(pkg({ resolvedDir: app }), 'nope');
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe('Missing script: "nope"\n');
   });
@@ -186,7 +176,7 @@ describe('package script spawn spec', () => {
     const mkdir = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-spawn-mk-'));
     fs.writeFileSync(path.join(mkdir, 'Makefile'), 'start:\n\t@true\n');
     const given = { PATH: '/usr/bin', FOO: 'bar' };
-    expect(scriptExec(pkg({ resolvedTargetDir: mkdir }), 'start', [], given).env).toEqual(given);
+    expect(scriptExec(pkg({ resolvedDir: mkdir }), 'start', [], given).env).toEqual(given);
     fs.rmSync(mkdir, { recursive: true, force: true });
   });
 });
@@ -218,7 +208,7 @@ describe('a script run as scriptExec says', () => {
   afterAll(() => fs.rmSync(ws, { recursive: true, force: true }));
 
   test("runs the script in the package directory, with the package's and the workspace root's node_modules/.bin on PATH", async () => {
-    const { cmd, args, env } = scriptExec(pkg({ resolvedTargetDir: app }), 'build');
+    const { cmd, args, env } = scriptExec(pkg({ resolvedDir: app }), 'build');
     const result = await runCommand(cmd, args, { cwd: app, env }).done;
     expect(result.stdout).toBe(['appbin-OK', 'rootbin-OK', app, ''].join('\n'));
   });
@@ -249,15 +239,15 @@ describe('make targets', () => {
   afterAll(() => fs.rmSync(mkdir, { recursive: true, force: true }));
 
   test('excludes make special targets like .PHONY', () => {
-    expect(makeTargetsOf(pkg({ resolvedTargetDir: mkdir }))).toEqual(['start']);
+    expect(makeTargetsOf(pkg({ resolvedDir: mkdir }))).toEqual(['start']);
   });
 
   test('scriptExec uses `make <target>` and forwards extra args', () => {
-    expect(scriptExec(pkg({ resolvedTargetDir: mkdir }), 'start')).toMatchObject({
+    expect(scriptExec(pkg({ resolvedDir: mkdir }), 'start')).toMatchObject({
       cmd: 'make',
       args: ['start'],
     });
-    expect(scriptExec(pkg({ resolvedTargetDir: mkdir }), 'start', ['--bank-key=x'])).toMatchObject({
+    expect(scriptExec(pkg({ resolvedDir: mkdir }), 'start', ['--bank-key=x'])).toMatchObject({
       cmd: 'make',
       args: ['start', '--bank-key=x'],
     });
@@ -265,7 +255,7 @@ describe('make targets', () => {
 
   test('menuCommandsOf does not surface .PHONY (nor the configured dev target)', () => {
     const p = pkg({
-      resolvedTargetDir: mkdir,
+      resolvedDir: mkdir,
       command: { name: 'start', watches: false },
     });
     expect(menuCommandsOf(p)).toEqual([]);

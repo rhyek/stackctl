@@ -55,6 +55,49 @@ test('headless with every service: the lines in order; SIGINT quits with exit 0'
   expect(sessionRecord(ws())).toBeNull();
 });
 
+/** The services of the session running in `ws`, as its status lists them. */
+async function sessionServices(): Promise<string[]> {
+  const record = sessionRecord(ws());
+  expect(record).not.toBeNull();
+  const response = await fetch(`http://127.0.0.1:${String(record!.port)}/query/status`);
+  const status = (await response.json()) as { services: Record<string, string> | null };
+  return Object.keys(status.services ?? {}).sort();
+}
+
+test('headless -t backend starts api and worker, not web', async () => {
+  const session = await CliProcess.start(['--headless', '-t', 'backend'], { cwd: ws() });
+  await session.waitForOutput(/\[api\s*\] api listening on 21081/);
+  await session.waitForOutput(/\[worker\s*\] worker listening on \d+/);
+  expect(await sessionServices()).toEqual(['api', 'worker']);
+  expect(session.stdout).not.toMatch(/\[web\s*\] started/);
+  session.child.kill('SIGINT');
+  expect(await session.waitForExit()).toEqual({ code: 0, signal: null });
+});
+
+test('headless -t nope: exit 1, naming the tag', async () => {
+  const result = await runCli(['--headless', '-t', 'nope'], { cwd: ws() });
+  expect(result.exit).toEqual({ code: 1, signal: null });
+  expect(result.stderr).toContain('No service has the tag: nope');
+  expect(sessionRecord(ws())).toBeNull();
+});
+
+test('headless -s . from inside apps/api starts api', async () => {
+  const session = await CliProcess.start(['--headless', '-s', '.'], {
+    cwd: path.join(ws(), 'apps', 'api'),
+  });
+  await session.waitForOutput(/\[api\s*\] api listening on 21081/);
+  expect(await sessionServices()).toEqual(['api']);
+  session.child.kill('SIGINT');
+  expect(await session.waitForExit()).toEqual({ code: 0, signal: null });
+});
+
+test('headless -s ./apps: exit 1, it is a directory, not a service', async () => {
+  const result = await runCli(['--headless', '-s', './apps'], { cwd: ws() });
+  expect(result.exit).toEqual({ code: 1, signal: null });
+  expect(result.stderr).toContain('"./apps" is a directory, not a service');
+  expect(sessionRecord(ws())).toBeNull();
+});
+
 test('start --detach in CI: the session outlives the command, and stop ends it', async () => {
   const ci = { CI: '1' };
   // If the test fails halfway, the detached session is still stopped.
@@ -144,7 +187,9 @@ test('service restart, start and stop drive the detached session; with none they
 
   const unknown = await runCli(['service', 'restart', '-s', 'ghost'], { cwd: ws(), env: ci });
   expect(unknown.exit?.code).toBe(1);
-  expect(unknown.stderr).toContain('Unknown service: ghost');
+  expect(unknown.stderr).toContain(
+    '"ghost" is neither a service nor a directory in this workspace',
+  );
 
   expect((await runCli(['stop'], { cwd: ws(), env: ci })).exit?.code).toBe(0);
   const none = await runCli(['service', 'restart', '-s', 'api'], { cwd: ws(), env: ci });

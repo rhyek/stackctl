@@ -23,7 +23,7 @@ export type EventBy =
   | { kind: 'control-api'; request: string; userAgent: string | null }
   /** A stackctl command run from a shell: its own arguments, where, and whether an agent ran it. */
   | { kind: 'cli'; argv: string[]; cwd: string; agent: boolean }
-  /** A Node script calling the SDK's `exec()` or `run()`: node's arguments, where, whether an agent ran it. */
+  /** A Node script calling the SDK: node's arguments, where, whether an agent ran it. */
   | { kind: 'sdk'; argv: string[]; cwd: string; agent: boolean }
   /** The session itself: its start-up infra step. */
   | { kind: 'session' };
@@ -162,7 +162,9 @@ export function commandBy(
   const handed = opts.handed ?? handedBy;
   if (handed) {
     try {
-      return JSON.parse(handed) as EventBy;
+      const by = JSON.parse(handed) as EventBy;
+      // An SDK function doesn't know the workspace root, so it hands absolute paths over.
+      return by.kind === 'sdk' && path.isAbsolute(by.cwd) ? relativeTo(root, by) : by;
     } catch {
       /* not one of ours: the shell's */
     }
@@ -175,18 +177,38 @@ export function commandBy(
   };
 }
 
+type SdkBy = Extract<EventBy, { kind: 'sdk' }>;
+
 /**
- * Who asked, for the lines of an SDK `exec()` or `run()`: the Node script that called it, its
- * path relative to `root` and its arguments, run in `cwd`.
+ * Who asked, for the lines of a command an SDK function makes or runs: the Node script that
+ * called it and its arguments, run in `cwd`, with absolute paths.
  */
-export function sdkBy(root: string, opts: { agent: boolean; cwd: string }): EventBy {
-  const [script, ...args] = process.argv.slice(1);
+export function sdkCaller(opts: { agent: boolean; cwd: string }): SdkBy {
   return {
     kind: 'sdk',
-    argv: maskSecrets([...(script ? [path.relative(root, script) || '.'] : []), ...args]),
-    cwd: path.relative(root, opts.cwd) || '.',
+    argv: maskSecrets(process.argv.slice(1)),
+    cwd: opts.cwd,
     agent: opts.agent,
   };
+}
+
+/** An SDK caller's `by` with its script and directory relative to `root`. */
+function relativeTo(root: string, by: SdkBy): SdkBy {
+  const [script, ...args] = by.argv;
+  const relative = (to: string) => path.relative(root, to) || '.';
+  return {
+    ...by,
+    argv: [...(script ? [path.isAbsolute(script) ? relative(script) : script] : []), ...args],
+    cwd: relative(by.cwd),
+  };
+}
+
+/**
+ * Who asked, for the lines of an SDK `exec()` or `run()`: {@link sdkCaller}, its paths relative
+ * to `root`.
+ */
+export function sdkBy(root: string, opts: { agent: boolean; cwd: string }): EventBy {
+  return relativeTo(root, sdkCaller(opts));
 }
 
 /** A file over this is renamed to `events.1.jsonl` by the next writer, replacing the old one. */

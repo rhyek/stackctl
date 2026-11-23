@@ -1,13 +1,17 @@
 <script setup>
 import { useData, withBase } from 'vitepress';
 import DefaultTheme, { VPButton } from 'vitepress/theme';
+import HomeCli from './HomeCli.md';
 import HomeConfig from './HomeConfig.md';
+import HomeSdk from './HomeSdk.md';
 import TerminalPlayer from './TerminalPlayer.vue';
 
 // The home page's frontmatter names the recording, `demo: { src, alt }`, the words beside
-// the config example, `config: { title, details, linkText, link }`, and the agent conversation
-// with its words, `agents: { title, details, linkText, link, src, alt }`. The config example
-// itself is HomeConfig.md, so it is highlighted like any code block.
+// the config example, `config: { title, details, linkText, link }`, the words beside the test
+// run on the command line and from the SDK, `cli: { … }` and `sdk: { … }` the same, and the agent
+// conversation with its words, `agents: { title, details, linkText, link, src, alt }`. Each
+// example is a Markdown file (HomeConfig.md, HomeCli.md, HomeSdk.md), so it is highlighted like
+// any code block.
 const { Layout } = DefaultTheme;
 const { frontmatter } = useData();
 </script>
@@ -32,6 +36,35 @@ const { frontmatter } = useData();
           <HomeConfig />
         </div>
       </section>
+      <!-- Text first, so a phone reads the heading before the commands; wide screens swap them. -->
+      <section v-if="frontmatter.cli" class="home-cli">
+        <div class="pitch">
+          <h2>{{ frontmatter.cli.title }}</h2>
+          <p>{{ frontmatter.cli.details }}</p>
+          <VPButton
+            theme="alt"
+            :text="frontmatter.cli.linkText"
+            :href="withBase(frontmatter.cli.link)"
+          />
+        </div>
+        <div class="code vp-doc">
+          <HomeCli />
+        </div>
+      </section>
+      <section v-if="frontmatter.sdk" class="home-sdk">
+        <div class="pitch">
+          <h2>{{ frontmatter.sdk.title }}</h2>
+          <p>{{ frontmatter.sdk.details }}</p>
+          <VPButton
+            theme="alt"
+            :text="frontmatter.sdk.linkText"
+            :href="withBase(frontmatter.sdk.link)"
+          />
+        </div>
+        <div class="code vp-doc">
+          <HomeSdk />
+        </div>
+      </section>
       <!-- Text first, so a phone reads the heading before the recording; wide screens swap them. -->
       <section v-if="frontmatter.agents" class="home-agents">
         <div class="pitch">
@@ -54,6 +87,8 @@ const { frontmatter } = useData();
 <style scoped>
 .home-demo,
 .home-config,
+.home-cli,
+.home-sdk,
 .home-agents {
   max-width: 1152px;
   margin: 0 auto;
@@ -70,6 +105,8 @@ const { frontmatter } = useData();
 }
 
 .home-config,
+.home-cli,
+.home-sdk,
 .home-agents {
   display: grid;
   gap: 24px;
@@ -100,11 +137,15 @@ const { frontmatter } = useData();
 }
 
 /* The code block fills its column, with no margin of its own. */
-.home-config .code {
+.home-config .code,
+.home-cli .code,
+.home-sdk .code {
   min-width: 0;
 }
 
-.home-config .code :deep(div[class*='language-']) {
+.home-config .code :deep(div[class*='language-']),
+.home-cli .code :deep(div[class*='language-']),
+.home-sdk .code :deep(div[class*='language-']) {
   margin: 0;
   border-radius: 12px;
 }
@@ -121,6 +162,8 @@ const { frontmatter } = useData();
 @media (min-width: 640px) {
   .home-demo,
   .home-config,
+  .home-cli,
+  .home-sdk,
   .home-agents {
     padding: 0 48px 56px;
   }
@@ -129,6 +172,8 @@ const { frontmatter } = useData();
 @media (min-width: 960px) {
   .home-demo,
   .home-config,
+  .home-cli,
+  .home-sdk,
   .home-agents {
     padding: 0 64px 64px;
   }
@@ -141,6 +186,22 @@ const { frontmatter } = useData();
 
   .home-agents .player {
     order: -1;
+  }
+
+  /* After the config's words-then-code, the commands on the left and their words on the right. */
+  .home-cli {
+    grid-template-columns: 3fr 2fr;
+    gap: 48px;
+  }
+
+  .home-cli .code {
+    order: -1;
+  }
+
+  /* Then the words on the left again, the setup on the right. */
+  .home-sdk {
+    grid-template-columns: 2fr 3fr;
+    gap: 48px;
   }
 
   .home-config {

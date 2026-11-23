@@ -34,7 +34,7 @@ describe('loadConfig', () => {
     process.chdir(elsewhere);
     try {
       const [svc] = await loadConfig(dir);
-      expect(svc?.resolvedTargetDir).toBe(path.join(fs.realpathSync(dir), 'packages', 'svc'));
+      expect(svc?.resolvedDir).toBe(path.join(fs.realpathSync(dir), 'packages', 'svc'));
     } finally {
       process.chdir(previous);
       fs.rmSync(elsewhere, { recursive: true, force: true });

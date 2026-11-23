@@ -29,6 +29,18 @@ config:
   linkText: The config file
   link: /config/config-file
 
+cli:
+  title: Orchestrate your stack from the CLI.
+  details: Reset the infra, start the services a tag picks along with what they need, run a command in their environment, and stop it all. Here, a browser test run in its own profile, beside the dev session you're working in.
+  linkText: The CLI
+  link: /reference/cli
+
+sdk:
+  title: Includes a powerful SDK.
+  details: Everything the CLI does, from your own scripts and test suites, typed. The same run, call for call, with results to act on instead of exit codes.
+  linkText: The SDK
+  link: /reference/sdk
+
 agents:
   title: Your coding agent runs it too.
   details: It works from the config you wrote, so it knows what your stack is made of. It can start, stop and restart your services, check which are healthy, run your tests in a session of their own and read the logs when something breaks.

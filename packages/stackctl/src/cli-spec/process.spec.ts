@@ -174,7 +174,9 @@ describe('the stackctl process', () => {
   test('a session starts over with a small young generation, as it was started', async () => {
     // A service that doesn't exist: the session gets as far as checking it, then exits.
     const { result, hook, pid, programs } = await programsOf(['-s', 'nope']);
-    expect(result.stderr).toContain('Unknown service: nope');
+    expect(result.stderr).toContain(
+      '"nope" is neither a service nor a directory in this workspace',
+    );
     expect(programs).toEqual([
       { pid, cwd: app, execArgv: ['--import', hook] },
       { pid, cwd: app, execArgv: ['--max-semi-space-size=2', '--import', hook] },

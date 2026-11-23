@@ -118,14 +118,11 @@ export class InfraManager {
     );
   }
 
-  /** Stops and removes services, keeping their data. Resolves with the worst exit code. */
-  async down(services: string[] = []): Promise<number> {
-    const plan = await this.route(services);
-    let exitCode = 0;
-    for (const [provider, names] of plan) {
-      exitCode = Math.max(exitCode, await provider.down(names));
-    }
-    return exitCode;
+  /** Stops services, keeping their named volumes. See {@link InfraProvider.down}. */
+  async down(req: Omit<InfraRunRequest, 'trigger'> = {}): Promise<InfraRunSummary> {
+    return this.acrossProviders(req.services, (provider, services) =>
+      provider.down({ ...req, services }),
+    );
   }
 
   /** Memory per running service, across providers. See {@link InfraProvider.readMemory}. */

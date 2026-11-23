@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vite
 import { buildForTests } from '../cli-spec/build';
 import { HANDOFF_FORCE_KILL_MS } from '../shutdown-timing';
 import { type Running, runCommand } from '../spawn';
-import { resetProfile, runReset, runStop, stopSession, stoppedLine } from './stop';
+import { deleteProfileState, runReset, runStop, stopSession, stoppedLine } from './stop';
 
 /**
  * Starts `command` as these specs run one: this process's environment under `env`, and its output
@@ -525,7 +525,7 @@ describe('stackctl reset', () => {
     // A kill that does nothing: the session outlives it.
     const stuck = { forceKillAfterMs: 500, killTree: async () => {} };
 
-    expect(await resetProfile(ws, 'development', stuck)).toEqual({
+    expect(await deleteProfileState(ws, 'development', stuck)).toEqual({
       session: { profile: 'development', pid, outcome: 'still-running' },
       deleted: false,
     });

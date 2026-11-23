@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import chalk from 'chalk';
-import { STACKCTL_LABEL_COLOR, PACKAGE_PALETTE } from '../colors';
+import { STACKCTL_LABEL_COLOR } from '../colors';
 import { type AnyServiceConfig, findService, getDevScript, getRegisteredPackages } from '../config';
 import {
   EnvFileSnapshot,
@@ -21,6 +21,8 @@ import {
   createInternalLogger,
   formatInternalRecord,
 } from '../internal-logger';
+import { type Paint, paintOfColor } from '../label-paint';
+import { labelColorOf } from '../log-colors';
 import { defaultFormatter } from '../log-formatter';
 import { type ExecSpec, scriptExec, menuCommandsOf, definesDevScript } from '../scripts';
 import { depsOf } from '../selection-plan';
@@ -127,63 +129,15 @@ const ENV_READ_WARN_MS = 3_000;
 /** How long the `.env` changes one directory's watch targets report count as one: see `watchEnv`. */
 const ENV_CHANGE_MERGE_MS = 50;
 
-/** The color names a service's `color` may be: chalk's foreground colors, nothing else. */
-const NAMED_COLORS = new Set([
-  'black',
-  'red',
-  'green',
-  'yellow',
-  'blue',
-  'magenta',
-  'cyan',
-  'white',
-  'gray',
-  'grey',
-  'blackBright',
-  'redBright',
-  'greenBright',
-  'yellowBright',
-  'blueBright',
-  'magentaBright',
-  'cyanBright',
-  'whiteBright',
-]);
-
-const HEX = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i;
-const RGB = /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/;
-const ANSI256 = /^ansi256\(\s*(\d{1,3})\s*\)$/;
-
-type Paint = (text: string) => string;
-
 const unpainted: Paint = (text) => text;
 
 /**
- * How a service's label is painted: its `color` when set, else the palette color of its position
- * in the session, cycling. A `color` that is none of hex, `rgb(…)`, `ansi256(…)` or a chalk
- * foreground color name leaves the label uncolored.
+ * How a service's label is painted: in its {@link labelColorOf label color}, its `color` or the
+ * palette's for its position in the session. A `color` that is none of hex, `rgb(…)`,
+ * `ansi256(…)` or a chalk foreground color name leaves the label uncolored.
  */
 function paintFor(color: string | undefined, index: number): Paint {
-  if (color === undefined) {
-    return chalk.hex(PACKAGE_PALETTE[index % PACKAGE_PALETTE.length]!);
-  }
-  const hex = HEX.exec(color);
-  if (hex) {
-    return chalk.hex(`#${hex[1]!}`);
-  }
-  const rgb = RGB.exec(color);
-  if (rgb) {
-    const [r, g, b] = rgb.slice(1).map(Number) as [number, number, number];
-    return r <= 255 && g <= 255 && b <= 255 ? chalk.rgb(r, g, b) : unpainted;
-  }
-  const ansi = ANSI256.exec(color);
-  if (ansi) {
-    const n = Number(ansi[1]);
-    return n <= 255 ? chalk.ansi256(n) : unpainted;
-  }
-  if (NAMED_COLORS.has(color)) {
-    return chalk[color as 'red'];
-  }
-  return unpainted;
+  return paintOfColor(labelColorOf(color, index)) ?? unpainted;
 }
 
 interface Service {
@@ -442,7 +396,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     const proc: SupervisedProcess = this.createProcess({
       name,
       command: spec.command,
-      cwd: svc.config.resolvedTargetDir,
+      cwd: svc.config.resolvedDir,
       env: spec.env,
       onLine: (text, isError) => this.line(svc, proc, text, isError),
       records: this.records,
@@ -629,7 +583,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     const proc: SupervisedProcess = this.createProcess({
       name,
       command: commandLine(spec.cmd, spec.args),
-      cwd: config.resolvedTargetDir,
+      cwd: config.resolvedDir,
       env: spec.env,
       onLine: (text, isError) => this.line(svc, proc, text, isError),
       records: this.records,
@@ -785,7 +739,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
   private envPaths(config: AnyServiceConfig): string[] {
     return envCandidatePaths({
       resolvedWorkspaceDir: this.resolvedWorkspaceDir,
-      resolvedTargetDir: config.resolvedTargetDir,
+      resolvedDir: config.resolvedDir,
       files: this.envFilesOf(config),
     });
   }
@@ -868,7 +822,7 @@ export class Supervisor extends EventEmitter<SupervisorEvents> {
     };
     for (const { config } of this.services.values()) {
       const filenames = this.envFilesOf(config);
-      for (const dir of envDirs(root, config.resolvedTargetDir)) {
+      for (const dir of envDirs(root, config.resolvedDir)) {
         readersOf(dir, filenames).names.push(config.name);
       }
     }

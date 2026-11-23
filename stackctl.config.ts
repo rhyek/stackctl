@@ -22,7 +22,7 @@ export default defineConfig({
   services: {
     // The site lives at the repo's root, and its dev script is the root's `docs:dev`.
     docs: {
-      targetDir: '.',
+      dir: '.',
       command: 'docs:dev',
       port: 21070,
       // VitePress compiles the first page it is asked for.

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { defineConfig } from './config';
-import { originsOf, stackEnvironment } from './stack';
+import { originsOf, stackEnvironment, startStack, startStackArgs } from './stack';
 
 describe('originsOf', () => {
   test("lists each service's public origin: its route's, else its port's, and none without either", () => {
@@ -71,5 +71,44 @@ describe('stackEnvironment', () => {
   test("keeps a shell's NODE_ENV and MODE outside a test runner", () => {
     const env = { ...shell, NODE_ENV: 'development', MODE: 'x' };
     expect(stackEnvironment(env)).toEqual(env);
+  });
+});
+
+describe('startStack', () => {
+  test('tags are passed to the session as -t', () => {
+    expect(startStackArgs({ services: ['api'], tags: ['backend', 'jobs'] })).toEqual([
+      'start',
+      '--headless',
+      '-s',
+      'api',
+      '-t',
+      'backend',
+      '-t',
+      'jobs',
+    ]);
+    expect(startStackArgs({ tags: ['backend'], profile: 'test', killOthers: true })).toEqual([
+      '--profile',
+      'test',
+      'start',
+      '--headless',
+      '-t',
+      'backend',
+      '--kill-others',
+    ]);
+  });
+
+  test('neither services nor tags throws', async () => {
+    const message = 'startStack: `services` or `tags` must name something';
+    await expect(startStack({})).rejects.toThrow(message);
+    await expect(startStack({ services: [], tags: [] })).rejects.toThrow(message);
+  });
+
+  test.each([
+    [{ services: 'api' }, 'startStack: `services` takes an array of strings'],
+    [{ services: ['api', 3] }, 'startStack: `services` takes an array of strings'],
+    [{ tags: 'backend' }, 'startStack: `tags` takes an array of strings'],
+    [{ tags: [3] }, 'startStack: `tags` takes an array of strings'],
+  ])('a malformed selection throws: %j', async (selection, message) => {
+    await expect(startStack(selection as never)).rejects.toThrow(message);
   });
 });

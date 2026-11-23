@@ -1,5 +1,5 @@
 ---
-description: Run one command or one script in a service's directory with its exact environment, using stackctl exec and stackctl run.
+description: Run one command or one script in a service's directory with its exact environment, or in several services at once, using stackctl exec and stackctl run.
 ---
 
 # One-off commands
@@ -10,20 +10,20 @@ migration, a seed script, a REPL, a test run.
 ```bash
 sctl exec api -- node src/migrate.ts   # a command, in api's directory with api's env
 sctl run api seed -- --rows=100        # api's `seed` script, with arguments
-cd apps/api && sctl run seed           # no target: the current directory
+cd apps/api && sctl run seed           # no service: the current directory
 ```
 
-- **`sctl exec [target] -- <command>`** runs a literal command. The `--` is required.
-- **`sctl run [target] <script> [-- args]`** runs a `package.json` script or Makefile
+- **`sctl exec [service] -- <command>`** runs a literal command. The `--` is required.
+- **`sctl run [service] <script> [-- args]`** runs a `package.json` script or Makefile
   target, [the way a service's dev script is run](./services.md#how-a-script-is-run).
 
-Both run in the target's directory with what a session would give it: its resolved
+Both run in the service's directory with what a session would give it: its resolved
 [`.env` files](./env.md), its `PORT` and its `PUBLIC_ORIGIN`. No session needs to be running,
 and a running one is not touched.
 
-## Targets
+## Naming a service
 
-A target is a service's name or a directory, relative or absolute:
+A service is named by its name or by a path, relative or absolute:
 
 ```bash
 sctl exec api -- node src/migrate.ts        # the service named api
@@ -34,9 +34,11 @@ sctl exec libs/db -- node src/migrate.ts    # a directory that isn't a service
 - **A path anywhere inside a service is that service**, and the command runs in the service's
   own directory, with the service's own [`env`](../config/services.md#env).
 - **`./api` is always the directory.** A bare `api` is the service.
+- **A relative path is relative to the directory you ran stackctl in**, or to the workspace
+  directory when `--workspace-dir` is given.
 - **A directory outside every service** gets the `.env` files of every directory from the root
   down to it, and no `PORT`.
-- **No target** means the current directory.
+- **No argument** means the current directory.
 
 ## Profiles
 
@@ -64,19 +66,41 @@ in a pipeline. The exit code is the command's own.
   then become the command: no stackctl process stays between them. The outer command keeps
   the log and the [event](../reference/events.md), so nothing is recorded twice.
 
+## Several services at once
+
+```bash
+sctl run -t backend test                  # every service tagged backend
+sctl exec -s api -s worker -- npx tsc -b  # api and worker
+sctl run -t backend --ignore-sibling-error lint
+```
+
+- **`-s` or `-t` runs it in several services**, at once, each as above. `-s` names a service
+  as in [Naming a service](#naming-a-service); `-t` takes every service with the
+  [tag](../config/services.md#tags).
+- **Every line is labelled with its service**, and a summary of each one's result goes to
+  stderr at the end. Nothing gets the terminal.
+- **The first failure stops the others.** With `--ignore-sibling-error`, every command runs to
+  its end.
+- **A service a tag matched that lacks the script is skipped.**
+
+The output, the exit code and the rest are in the
+[CLI reference](../reference/cli.md#several-services-at-once).
+
 ## From a script
 
-`exec()` and `run()` do the same from Node, and resolve with the exit code instead of exiting:
+`exec()` and `run()` do the same from Node, and resolve with the result instead of exiting:
 
 ```ts
 import { exec, run } from 'stackctl';
 
-await exec({ target: 'api', command: ['node', 'src/migrate.ts'] });
+await exec({ service: 'api', command: ['node', 'src/migrate.ts'] });
 const { exitCode } = await run({
-  target: 'api',
+  service: 'api',
   script: 'seed',
   profile: 'test',
 });
+const { ok, results } = await run({ tags: ['backend'], script: 'test' });
 ```
 
-See the [SDK](../reference/sdk.md#exec-and-run).
+See the [SDK](../reference/sdk.md#exec-and-run), and
+[several services at once](../reference/sdk.md#several-services-at-once) from a script.

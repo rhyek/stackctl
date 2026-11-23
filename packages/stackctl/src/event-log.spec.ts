@@ -10,6 +10,7 @@ import {
   isReadOnlyCompose,
   localTime,
   maskSecrets,
+  sdkBy,
   takeHandedBy,
 } from './event-log';
 import { sessionEventsPath } from './session-files';
@@ -171,5 +172,63 @@ describe('commandBy', () => {
     takeHandedBy(env);
     expect(env[EVENT_BY_ENV]).toBeUndefined();
     expect(commandBy('/ws', { agent: false, invocationCwd: '/ws' })).toEqual({ kind: 'ui', key: 'R' }); // oxfmt-ignore
+  });
+});
+
+// Who asked, for a command an SDK function made or ran: the Node script that called it, with its
+// paths relative to the workspace root.
+
+/** This process's script relative to `root`, and its arguments: what an SDK caller's argv is. */
+const caller = (root: string) => [
+  path.relative(root, process.argv[1]!) || '.',
+  ...process.argv.slice(2),
+];
+
+describe('sdkBy', () => {
+  test("is this process's script and arguments, and the directory, relative to the root", () => {
+    const root = path.dirname(process.argv[1]!);
+    expect(sdkBy(root, { agent: false, cwd: path.join(root, 'apps', 'api') })).toEqual({
+      kind: 'sdk',
+      argv: caller(root),
+      cwd: path.join('apps', 'api'),
+      agent: false,
+    });
+  });
+
+  test('the root itself is `.`', () => {
+    const root = path.dirname(process.argv[1]!);
+    expect(sdkBy(root, { agent: true, cwd: root })).toMatchObject({ cwd: '.', agent: true });
+  });
+});
+
+describe("commandBy, handed an SDK caller's absolute paths", () => {
+  const handed = (by: object) => JSON.stringify(by);
+
+  test('makes the script and the directory relative to the root, as sdkBy does', () => {
+    const by = commandBy('/ws', {
+      agent: false,
+      invocationCwd: '/elsewhere',
+      handed: handed({ kind: 'sdk', argv: ['/ws/scripts/seed.ts', '--rows=10'], cwd: '/ws/apps/api', agent: true }), // oxfmt-ignore
+    });
+    expect(by).toEqual({
+      kind: 'sdk',
+      argv: [path.join('scripts', 'seed.ts'), '--rows=10'],
+      cwd: path.join('apps', 'api'),
+      agent: true,
+    });
+  });
+
+  test('keeps a script that is no absolute path, and a directory at the root is `.`', () => {
+    const by = commandBy('/ws', {
+      agent: false,
+      invocationCwd: '/ws',
+      handed: handed({ kind: 'sdk', argv: ['seed', '/ws/x'], cwd: '/ws', agent: false }),
+    });
+    expect(by).toEqual({ kind: 'sdk', argv: ['seed', '/ws/x'], cwd: '.', agent: false });
+  });
+
+  test('takes an SDK `by` already relative as it is', () => {
+    const by = { kind: 'sdk', argv: ['/ws/seed.ts'], cwd: 'apps', agent: false };
+    expect(commandBy('/ws', { agent: false, invocationCwd: '/ws', handed: handed(by) })).toEqual(by); // oxfmt-ignore
   });
 });

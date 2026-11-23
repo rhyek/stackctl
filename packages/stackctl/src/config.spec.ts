@@ -22,7 +22,7 @@ import {
 } from './config';
 import { envFileNames, packageEnvLayer } from './env';
 
-/** `defineConfig`'s options as seen with `serviceRootDir` set (so `targetDir` is optional). */
+/** `defineConfig`'s options as seen with `serviceRootDir` set (so `dir` is optional). */
 type RootedOpts = Parameters<
   typeof defineConfig<Record<never, never>, Record<string, unknown>, string, 'packages'>
 >[0];
@@ -53,47 +53,47 @@ describe('command / autostart', () => {
 });
 
 describe('defineConfig path resolution', () => {
-  test('infers targetDir from serviceRootDir + key, resolving path against cwd', () => {
+  test('infers dir from serviceRootDir + key, resolving path against cwd', () => {
     const cfg = defineConfig({ serviceRootDir: 'apps', services: { svc: {}, '@scope/x': {} } });
-    expect(cfg.services.svc.targetDir).toBe('apps/svc');
-    expect(cfg.services.svc.resolvedTargetDir).toBe(path.resolve(process.cwd(), 'apps/svc'));
-    expect(cfg.services['@scope/x'].targetDir).toBe('apps/@scope/x');
+    expect(cfg.services.svc.dir).toBe('apps/svc');
+    expect(cfg.services.svc.resolvedDir).toBe(path.resolve(process.cwd(), 'apps/svc'));
+    expect(cfg.services['@scope/x'].dir).toBe('apps/@scope/x');
   });
 
   test('normalizes a trailing slash on serviceRootDir', () => {
     const cfg = defineConfig({ serviceRootDir: 'apps/', services: { svc: {} } });
-    expect(cfg.services.svc.targetDir).toBe('apps/svc');
+    expect(cfg.services.svc.dir).toBe('apps/svc');
   });
 
-  test('lets targetDir override the inferred directory', () => {
+  test('lets dir override the inferred directory', () => {
     const cfg = defineConfig({
       serviceRootDir: 'packages',
-      services: { svc: { targetDir: 'apps/svc' }, other: {} },
+      services: { svc: { dir: 'apps/svc' }, other: {} },
     });
-    expect(cfg.services.svc.targetDir).toBe('apps/svc');
-    expect(cfg.services.other.targetDir).toBe('packages/other');
+    expect(cfg.services.svc.dir).toBe('apps/svc');
+    expect(cfg.services.other.dir).toBe('packages/other');
   });
 
-  test('requires targetDir when there is no serviceRootDir, naming the package', () => {
+  test('requires dir when there is no serviceRootDir, naming the package', () => {
     expect(() =>
-      // @ts-expect-error targetDir is required without serviceRootDir
+      // @ts-expect-error dir is required without serviceRootDir
       defineConfig({ services: { svc: { port: 3000 } } }),
-    ).toThrow(/svc has no `targetDir`, and the config sets no `serviceRootDir` to infer it from/);
+    ).toThrow(/svc has no `dir`, and the config sets no `serviceRootDir` to infer it from/);
   });
 
-  test('honors explicit targetDir and workspaceDir', () => {
+  test('honors explicit dir and workspaceDir', () => {
     const packages = Object.values(
       defineConfig({
         serviceRootDir: 'packages',
         workspaceDir: '/repo',
-        services: { svc: { targetDir: 'apps/svc' } },
+        services: { svc: { dir: 'apps/svc' } },
       }).services,
     );
-    expect(packages[0]!.resolvedTargetDir).toBe(path.resolve('/repo', 'apps/svc'));
+    expect(packages[0]!.resolvedDir).toBe(path.resolve('/repo', 'apps/svc'));
   });
 });
 
-describe('targetDir and workspaceDir, relative or absolute', () => {
+describe('dir and workspaceDir, relative or absolute', () => {
   const CONFIG_DIR = Symbol.for('stackctl.configDir');
   let ws: string;
   beforeEach(() => {
@@ -105,30 +105,47 @@ describe('targetDir and workspaceDir, relative or absolute', () => {
     fs.rmSync(ws, { recursive: true, force: true });
   });
 
-  test('keeps a targetDir as written, and resolves it against the workspace', () => {
-    const cfg = defineConfig({ workspaceDir: ws, services: { api: { targetDir: 'apps/api' } } });
-    expect(cfg.services.api.targetDir).toBe('apps/api');
-    expect(cfg.services.api.resolvedTargetDir).toBe(path.join(ws, 'apps/api'));
+  test('keeps a dir as written, and resolves it against the workspace', () => {
+    const cfg = defineConfig({ workspaceDir: ws, services: { api: { dir: 'apps/api' } } });
+    expect(cfg.services.api.dir).toBe('apps/api');
+    expect(cfg.services.api.resolvedDir).toBe(path.join(ws, 'apps/api'));
   });
 
-  test('takes an absolute targetDir inside the workspace', () => {
+  test("a service's dir resolves against the workspace directory", () => {
+    const cfg = defineConfig({ workspaceDir: ws, services: { api: { dir: 'apps/api' } } });
+    expect(cfg.services.api.dir).toBe('apps/api');
+    expect(path.isAbsolute(cfg.services.api.resolvedDir)).toBe(true);
+    expect(cfg.services.api.resolvedDir).toBe(path.join(ws, 'apps', 'api'));
+  });
+
+  test('targetDir is an unknown key', () => {
+    expect(() =>
+      defineConfig({
+        workspaceDir: ws,
+        // @ts-expect-error `targetDir` is not a service option
+        services: { api: { targetDir: 'apps/api' } },
+      }),
+    ).toThrow('services.api.targetDir: Invalid key: Expected never but received "targetDir"');
+  });
+
+  test('takes an absolute dir inside the workspace', () => {
     const abs = path.join(ws, 'apps/api');
-    const cfg = defineConfig({ workspaceDir: ws, services: { api: { targetDir: abs } } });
-    expect(cfg.services.api.targetDir).toBe(abs);
-    expect(cfg.services.api.resolvedTargetDir).toBe(abs);
+    const cfg = defineConfig({ workspaceDir: ws, services: { api: { dir: abs } } });
+    expect(cfg.services.api.dir).toBe(abs);
+    expect(cfg.services.api.resolvedDir).toBe(abs);
   });
 
   test("takes '.' for a service at the workspace root", () => {
-    const cfg = defineConfig({ workspaceDir: ws, services: { api: { targetDir: '.' } } });
-    expect(cfg.services.api.resolvedTargetDir).toBe(ws);
+    const cfg = defineConfig({ workspaceDir: ws, services: { api: { dir: '.' } } });
+    expect(cfg.services.api.resolvedDir).toBe(ws);
   });
 
-  test('normalizes a targetDir written with `..` that stays inside', () => {
+  test('normalizes a dir written with `..` that stays inside', () => {
     const cfg = defineConfig({
       workspaceDir: ws,
-      services: { api: { targetDir: 'apps/web/../api/' } },
+      services: { api: { dir: 'apps/web/../api/' } },
     });
-    expect(cfg.services.api.resolvedTargetDir).toBe(path.join(ws, 'apps/api'));
+    expect(cfg.services.api.resolvedDir).toBe(path.join(ws, 'apps/api'));
   });
 
   test('takes an absolute serviceRootDir inside the workspace', () => {
@@ -137,25 +154,25 @@ describe('targetDir and workspaceDir, relative or absolute', () => {
       serviceRootDir: path.join(ws, 'apps'),
       services: { api: {} },
     });
-    expect(cfg.services.api.resolvedTargetDir).toBe(path.join(ws, 'apps/api'));
+    expect(cfg.services.api.resolvedDir).toBe(path.join(ws, 'apps/api'));
   });
 
-  test('rejects a relative targetDir that leaves the workspace', () => {
+  test('rejects a relative dir that leaves the workspace', () => {
     expect(() =>
-      defineConfig({ workspaceDir: ws, services: { api: { targetDir: '../elsewhere' } } }),
-    ).toThrow(`services.api.targetDir is "../elsewhere", which is outside the workspace (${ws})`);
+      defineConfig({ workspaceDir: ws, services: { api: { dir: '../elsewhere' } } }),
+    ).toThrow(`services.api.dir is "../elsewhere", which is outside the workspace (${ws})`);
   });
 
-  test('rejects an absolute targetDir outside the workspace', () => {
+  test('rejects an absolute dir outside the workspace', () => {
     const outside = path.dirname(ws);
-    expect(() =>
-      defineConfig({ workspaceDir: ws, services: { api: { targetDir: outside } } }),
-    ).toThrow(`services.api.targetDir is "${outside}", which is outside the workspace (${ws})`);
+    expect(() => defineConfig({ workspaceDir: ws, services: { api: { dir: outside } } })).toThrow(
+      `services.api.dir is "${outside}", which is outside the workspace (${ws})`,
+    );
   });
 
-  test('rejects a targetDir whose path only starts with the workspace', () => {
+  test('rejects a dir whose path only starts with the workspace', () => {
     expect(() =>
-      defineConfig({ workspaceDir: ws, services: { api: { targetDir: `${ws}-other` } } }),
+      defineConfig({ workspaceDir: ws, services: { api: { dir: `${ws}-other` } } }),
     ).toThrow('which is outside the workspace');
   });
 
@@ -163,39 +180,39 @@ describe('targetDir and workspaceDir, relative or absolute', () => {
     expect(
       () =>
       // @ts-expect-error - `relativeDir` is no longer a service key.
-      defineConfig({ workspaceDir: ws, services: { api: { targetDir: 'apps/api', relativeDir: 'x' } } }), // oxfmt-ignore
+      defineConfig({ workspaceDir: ws, services: { api: { dir: 'apps/api', relativeDir: 'x' } } }), // oxfmt-ignore
     ).toThrow(/services\.api\.relativeDir: Invalid key/);
   });
 
   test('shows no `relativeDir` or `absoluteDir` on the resolved service', () => {
-    const cfg = defineConfig({ workspaceDir: ws, services: { api: { targetDir: 'apps/api' } } });
+    const cfg = defineConfig({ workspaceDir: ws, services: { api: { dir: 'apps/api' } } });
     expect(cfg.services.api).not.toHaveProperty('relativeDir');
     expect(cfg.services.api).not.toHaveProperty('absoluteDir');
   });
 
   test("resolves a relative workspaceDir against the config file's directory", () => {
     (globalThis as Record<symbol, unknown>)[CONFIG_DIR] = path.join(ws, 'apps');
-    const cfg = defineConfig({ workspaceDir: '..', services: { api: { targetDir: 'apps/api' } } });
+    const cfg = defineConfig({ workspaceDir: '..', services: { api: { dir: 'apps/api' } } });
     expect(getWorkspaceDir()).toBe(ws);
-    expect(cfg.services.api.resolvedTargetDir).toBe(path.join(ws, 'apps/api'));
+    expect(cfg.services.api.resolvedDir).toBe(path.join(ws, 'apps/api'));
   });
 
   test("resolves a relative workspaceDir below the config file's directory", () => {
     (globalThis as Record<symbol, unknown>)[CONFIG_DIR] = ws;
-    defineConfig({ workspaceDir: 'apps', services: { api: { targetDir: 'api' } } });
+    defineConfig({ workspaceDir: 'apps', services: { api: { dir: 'api' } } });
     expect(getWorkspaceDir()).toBe(path.join(ws, 'apps'));
   });
 
   test("defaults the workspace to the config file's directory", () => {
     (globalThis as Record<symbol, unknown>)[CONFIG_DIR] = ws;
-    const cfg = defineConfig({ services: { api: { targetDir: 'apps/api' } } });
+    const cfg = defineConfig({ services: { api: { dir: 'apps/api' } } });
     expect(getWorkspaceDir()).toBe(ws);
-    expect(cfg.services.api.resolvedTargetDir).toBe(path.join(ws, 'apps/api'));
+    expect(cfg.services.api.resolvedDir).toBe(path.join(ws, 'apps/api'));
   });
 
   test("ignores the config file's directory for an absolute workspaceDir", () => {
     (globalThis as Record<symbol, unknown>)[CONFIG_DIR] = path.join(ws, 'apps');
-    defineConfig({ workspaceDir: ws, services: { api: { targetDir: 'apps/api' } } });
+    defineConfig({ workspaceDir: ws, services: { api: { dir: 'apps/api' } } });
     expect(getWorkspaceDir()).toBe(ws);
   });
 
@@ -208,7 +225,7 @@ describe('targetDir and workspaceDir, relative or absolute', () => {
       workspaceDir: ws,
       services: {
         api: {
-          targetDir: 'apps/api',
+          dir: 'apps/api',
           urls: [({ envs }) => (seen.push({ A: envs.A, B: envs.B, C: envs.C }), 'http://x')],
         },
       },
@@ -224,9 +241,9 @@ describe('targetDir and workspaceDir, relative or absolute', () => {
     defineConfig({
       workspaceDir: ws,
       services: {
-        api: { targetDir: 'apps/api' },
+        api: { dir: 'apps/api' },
         worker: {
-          targetDir: 'apps/api/worker',
+          dir: 'apps/api/worker',
           urls: [({ envs }) => (seen.push({ OUTER: envs.OUTER, WHO: envs.WHO }), 'http://x')],
         },
       },
@@ -242,10 +259,10 @@ describe('targetDir and workspaceDir, relative or absolute', () => {
       workspaceDir: ws,
       services: {
         api: {
-          targetDir: 'apps/api',
+          dir: 'apps/api',
           urls: [({ envs }) => (seen.push(envs.WEB), 'http://x')],
         },
-        web: { targetDir: 'apps/web' },
+        web: { dir: 'apps/web' },
       },
     });
     expect(seen).toEqual([undefined]);
@@ -942,7 +959,7 @@ describe('validation', () => {
     const error = (() => {
       try {
         defineConfig({
-          services: { web: { targetDir: 'web', port: 3000 } },
+          services: { web: { dir: 'web', port: 3000 } },
           reverseProxy: {
             port: 4000,
             publicAddress: { domain: 'localhost', scheme: 'http', port: 4000 },
@@ -1339,7 +1356,7 @@ describe('getWorkspaceDir', () => {
       // What decides whether a port holder belongs to this workspace — a config living in a
       // subdirectory can point `workspaceDir` somewhere else entirely.
       expect(getWorkspaceDir()).toBe(path.resolve(dir));
-      expect(getRegisteredPackages()[0]!.resolvedTargetDir).toBe(path.join(dir, 'packages/svc'));
+      expect(getRegisteredPackages()[0]!.resolvedDir).toBe(path.join(dir, 'packages/svc'));
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -3114,7 +3131,7 @@ describe('infra', () => {
     const cfg = withInfra({ 'docker-compose': { services: { db: { afterReady } } } });
     expect(cfg.infra?.['docker-compose']?.services.db?.afterReady).toBe(afterReady);
     expect(JSON.parse(JSON.stringify(cfg)).infra['docker-compose'].services).toEqual({
-      db: { enabled: true },
+      db: { enabled: true, tags: [] },
     });
   });
 
@@ -3253,6 +3270,7 @@ describe('infra service port and route', () => {
     // What show-config prints and outside tooling reads.
     expect(JSON.parse(JSON.stringify(cfg)).infra['docker-compose'].services.mail).toEqual({
       enabled: true,
+      tags: [],
       port: 8025,
       publicOrigin: 'http://mail.example.test:4000',
     });
@@ -4389,5 +4407,38 @@ describe('services.<name>.env', () => {
       services: { api: { env: { vars: { MINE: 'api' } } } },
     });
     expect([seenTop, seenMine]).toEqual(['top', undefined]);
+  });
+});
+
+describe('tags', () => {
+  const load = (opts: unknown) => () => defineConfig(opts as never) as unknown as Config<string>;
+
+  test('tags resolve to an array: as written, without duplicates, [] when omitted', () => {
+    const cfg = load({
+      serviceRootDir: 'packages',
+      services: { api: { tags: ['backend', 'data', 'backend'] }, web: {} },
+      infra: {
+        'docker-compose': {
+          services: { db: { tags: ['data', 'data', 'infra'] }, cache: {} },
+        },
+      },
+    })();
+    expect(cfg.services.api!.tags).toEqual(['backend', 'data']);
+    expect(cfg.services.web!.tags).toEqual([]);
+    const compose = cfg.infra!['docker-compose']!.services;
+    expect(compose.db!.tags).toEqual(['data', 'infra']);
+    expect(compose.cache!.tags).toEqual([]);
+  });
+
+  test('an empty tag is refused', () => {
+    expect(load({ serviceRootDir: 'packages', services: { api: { tags: [''] } } })).toThrow(
+      /services\.api\.tags/,
+    );
+    expect(
+      load({
+        serviceRootDir: 'packages',
+        infra: { 'docker-compose': { services: { db: { tags: [''] } } } },
+      }),
+    ).toThrow(/infra\.docker-compose\.services\.db\.tags/);
   });
 });

@@ -41,6 +41,7 @@ export default defineConfig({
     'docker-compose': {
       services: {
         db: {
+          tags: ['data'],
           // Once Postgres is healthy — on every `infra start` and every session start, including
           // when it was already running, so this has to be idempotent. `exec` executes a command
           // with the profile's environment (DATABASE_URI among it) and sends its output to
@@ -63,17 +64,19 @@ export default defineConfig({
       },
     },
   },
-  // Each service lives at apps/<key> unless it sets `targetDir` itself. (The libraries the
+  // Each service lives at apps/<key> unless it sets `dir` itself. (The libraries the
   // services import, in libs/, are plain pnpm `workspace:*` dependencies run as source, and not
   // part of this config.)
   serviceRootDir: 'apps',
   // Keyed by service name — what `-s` takes and what `deps` reference.
   services: {
     backend: {
+      tags: ['backend'],
       port: ({ envs }) => Number(envs.BACKEND_PORT),
       healthcheck: '/health', // a path: probed at http://localhost:<port>/health
     },
     worker: {
+      tags: ['backend'],
       // Go, via the Makefile's `start` target: recompiles on start, doesn't watch — restart after edits.
       command: ['start', { watches: false }],
       port: 3002,
@@ -91,6 +94,7 @@ export default defineConfig({
       },
     },
     frontend: {
+      tags: ['frontend'],
       // At http://app.localhost:21050, and every path the bare http://localhost:21050 doesn't send
       // to the backend. Vite HMR rides the proxied connection (see vite.config.ts).
       port: 21060,

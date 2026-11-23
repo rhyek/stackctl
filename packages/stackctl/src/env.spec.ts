@@ -260,7 +260,7 @@ describe('envDirs', () => {
       'resolvedWorkspaceDir must be an absolute path, got "ws"',
     );
     expect(() => envDirs(workspaceDir, 'packages/api')).toThrow(
-      'resolvedTargetDir must be an absolute path, got "packages/api"',
+      'resolvedDir must be an absolute path, got "packages/api"',
     );
   });
 
@@ -310,7 +310,7 @@ describe('envCandidatePaths', () => {
   test("lists each directory's files, root first, each in `files` order", () => {
     const paths = envCandidatePaths({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
       files: ['.env', '.env.local'],
     });
     expect(paths).toEqual([
@@ -326,7 +326,7 @@ describe('envCandidatePaths', () => {
   test("is the root's files alone for a target at the root", () => {
     const paths = envCandidatePaths({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
       files: ['.env', '.env.local'],
     });
     expect(paths).toEqual([path.join(workspaceDir, '.env'), path.join(workspaceDir, '.env.local')]);
@@ -341,7 +341,7 @@ describe('envCandidatePaths', () => {
   test("produces a profile's four files at every level", () => {
     const paths = envCandidatePaths({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
       files: envFileNames('test'),
     });
     const four = ['.env', '.env.local', '.env.test', '.env.test.local'];
@@ -361,7 +361,7 @@ describe('envCandidatePaths', () => {
     expect(() =>
       envCandidatePaths({
         resolvedWorkspaceDir: path.join(workspaceDir, 'packages'),
-        resolvedTargetDir: workspaceDir,
+        resolvedDir: workspaceDir,
       }),
     ).toThrow(OutsideWorkspaceError);
   });
@@ -376,7 +376,7 @@ describe('resolveEnvFrom walking up from the target', () => {
     write('packages/api/.env', 'C=api\n');
     const { env, files } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: api(),
+      resolvedDir: api(),
     });
     expect(env).toEqual({ A: 'root', B: 'packages', C: 'api' });
     expect(files).toEqual([
@@ -391,7 +391,7 @@ describe('resolveEnvFrom walking up from the target', () => {
     write('packages/api/.env', 'KEY=api-base\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: api(),
+      resolvedDir: api(),
     });
     expect(env.KEY).toBe('api-base');
   });
@@ -400,7 +400,7 @@ describe('resolveEnvFrom walking up from the target', () => {
     write('packages/.env', 'ONLY=packages\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: api(),
+      resolvedDir: api(),
     });
     expect(env).toEqual({ ONLY: 'packages' });
   });
@@ -412,7 +412,7 @@ describe('resolveEnvFrom walking up from the target', () => {
     write('packages/.env.development.local', 'KEY=profile-local\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: api(),
+      resolvedDir: api(),
     });
     expect(env.KEY).toBe('profile-local');
   });
@@ -423,7 +423,7 @@ describe('resolveEnvFrom walking up from the target', () => {
     write('packages/api/.env', 'API_URL=${URL}/api\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: api(),
+      resolvedDir: api(),
     });
     expect(env.API_URL).toBe('http://localhost:3000/api');
   });
@@ -433,7 +433,7 @@ describe('resolveEnvFrom walking up from the target', () => {
     write('apps/.env', 'APPS=yes\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: api(),
+      resolvedDir: api(),
     });
     expect(env).toEqual({});
   });
@@ -444,7 +444,7 @@ describe('resolveEnvFrom walking up from the target', () => {
     try {
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: path.join(workspaceDir, 'packages'),
-        resolvedTargetDir: api(),
+        resolvedDir: api(),
         files: ['.env', '.env.stackctl-spec-above'],
       });
       expect(env).toEqual({});
@@ -456,7 +456,7 @@ describe('resolveEnvFrom walking up from the target', () => {
   test('the ambient environment wins over a directory between, unless overridden', () => {
     write('packages/.env', 'STACKCTL_SPEC_MID=file\n');
     withAmbient({ STACKCTL_SPEC_MID: 'shell' }, () => {
-      const opts = { resolvedWorkspaceDir: workspaceDir, resolvedTargetDir: api() };
+      const opts = { resolvedWorkspaceDir: workspaceDir, resolvedDir: api() };
       expect(resolveEnvFrom(opts).env.STACKCTL_SPEC_MID).toBe('shell');
       expect(
         resolveEnvFrom({ ...opts, override: ['STACKCTL_SPEC_MID'] }).env.STACKCTL_SPEC_MID,
@@ -470,7 +470,7 @@ describe('resolveEnvFrom walking up from the target', () => {
     write('packages/api/.env', 'OWN=1\n');
     const { packageNames } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: api(),
+      resolvedDir: api(),
     });
     expect([...packageNames]).toEqual(['OWN']);
   });
@@ -479,7 +479,7 @@ describe('resolveEnvFrom walking up from the target', () => {
     write('.env', 'ROOT=1\n');
     const { packageNames } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
     });
     expect([...packageNames]).toEqual(['ROOT']);
   });
@@ -487,7 +487,7 @@ describe('resolveEnvFrom walking up from the target', () => {
   test('reads .env.keys at the root only', () => {
     const reads: string[] = [];
     resolveEnvFrom(
-      { resolvedWorkspaceDir: workspaceDir, resolvedTargetDir: api(), decrypt: true },
+      { resolvedWorkspaceDir: workspaceDir, resolvedDir: api(), decrypt: true },
       (file) => {
         reads.push(file);
         return file.endsWith('.env') ? 'A=1\n' : null;
@@ -507,7 +507,7 @@ describe('resolveEnvFrom walking up from the target', () => {
     fs.writeFileSync(path.join(real, 'apps', '.env'), 'B=apps\n');
     const { env, files } = resolveEnvFrom({
       resolvedWorkspaceDir: link,
-      resolvedTargetDir: path.join(fs.realpathSync(real), 'apps', 'api'),
+      resolvedDir: path.join(fs.realpathSync(real), 'apps', 'api'),
     });
     expect(env).toEqual({ A: 'root', B: 'apps' });
     expect(files).toEqual([path.join(link, '.env'), path.join(link, 'apps', '.env')]);
@@ -517,7 +517,7 @@ describe('resolveEnvFrom walking up from the target', () => {
     expect(() =>
       resolveEnvFrom({
         resolvedWorkspaceDir: api(),
-        resolvedTargetDir: workspaceDir,
+        resolvedDir: workspaceDir,
       }),
     ).toThrow(OutsideWorkspaceError);
   });
@@ -528,7 +528,7 @@ describe('resolveEnvFrom', () => {
     write('.env', 'A=1\n');
     const { env, files } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
     });
     expect(env).toEqual({ A: '1' });
     expect(files).toEqual([path.join(workspaceDir, '.env')]);
@@ -539,7 +539,7 @@ describe('resolveEnvFrom', () => {
     write('packages/api/.env', 'KEY=pkg\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
     });
     expect(env.KEY).toBe('pkg');
   });
@@ -549,7 +549,7 @@ describe('resolveEnvFrom', () => {
     write('.env.development', 'KEY=profile\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
     });
     expect(env.KEY).toBe('profile');
   });
@@ -561,7 +561,7 @@ describe('resolveEnvFrom', () => {
     write('.env.development.local', 'KEY=modelocal\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
     });
     expect(env.KEY).toBe('modelocal');
   });
@@ -571,7 +571,7 @@ describe('resolveEnvFrom', () => {
     write('packages/api/.env.local', 'KEY=pkglocal\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
     });
     expect(env.KEY).toBe('pkglocal');
   });
@@ -582,7 +582,7 @@ describe('resolveEnvFrom', () => {
     write('.env.test', 'KEY=test\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
       files: envFileNames('test'),
     });
     expect(env.KEY).toBe('test');
@@ -593,7 +593,7 @@ describe('resolveEnvFrom', () => {
     write('.env.apple', 'KEY=apple\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
       files: envFileNames('apple'),
     });
     expect(env.KEY).toBe('apple');
@@ -605,7 +605,7 @@ describe('resolveEnvFrom', () => {
       write('packages/api/.env.local', 'GREETING=${BASE} world\nECHO=${STACKCTL_ENV_SPEC}\n');
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
       });
       expect(env.GREETING).toBe('hello world');
       expect(env.ECHO).toBe('fromproc');
@@ -619,7 +619,7 @@ describe('resolveEnvFrom', () => {
     );
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
     });
     expect(env.A).toBe('yes');
     expect(env.B).toBe('fallback');
@@ -632,7 +632,7 @@ describe('resolveEnvFrom', () => {
     const before = { ...process.env };
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
     });
     expect(Object.keys(env)).toEqual(['STACKCTL_ENV_SPEC_ONLY']);
     expect(process.env.STACKCTL_ENV_SPEC_ONLY).toBeUndefined();
@@ -681,7 +681,7 @@ describe('resolveEnvFrom with a profile', () => {
     });
   });
 
-  test("without a targetDir, reads only the workspace's files", () => {
+  test("without a dir, reads only the workspace's files", () => {
     write('packages/api/.env.test', 'KEY=pkg\n');
     const { env, candidates } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
@@ -795,7 +795,7 @@ describe('resolveEnvFrom with additional files', () => {
     write('packages/api/.env.development.pre', 'B=1\n');
     const { files } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
       files: pre,
     });
     expect(files.map((f) => path.relative(workspaceDir, f))).toEqual([
@@ -813,7 +813,7 @@ describe('resolveEnvFrom with additional files', () => {
     write('packages/api/.env.ports', 'P=api\n');
     const { env, candidates } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
       files,
     });
     expect(env).toEqual({ P: 'api', Q: 'packages', R: 'root' });
@@ -826,7 +826,7 @@ describe('resolveEnvFrom with additional files', () => {
     const files = envFileOrder('development', [{ file: '.env.ports', before: '.env.<profile>' }]);
     const { candidates } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
       files,
     });
     expect(candidates).toEqual(files.map((f) => path.join(workspaceDir, f)));
@@ -837,7 +837,7 @@ describe('resolveEnvFrom expands references against the final values', () => {
   const resolve = (opts: { override?: string[]; ambient?: Record<string, string> } = {}) =>
     resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
       ambient: {},
       ...opts,
     }).env;
@@ -887,7 +887,7 @@ describe('resolveEnvFrom expands references against the final values', () => {
     write('.env.local', 'A=file\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
       ambient: {},
       vars: { A: 'config' },
     });
@@ -968,7 +968,7 @@ describe('resolveEnvFrom expands references against the final values', () => {
     expect(
       resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: workspaceDir,
+        resolvedDir: workspaceDir,
         ambient,
       }).env,
     ).toEqual(parsed);
@@ -981,7 +981,7 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
       write('.env', 'STACKCTL_ENV_OVERRIDE=fromfile\n');
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
       });
       expect(env.STACKCTL_ENV_OVERRIDE).toBe('ambient');
     });
@@ -992,7 +992,7 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
       write('.env', 'STACKCTL_ENV_CROSS=fromfile\nDERIVED=${STACKCTL_ENV_CROSS}-x\n');
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
       });
       expect(env.STACKCTL_ENV_CROSS).toBe('ambient');
       expect(env.DERIVED).toBe('ambient-x');
@@ -1003,7 +1003,7 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
     write('.env', 'STACKCTL_ENV_FILE_ONLY=fromfile\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
     });
     expect(env.STACKCTL_ENV_FILE_ONLY).toBe('fromfile');
   });
@@ -1013,7 +1013,7 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
       write('.env', 'STACKCTL_ENV_A=fileA\nSTACKCTL_ENV_B=fileB\n');
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
         override: ['STACKCTL_ENV_A'],
       });
       expect(env.STACKCTL_ENV_A).toBe('fileA');
@@ -1026,7 +1026,7 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
       write('.env', 'STACKCTL_ENV_A=fileA\nSTACKCTL_ENV_B=fileB\n');
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
         override: true,
       });
       expect(env.STACKCTL_ENV_A).toBe('fileA');
@@ -1039,7 +1039,7 @@ describe('resolveEnvFrom precedence against the ambient environment', () => {
       write('.env', 'STACKCTL_ENV_APPEND=$STACKCTL_ENV_APPEND --disable-warning=Experimental\n');
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
         override: ['STACKCTL_ENV_APPEND'],
       });
       expect(env.STACKCTL_ENV_APPEND).toBe('--import /tmp/boot.js --disable-warning=Experimental');
@@ -1051,7 +1051,7 @@ describe('resolveEnvFrom references to an overridden variable', () => {
   const resolve = (override: boolean | string[] | undefined, vars?: Record<string, string>) =>
     resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
       override,
       vars,
     }).env;
@@ -1123,7 +1123,7 @@ describe('resolveEnvFrom with an override in force', () => {
     withAmbient({ STACKCTL_ENV_A: '/shell', STACKCTL_ENV_B: '/shell-b' }, () => {
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: workspaceDir,
+        resolvedDir: workspaceDir,
         override: ['STACKCTL_ENV_B'],
       });
       expect(env).toEqual({ STACKCTL_ENV_A: '/shell', STACKCTL_ENV_B: '/shell/b' });
@@ -1135,7 +1135,7 @@ describe('resolveEnvFrom with an override in force', () => {
     withAmbient({ STACKCTL_ENV_A: '/shell' }, () => {
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: workspaceDir,
+        resolvedDir: workspaceDir,
         override: ['STACKCTL_ENV_A'],
       });
       expect(env).toEqual({ STACKCTL_ENV_B: '/shell/b' });
@@ -1147,7 +1147,7 @@ describe('resolveEnvFrom with an override in force', () => {
     write('.env', `STACKCTL_ENV_A=$(echo x >> ${counter}; echo ran)\n`);
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
       override: ['STACKCTL_ENV_B'],
     });
     expect(env).toEqual({ STACKCTL_ENV_A: 'ran' });
@@ -1168,7 +1168,7 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
     const shell = ambientEnv();
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
       ambient: shell,
       override,
     });
@@ -1192,7 +1192,7 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
         anchored(override, (ambient) => {
           const { env } = resolveEnvFrom({
             resolvedWorkspaceDir: workspaceDir,
-            resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+            resolvedDir: path.join(workspaceDir, 'packages/api'),
             override,
             ambient,
           });
@@ -1209,7 +1209,7 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
       anchored(true, (ambient) => {
         const { env } = resolveEnvFrom({
           resolvedWorkspaceDir: workspaceDir,
-          resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+          resolvedDir: path.join(workspaceDir, 'packages/api'),
           override: true,
           ambient,
         });
@@ -1227,7 +1227,7 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
       write('.env', 'STACKCTL_ENV_A=after\n');
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
         ambient,
       });
       expect(env.STACKCTL_ENV_A).toBe('after');
@@ -1246,7 +1246,7 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
         // …and a package's is still built from the shell's, so the flag isn't appended again.
         const { env } = resolveEnvFrom({
           resolvedWorkspaceDir: workspaceDir,
-          resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+          resolvedDir: path.join(workspaceDir, 'packages/api'),
           override: ['STACKCTL_ENV_TWOSTAGE'],
           ambient,
         });
@@ -1260,7 +1260,7 @@ describe('two-stage resolution (anchor merge, then per-package)', () => {
     anchored(['STACKCTL_ENV_TWOSTAGE'], (ambient) => {
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
         override: ['STACKCTL_ENV_TWOSTAGE'],
         ambient,
       });
@@ -1280,13 +1280,13 @@ describe('captureShellEnv', () => {
     fresh.captureShellEnv();
     const merged = fresh.resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
     }).env;
     withAmbient(merged, () => {
       expect(
         fresh.resolveEnvFrom({
           resolvedWorkspaceDir: workspaceDir,
-          resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+          resolvedDir: path.join(workspaceDir, 'packages/api'),
         }).env.STACKCTL_ENV_A,
       ).toBe('3');
     });
@@ -1301,7 +1301,7 @@ describe('captureShellEnv', () => {
       expect(
         fresh.resolveEnvFrom({
           resolvedWorkspaceDir: workspaceDir,
-          resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+          resolvedDir: path.join(workspaceDir, 'packages/api'),
         }).env.STACKCTL_ENV_A,
       ).toBe('1');
     });
@@ -1346,7 +1346,7 @@ describe('resolveEnvFrom expansion safety', () => {
         write('.env', 'STACKCTL_ENV_POISON=$STACKCTL_ENV_POISON --flag\n');
         const { env } = resolveEnvFrom({
           resolvedWorkspaceDir: workspaceDir,
-          resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+          resolvedDir: path.join(workspaceDir, 'packages/api'),
           override: ['STACKCTL_ENV_POISON'],
         });
         // The inner literal is preserved verbatim rather than expanded again.
@@ -1360,7 +1360,7 @@ describe('resolveEnvFrom expansion safety', () => {
       write('.env', 'STACKCTL_ENV_POISON2=$STACKCTL_ENV_POISON2 --flag\n');
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
       });
       // Ambient wins, and comes back as the real value — no stray escape backslash.
       expect(env.STACKCTL_ENV_POISON2).toBe('x ${STACKCTL_ENV_POISON2}');
@@ -1372,7 +1372,7 @@ describe('resolveEnvFrom expansion safety', () => {
       write('.env', 'MSG=${STACKCTL_ENV_DOLLAR}!\n');
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
       });
       expect(env.MSG).toBe('hello$world!');
     });
@@ -1383,7 +1383,7 @@ describe('resolveEnvFrom expansion safety', () => {
       write('.env', 'STACKCTL_ENV_ESC=fromfile\n');
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
       });
       expect(env.STACKCTL_ENV_ESC).toBe('a$b');
     });
@@ -1394,7 +1394,7 @@ describe('resolveEnvFrom expansion safety', () => {
       write('.env', 'OUT=${STACKCTL_ENV_PREESC}\n');
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+        resolvedDir: path.join(workspaceDir, 'packages/api'),
       });
       expect(env.OUT).toBe('lit\\$eral');
     });
@@ -1404,7 +1404,7 @@ describe('resolveEnvFrom expansion safety', () => {
     write('.env', 'A=one\nB=${A}/two\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
     });
     expect(env.B).toBe('one/two');
   });
@@ -1414,8 +1414,8 @@ describe('packageEnvLayer', () => {
   const mkPkg = (over: Partial<AnyServiceConfig>): AnyServiceConfig =>
     ({
       name: 'api',
-      targetDir: 'packages/api',
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      dir: 'packages/api',
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
       ...over,
     }) as AnyServiceConfig;
 
@@ -1548,7 +1548,7 @@ describe('packageEnvLayer', () => {
   test("counts the workspace's .env file as the package's own when the package is the workspace", () => {
     write('.env', 'PORT=9999\n');
     expect(
-      packageEnvLayer(mkPkg({ targetDir: '.', resolvedTargetDir: workspaceDir, port: 3001 }), {
+      packageEnvLayer(mkPkg({ dir: '.', resolvedDir: workspaceDir, port: 3001 }), {
         resolvedWorkspaceDir: workspaceDir,
       }).PORT,
     ).toBe('9999');
@@ -1618,7 +1618,7 @@ describe('STACKCTL_INJECTED_ENV', () => {
   });
 
   test("a service's layer lists its PORT", () => {
-    const pkg = { name: 'api', targetDir: 'packages/api', path: '/x', port: 3001 } as unknown as AnyServiceConfig; // oxfmt-ignore
+    const pkg = { name: 'api', dir: 'packages/api', path: '/x', port: 3001 } as unknown as AnyServiceConfig; // oxfmt-ignore
     expect(
       packageEnvLayer(pkg, { resolvedWorkspaceDir: workspaceDir }).STACKCTL_INJECTED_ENV!.split(
         ',',
@@ -1818,7 +1818,7 @@ describe('targetEnvLayer', () => {
   test("a service target is the service's layer, with its port", () => {
     const service = {
       name: 'api',
-      targetDir: 'packages/api',
+      dir: 'packages/api',
       path: '/x',
       port: 3001,
     } as unknown as AnyServiceConfig;
@@ -1834,7 +1834,7 @@ describe("resolveEnvFrom with the config's own vars", () => {
   const resolve = (vars: Record<string, string>, override?: boolean | string[]) =>
     resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: path.join(workspaceDir, 'packages/api'),
+      resolvedDir: path.join(workspaceDir, 'packages/api'),
       vars,
       override,
     }).env;
@@ -1968,7 +1968,7 @@ describe('encrypted values', () => {
     try {
       const { env } = resolveEnvFrom({
         resolvedWorkspaceDir: workspaceDir,
-        resolvedTargetDir: workspaceDir,
+        resolvedDir: workspaceDir,
         ambient: { DOTENV_PRIVATE_KEY: privateKey },
       });
       expect(env).toMatchObject({ SECRET: encryptedSecret(), PLAIN: '1' });
@@ -1982,7 +1982,7 @@ describe('encrypted values', () => {
     const privateKey = secret();
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
       decrypt: true,
       ambient: { DOTENV_PRIVATE_KEY: privateKey },
     });
@@ -1996,7 +1996,7 @@ describe('encrypted values', () => {
     const files = new EnvFileSnapshot();
     await files.refresh([
       envKeysFile(workspaceDir),
-      ...envCandidatePaths({ resolvedWorkspaceDir: workspaceDir, resolvedTargetDir: workspaceDir }),
+      ...envCandidatePaths({ resolvedWorkspaceDir: workspaceDir, resolvedDir: workspaceDir }),
     ]);
     const layer = workspaceEnvLayer({
       resolvedWorkspaceDir: workspaceDir,
@@ -2014,7 +2014,7 @@ describe('encrypted values', () => {
     write('.env.local', 'PORT=5432\n');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
       decrypt: true,
       ambient: { DOTENV_PRIVATE_KEY: privateKey },
     });
@@ -2030,7 +2030,7 @@ describe('encrypted values', () => {
     write('.env.local', `SECRET="${primitives.encrypt(publicKey, 'local')}"\n`);
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
       decrypt: true,
       ambient: { DOTENV_PRIVATE_KEY: privateKey },
     });
@@ -2041,7 +2041,7 @@ describe('encrypted values', () => {
     const privateKey = secret();
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
       decrypt: true,
       override: ['SECRET'],
       ambient: { SECRET: 'from-shell', DOTENV_PRIVATE_KEY: privateKey },
@@ -2054,7 +2054,7 @@ describe('encrypted values', () => {
     const error = vi.spyOn(console, 'error');
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
       decrypt: true,
       ambient: { SECRET: 'from-shell' },
     });
@@ -2070,7 +2070,7 @@ describe('encrypted values', () => {
     });
     const { env } = resolveEnvFrom({
       resolvedWorkspaceDir: workspaceDir,
-      resolvedTargetDir: workspaceDir,
+      resolvedDir: workspaceDir,
       decrypt: true,
       ambient: {},
     });

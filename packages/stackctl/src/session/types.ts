@@ -36,7 +36,7 @@ export interface SessionPlan {
   /** The directory the CLI anchored in, the one holding the config; absent means `process.cwd()`. */
   cwd?: string;
   /**
-   * The workspace root, absolute: what each service's `targetDir` resolved against, and where its
+   * The workspace root, absolute: what each service's `dir` resolved against, and where its
    * `.env` files are walked up to. The config's `workspaceDir`, so not always `cwd`; absent means
    * `cwd`.
    */

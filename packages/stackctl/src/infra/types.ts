@@ -273,6 +273,11 @@ export interface InfraServiceInput<
    */
   enabled?: boolean | ((ctx: InfraEnabledContext<T>) => boolean);
   /**
+   * Labels for picking this service with `-t, --tag`, and for your own code. Only a service named
+   * under `services` can carry tags.
+   */
+  tags?: string[] | undefined;
+  /**
    * The port the service answers on at `localhost` — the host side of its port mapping, which
    * stackctl doesn't read from the provider's own file. A literal, or a callback over the
    * workspace context `{ envs, tokens, service }` resolved once at load, like a service's `port`:
@@ -345,6 +350,8 @@ export interface ResolvedInfraService<
   R = InfraReadyContext,
 > extends InfraServiceCallbacks<TokenRecord, D, S, R> {
   enabled: boolean;
+  /** The service's tags, without duplicates; `[]` when it has none. */
+  tags: string[];
   /** The service's port on `localhost`, with any callback resolved; never set for a disabled service. */
   port?: number;
   /**
@@ -412,19 +419,34 @@ export interface ResolvedInfra<I extends string = string> {
 // Runtime: what a run reports while it happens, and what it returns.
 // ---------------------------------------------------------------------------
 
-/** Where a service is in an `up` or `destroy` run. `ready`, `destroyed` and `failed` are final. */
+/**
+ * Where a service is in an `up`, `down` or `destroy` run. `ready`, `stopped`, `destroyed` and
+ * `failed` are final.
+ */
 export type InfraServiceStatus =
   | 'pending'
   | 'destroying'
   | 'starting'
+  | 'stopping'
   | 'ready'
+  | 'stopped'
   | 'destroyed'
   | 'failed';
+
+/** What a run does: `up` (a start, a restart's second half, a reset), `down` or `destroy`. */
+export type InfraRunAction = 'up' | 'down' | 'destroy';
+
+/** The final status a service that made it through a run ends on, by the run's action. */
+export const INFRA_DONE_STATUS = {
+  up: 'ready',
+  down: 'stopped',
+  destroy: 'destroyed',
+} as const satisfies Record<InfraRunAction, InfraServiceStatus>;
 
 /** Everything a run reports, through one callback, for whichever surface is showing it. */
 export type InfraEvent =
   /** The services this run acts on, once resolved, and the provider that runs them. */
-  | { type: 'targets'; provider: string; action: 'up' | 'destroy'; services: string[] }
+  | { type: 'targets'; provider: string; action: InfraRunAction; services: string[] }
   /** A service changed status, or the step it is on (`detail`) changed. */
   | { type: 'status'; service: string; status: InfraServiceStatus; detail?: string }
   /** A line of output: from a callback (tagged with its service) or from the provider's tool. */
