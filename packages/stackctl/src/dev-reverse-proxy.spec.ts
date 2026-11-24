@@ -141,7 +141,7 @@ async function proxyFor(
   routes: DevReverseProxyEntry[],
   opts: {
     readyTimeoutMs?: number;
-    controlApiPort?: number;
+    controlApiPort?: () => number;
     domainAliases?: string[];
     tls?: ProxyTls;
     publicAddress?: { scheme: 'https' | 'http'; port: number | undefined };
@@ -1501,7 +1501,7 @@ describe('status-aware responses', () => {
     async (status) => {
       const web = await upstream('web');
       const proxy = await proxyFor([route(`web.${ROOT}`, 'web', web.port)], {
-        controlApiPort: 14001,
+        controlApiPort: () => 14001,
       });
       proxy.bindSession(stubManager({ web: status }));
       const html = await request(proxy.port, `web.${ROOT}`, {

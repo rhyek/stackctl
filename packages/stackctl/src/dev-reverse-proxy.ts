@@ -398,8 +398,11 @@ export async function startDevReverseProxy(opts: {
    * lists. Omitted: `http`, on the bound port.
    */
   publicAddress?: { scheme: 'https' | 'http'; port: number | undefined };
-  /** The control API's port, if known, so a 503 page can spell out the exact `restart` URL. */
-  controlApiPort?: number;
+  /**
+   * Reads the control API's port, if known, so a 503 page can spell out the exact `restart` URL.
+   * Read when a page is drawn: the control API binds after the proxy starts.
+   */
+  controlApiPort?: () => number;
   /**
    * Serve TLS too, with this certificate (or one per hostname, through its `SNICallback`): a
    * connection opening with a TLS handshake gets HTTP/2 or HTTP/1.1 over TLS, by ALPN.
@@ -481,7 +484,7 @@ export async function startDevReverseProxy(opts: {
 
   const restartHint = (name: string) =>
     opts.controlApiPort !== undefined
-      ? `POST http://127.0.0.1:${String(opts.controlApiPort)}/command/service/restart/${name}`
+      ? `POST http://127.0.0.1:${String(opts.controlApiPort())}/command/service/restart/${name}`
       : `POST /command/service/restart/${name} on the control API`;
 
   // `port` (the bound one) is assigned below, before any request can arrive.

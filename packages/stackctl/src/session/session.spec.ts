@@ -10,6 +10,7 @@ import { EventLog, type EventBy } from '../event-log';
 import { stripAnsi } from '../format';
 import { InfraFailedError } from '../infra/session';
 import type { InfraEvent } from '../infra/types';
+import { readRunning, writeRunning } from '../running';
 import type { ServiceGroups, ServiceUsage, UsageReader } from '../service-usage';
 import { sessionEventsPath } from '../session-files';
 import { labelGutter } from './log-layout';
@@ -120,6 +121,8 @@ function setup(opts: {
   interactive?: boolean;
   /** Started by `startStack()`. */
   forked?: boolean;
+  /** The config's `apiPort`: a pinned control port. */
+  apiPort?: number;
 }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-session-')));
   for (const name of Object.keys(opts.services)) {
@@ -135,6 +138,7 @@ function setup(opts: {
     serviceRootDir: 'packages',
     services: opts.services,
     ...(opts.infra ? { infra: opts.infra } : {}),
+    ...(opts.apiPort === undefined ? {} : { apiPort: opts.apiPort }),
   } as unknown as Parameters<typeof defineConfig>[0]);
   const all = Object.values(config.services) as AnyServiceConfig[];
   const selected = all.filter((s) =>
@@ -439,6 +443,52 @@ describe('startup', () => {
     expect(await t.session.closed).toBe(1);
     expect(t.proxy.closed).toBe(true);
     expect(t.order).not.toContain('infra');
+  });
+});
+
+describe('the control port', () => {
+  test('a random port lost before the bind: the record and the proxy follow the bound one', async () => {
+    let nextPort: ((tried: number[]) => number) | undefined;
+    let restartPort: (() => number) | undefined;
+    const t = setup({
+      services: { api: {} },
+      seams: {
+        acquire: () => Promise.resolve(4321),
+        randomPort: (exclude = []) => (exclude.includes(14055) ? 14056 : 14055),
+        startProxy: (controlPort) => {
+          restartPort = controlPort;
+          return Promise.resolve(null);
+        },
+        startControlServer: (o) => {
+          nextPort = o.nextPort;
+          t.server.port = 14055;
+          return Promise.resolve(t.server);
+        },
+      },
+    });
+    writeRunning(t.root, { port: 4321, pid: process.pid });
+    await t.session.start();
+    expect(nextPort?.([4321])).toBe(14055);
+    expect(nextPort?.([4321, 14055])).toBe(14056);
+    expect(readRunning(t.root)?.port).toBe(14055);
+    expect(restartPort?.()).toBe(14055);
+  });
+
+  test('a pinned `apiPort` is never traded: no `nextPort`', async () => {
+    let asked: { port: number; nextPort?: unknown } | undefined;
+    const t = setup({
+      services: { api: {} },
+      apiPort: 4321,
+      seams: {
+        startControlServer: (o) => {
+          asked = o;
+          return Promise.resolve(t.server);
+        },
+      },
+    });
+    await t.session.start();
+    expect(asked?.port).toBe(4321);
+    expect(asked?.nextPort).toBeUndefined();
   });
 });
 

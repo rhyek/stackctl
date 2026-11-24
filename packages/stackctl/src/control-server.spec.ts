@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, afterEach, test, vi } from 'vitest';
@@ -61,6 +62,64 @@ function fakeManager(overrides: Partial<ControlManager> = {}): ControlManager {
     ...overrides,
   };
 }
+
+/** A port held by a listener of this process, as another session's control API would hold it. */
+async function holdPort(): Promise<{ port: number; release: () => Promise<void> }> {
+  const holder = net.createServer();
+  await new Promise<void>((resolve) => holder.listen(0, '127.0.0.1', resolve));
+  return {
+    port: (holder.address() as net.AddressInfo).port,
+    release: () => new Promise((resolve) => holder.close(() => resolve())),
+  };
+}
+
+describe('binding its port', () => {
+  test('a port taken before the bind is traded for the next one `nextPort` picks', async () => {
+    const held = await holdPort();
+    const tried: number[][] = [];
+    try {
+      server = await startControlServer({
+        quitHandler: () => {},
+        port: held.port,
+        nextPort: (ports) => {
+          tried.push([...ports]);
+          return 0;
+        },
+      });
+      expect(server.port).not.toBe(held.port);
+      expect(tried).toEqual([[held.port]]);
+      const res = await fetch(`http://127.0.0.1:${server.port}/query/status`);
+      expect(res.status).toBe(200);
+    } finally {
+      await held.release();
+    }
+  });
+
+  test('gives up after a few ports, all taken', async () => {
+    const held = await holdPort();
+    const nextPort = vi.fn(() => held.port);
+    try {
+      await expect(
+        startControlServer({ quitHandler: () => {}, port: held.port, nextPort }),
+      ).rejects.toMatchObject({ code: 'EADDRINUSE' });
+      expect(nextPort.mock.calls.length).toBeGreaterThan(0);
+      expect(nextPort.mock.calls.length).toBeLessThan(20);
+    } finally {
+      await held.release();
+    }
+  });
+
+  test('without `nextPort` (a pinned port), a taken port fails the start', async () => {
+    const held = await holdPort();
+    try {
+      await expect(
+        startControlServer({ quitHandler: () => {}, port: held.port }),
+      ).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    } finally {
+      await held.release();
+    }
+  });
+});
 
 describe('control-server', () => {
   test('GET /query/status serves identity with null services/config before a session is bound', async () => {
