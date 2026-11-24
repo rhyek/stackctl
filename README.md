@@ -17,6 +17,8 @@ their environment, and shows it all in one place.
   services it needs come with it, started in order and held until they are healthy.
 - **A terminal UI.** One combined, filterable log, with each service's state and memory in
   the footer. Drive it with the keyboard or the mouse.
+- **Readable JSON logs.** Log JSON in every environment: each line is shown as a colored
+  `[LEVEL] message` with its fields listed below it, nested ones and stack traces included.
 - **Built for coding agents.** A headless mode, a localhost control API, an installable skill
   and `llms.txt`.
 - **Infra included.** Point it at your `docker-compose.yaml`: databases and brokers come up,

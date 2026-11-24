@@ -56,7 +56,7 @@ features:
     link: /config/config-file
   - icon: 🖥️
     title: A terminal UI you'll keep open
-    details: "One combined, filterable log, with each service's state and memory in the footer. Drive it with the keyboard or the mouse: click a service, a key hint or a script, and drag to copy."
+    details: "One combined, filterable log, JSON logs formatted for reading, and each service's state and memory in the footer. Drive it with the keyboard or the mouse: click a service, a key hint or a script, and drag to copy."
     link: /guide/terminal-ui
   - icon: 🤖
     title: Built for coding agents

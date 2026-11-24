@@ -41,7 +41,8 @@ The log file always has timestamps.
 Called with each line of the service's output. It returns the text to show.
 
 The default passes plain text through and renders a JSON log as `[LEVEL] message`, with the
-remaining fields indented below. Replace it with one of the `logging` helpers to adjust that
+remaining fields indented below, nested ones included: see
+[JSON logs are formatted for you](../guide/logs.md#json-logs-are-formatted-for-you). Replace it with one of the `logging` helpers to adjust that
 rendering, or with [a function of your own](#writing-your-own) for any other format.
 
 ## The `logging` helpers
@@ -84,6 +85,8 @@ logging.formatter((log) => ({
   },
 }));
 ```
+
+`custom` names top-level fields. A nested field prints under its parent, as it is in the log.
 
 ### Levels
 

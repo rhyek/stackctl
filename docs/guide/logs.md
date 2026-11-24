@@ -23,8 +23,10 @@ shown.
 
 ## JSON logs are formatted for you
 
-Plain text passes through untouched. A line that is a JSON log (Go's `slog`, pino, winston)
-is shown as a colored `[LEVEL] message`, with its other fields listed below:
+Log JSON in every environment and stackctl makes it readable: a service needs no `NODE_ENV`
+branch in its logger and no pretty-printer in development. A line that is a JSON log (Go's
+`slog`, pino, bunyan, winston, zap) is shown as a colored `[LEVEL] message`, with its other
+fields listed below:
 
 ```
 {"time":"2026-07-13T13:53:32Z","level":"INFO","msg":"listening","port":3002}
@@ -36,8 +38,30 @@ is shown as a colored `[LEVEL] message`, with its other fields listed below:
   port: 3002
 ```
 
-So a service can log JSON in every environment, with no `NODE_ENV` branch in its logger. There
-is nothing to configure. To map numeric levels, hide a field or format non-JSON output, see
+Nested objects are listed the same way, one level deeper, and a multi-line string such as a
+stack trace keeps its line breaks:
+
+```
+{"level":"ERROR","msg":"query failed","err":{"type":"Error","message":"connection refused","stack":"Error: connection refused\n    at connect (src/db.ts:12:9)\n    at query (src/db.ts:30:5)"},"table":"users","tags":["db","retry"]}
+```
+
+```
+[ERROR] query failed
+  err:
+    type: Error
+    message: connection refused
+    stack: Error: connection refused
+               at connect (src/db.ts:12:9)
+               at query (src/db.ts:30:5)
+  table: users
+  tags: ["db","retry"]
+```
+
+- **Plain text passes through untouched**, as the service printed it.
+- **An array of plain values stays on one line.** An array of objects is listed as `- ` items.
+- **The whole log is one entry**, so a filter that matches any of its lines shows all of them.
+
+There is nothing to configure. To map numeric levels, hide a field or format non-JSON output, see
 [the `logs` options](../config/logs.md).
 
 ## Timestamps
