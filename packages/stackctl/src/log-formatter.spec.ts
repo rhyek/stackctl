@@ -54,9 +54,9 @@ describe('createFormatter', () => {
       );
     });
 
-    test('preserves property order and renders non-string values as JSON', () => {
-      expect(f('{"level":"INFO","msg":"hi","count":3,"meta":{"a":1}}')).toBe(
-        '[INFO] hi\n  count: 3\n  meta: {"a":1}',
+    test('preserves property order and renders scalar values as JSON', () => {
+      expect(f('{"level":"INFO","msg":"hi","count":3,"ok":true,"none":null}')).toBe(
+        '[INFO] hi\n  count: 3\n  ok: true\n  none: null',
       );
     });
 
@@ -235,6 +235,115 @@ describe('createFormatter', () => {
     });
   });
 
+  describe('nested values', () => {
+    const f = fmt();
+
+    test('expands a nested object into indented properties', () => {
+      const line = JSON.stringify({
+        level: 'INFO',
+        msg: 'request',
+        req: { method: 'GET', url: '/users', query: { page: 2 } },
+      });
+      expect(f(line)).toBe(
+        '[INFO] request\n' +
+          '  req:\n' +
+          '    method: GET\n' +
+          '    url: /users\n' +
+          '    query:\n' +
+          '      page: 2',
+      );
+    });
+
+    test("keeps a nested stack trace's line breaks, aligned under its value", () => {
+      const line = JSON.stringify({
+        level: 'ERROR',
+        msg: 'call failed',
+        err: { type: 'Error', message: 'boom', stack: 'Error: boom\n    at charge (a.ts:42:11)' },
+      });
+      expect(f(line)).toBe(
+        '[ERROR] call failed\n' +
+          '  err:\n' +
+          '    type: Error\n' +
+          '    message: boom\n' +
+          '    stack: Error: boom\n' +
+          '               at charge (a.ts:42:11)',
+      );
+    });
+
+    test('keeps an array of scalars, and empty objects and arrays, inline', () => {
+      const line = JSON.stringify({
+        level: 'INFO',
+        msg: 'm',
+        tags: ['a', 'b'],
+        ids: [1, 2],
+        meta: {},
+        list: [],
+      });
+      expect(f(line)).toBe('[INFO] m\n  tags: ["a","b"]\n  ids: [1,2]\n  meta: {}\n  list: []');
+    });
+
+    test('lists an array of objects as `- ` items', () => {
+      const line = JSON.stringify({
+        level: 'INFO',
+        msg: 'm',
+        rows: [{ id: 1, name: 'a' }, { id: 2 }],
+      });
+      expect(f(line)).toBe(
+        ['[INFO] m', '  rows:', '    - id: 1', '      name: a', '    - id: 2'].join('\n'),
+      );
+    });
+
+    test('lists a mixed array item by item, a multi-line string aligned past its dash', () => {
+      const line = JSON.stringify({
+        level: 'INFO',
+        msg: 'm',
+        items: ['x', 'one\ntwo', { k: 'v' }, [1, 2]],
+      });
+      expect(f(line)).toBe(
+        '[INFO] m\n' +
+          '  items:\n' +
+          '    - x\n' +
+          '    - one\n' +
+          '      two\n' +
+          '    - k: v\n' +
+          '    - [1,2]',
+      );
+    });
+
+    test('expands an array nested in an array', () => {
+      const line = JSON.stringify({ level: 'INFO', msg: 'm', grid: [[{ a: 1 }]] });
+      expect(f(line)).toBe('[INFO] m\n  grid:\n    - - a: 1');
+    });
+
+    test('expands a cause chain at every depth', () => {
+      const line = JSON.stringify({
+        level: 'ERROR',
+        msg: 'm',
+        err: { message: 'outer', cause: { message: 'inner', stack: 'Error: inner\n  at x' } },
+      });
+      expect(f(line)).toBe(
+        '[ERROR] m\n' +
+          '  err:\n' +
+          '    message: outer\n' +
+          '    cause:\n' +
+          '      message: inner\n' +
+          '      stack: Error: inner\n' +
+          '               at x',
+      );
+    });
+
+    test('renames and hides only top-level fields; nested keys print as they are', () => {
+      const f2 = fmt({ fields: { custom: { error: 'err', time: { show: false } } } });
+      const line = JSON.stringify({
+        level: 'INFO',
+        msg: 'm',
+        time: 1,
+        err: { time: 2 },
+      });
+      expect(f2(line)).toBe('[INFO] m\n  error:\n    time: 2');
+    });
+  });
+
   describe('logging.nodejs.pino.formatter', () => {
     test('maps pino numeric levels to canonical levels', () => {
       const f2 = (line: string) => stripAnsi(logging.nodejs.pino.formatter()(line));
@@ -270,6 +379,15 @@ describe('createFormatter', () => {
     test('colors property keys distinctly from their (plain) values', () => {
       expect(createFormatter()('{"level":"info","msg":"hi","count":1}')).toBe(
         `${chalk.green('[INFO]')} hi\n  ${chalk.gray('count:')} 1`,
+      );
+    });
+
+    test('colors nested keys and array dashes like top-level keys', () => {
+      expect(createFormatter()('{"level":"info","msg":"hi","a":{"b":[{"c":1}]}}')).toBe(
+        `${chalk.green('[INFO]')} hi\n` +
+          `  ${chalk.gray('a:')}\n` +
+          `    ${chalk.gray('b:')}\n` +
+          `      ${chalk.gray('-')} ${chalk.gray('c:')} 1`,
       );
     });
   });

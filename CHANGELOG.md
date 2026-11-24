@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.1
+
+### Features
+
+- **JSON logs list nested objects and arrays field by field, and nested stack traces keep their
+  line breaks.** See [docs/guide/logs.md](docs/guide/logs.md#json-logs-are-formatted-for-you).
+
 ## 0.11.0
 
 ### Features

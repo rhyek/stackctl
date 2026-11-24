@@ -3,7 +3,8 @@
 // (override per service with `logs.formatter`). Each output line is parsed as JSON; non-JSON lines
 // (and JSON that isn't an object with a recognizable level/message) are returned untouched. A
 // recognized log renders as a `[LEVEL] message` header — the `[LEVEL]` colored by severity — with
-// the remaining properties listed, indented, on the lines below. stackctl splits that multi-line
+// the remaining properties listed, indented, on the lines below; a nested object or array is
+// expanded the same way, one level deeper at each depth. stackctl splits that multi-line
 // result into separate log lines and groups the indented ones with the header as continuations.
 
 import chalk from 'chalk';
@@ -163,9 +164,62 @@ export const winstonLevels: Record<string, string> = {
   silly: 'TRACE',
 };
 
-/** Render a JSON value for display: strings as-is, everything else via `JSON.stringify`. */
+/** Render a JSON value on one line: strings as-is, everything else via `JSON.stringify`. */
 function renderValue(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+const isScalar = (value: unknown) => value === null || typeof value !== 'object';
+
+/**
+ * Whether a value prints on its key's own line: a scalar (a multi-line string continues below
+ * it), an empty object or array, and an array of scalars none of which is a multi-line string.
+ * Anything else is expanded on the lines below.
+ */
+function isInline(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.every((v) => isScalar(v) && !(typeof v === 'string' && v.includes('\n')));
+  }
+  return isScalar(value) || Object.keys(value as object).length === 0;
+}
+
+/**
+ * The lines of one `name: value` property at `indent`. An inline value follows the key, its
+ * continuation lines aligned under it past the `name: ` gutter (measured on the plain name, since
+ * the printed one carries color codes). A nested object or array goes on the lines below, one
+ * level deeper: an object as properties, an array as `- ` items.
+ */
+function propertyLines(name: string, value: unknown, indent: string): string[] {
+  const key = `${indent}${PROPERTY_KEY_COLOR(`${name}:`)}`;
+  if (isInline(value)) {
+    const gutter = indent.length + `${name}: `.length;
+    return [`${key} ${indentContinuationLines(renderValue(value), gutter)}`];
+  }
+  return [key, ...nestedLines(value, indent + PROPERTY_INDENT)];
+}
+
+/** The lines of a nested object (its properties) or array (its items), at `indent`. */
+function nestedLines(value: unknown, indent: string): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => itemLines(item, indent));
+  }
+  return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) =>
+    propertyLines(k, v, indent),
+  );
+}
+
+/**
+ * The lines of one array item at `indent`: `- ` and the value. A nested item is laid out one level
+ * deeper, and its first line then takes the dash in place of its indent, as YAML writes it.
+ */
+function itemLines(item: unknown, indent: string): string[] {
+  const dash = `${indent}${PROPERTY_KEY_COLOR('-')} `;
+  if (isInline(item)) {
+    return [`${dash}${indentContinuationLines(renderValue(item), indent.length + 2)}`];
+  }
+  const deeper = indent + PROPERTY_INDENT;
+  const [first = '', ...rest] = nestedLines(item, deeper);
+  return [dash + first.slice(deeper.length), ...rest];
 }
 
 /**
@@ -299,12 +353,7 @@ export function createFormatter(config: FormatterConfigInput = {}): (line: strin
       if (custom && !custom.show) {
         continue;
       } // hidden
-      const name = custom ? custom.display : key;
-      // Continuation lines line up under the value, past the `  name: ` gutter — measured on the
-      // plain name, since the printed one carries color codes.
-      const gutter = PROPERTY_INDENT.length + `${name}: `.length;
-      const rendered = indentContinuationLines(renderValue(value), gutter);
-      out.push(`${PROPERTY_INDENT}${PROPERTY_KEY_COLOR(`${name}:`)} ${rendered}`);
+      out.push(...propertyLines(custom ? custom.display : key, value, PROPERTY_INDENT));
     }
     return out.join('\n');
   };
