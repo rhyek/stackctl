@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0
+
+### Features
+
+- **JSON logs that keep their message under `message`, as NestJS's do, show it in the
+  `[LEVEL] message` header.** See [docs/guide/logs.md](docs/guide/logs.md#json-logs-are-formatted-for-you).
+
 ## 0.11.2
 
 ### Fixes

@@ -25,8 +25,8 @@ shown.
 
 Log JSON in every environment and stackctl makes it readable: a service needs no `NODE_ENV`
 branch in its logger and no pretty-printer in development. A line that is a JSON log (Go's
-`slog`, pino, bunyan, winston, zap) is shown as a colored `[LEVEL] message`, with its other
-fields listed below:
+`slog`, pino, bunyan, winston, zap, NestJS) is shown as a colored `[LEVEL] message`, with its
+other fields listed below:
 
 ```
 {"time":"2026-07-13T13:53:32Z","level":"INFO","msg":"listening","port":3002}

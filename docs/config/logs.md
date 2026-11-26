@@ -52,7 +52,7 @@ through untouched.
 
 | Helper                                     | For                                                         |
 | ------------------------------------------ | ----------------------------------------------------------- |
-| `logging.formatter(config?)`               | The default. Go `slog`, and anything with string levels.    |
+| `logging.formatter(config?)`               | The default. Go `slog`, NestJS, anything with string levels. |
 | `logging.nodejs.pino.formatter(config?)`   | pino and bunyan: maps their numeric levels (`30` → `INFO`). |
 | `logging.nodejs.winston.formatter(config?)` | winston: reads its `message` key and level names.          |
 
@@ -62,7 +62,7 @@ through untouched.
 logging.formatter({
   fields: {
     level: 'severity', // the JSON key holding the level. Default: 'level'
-    message: 'text', // the JSON key holding the message. Default: 'msg'
+    message: 'text', // the message's key. Default: 'msg', else 'message'
     custom: {
       time: { show: false }, // hide a field
       timestamp: 'ts', // show the field `ts` as `timestamp`
