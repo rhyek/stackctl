@@ -141,6 +141,9 @@ function appLook(s: AppService): Look {
         : onItsWay(WARN_COLOR, 'running, not ready');
     case 'restarting':
       return onItsWay(WARN_COLOR, 'restarting');
+    case 'failed':
+      // Its process may still run, but a start hook failed: drawn as a crash is.
+      return look('○', DANGER_COLOR, 'failed');
     case 'stopped':
     case 'crashed':
       if (s.exitCode !== null) {
@@ -191,7 +194,12 @@ export function hasBlinkingDot(snapshot: SessionSnapshot): boolean {
 /** The services row's entries, app services then infra: the order `focus-index` counts in. */
 export function entriesOf(snapshot: SessionSnapshot): Entry[] {
   return [
-    ...snapshot.services.map((s): Entry => ({ kind: 'app', name: s.name, state: s.state })),
+    ...snapshot.services.map((s): Entry => ({
+      kind: 'app',
+      name: s.name,
+      state: s.state,
+      ...(s.stopping ? { stopping: true } : {}),
+    })),
     ...snapshot.infra.map((i): Entry => ({ kind: 'infra', name: i.name, state: i.state })),
   ];
 }

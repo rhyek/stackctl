@@ -1,5 +1,5 @@
 ---
-description: The infra option - run the databases, caches and brokers in docker-compose.yaml before your services, with readiness, per-profile Compose projects, enabled, and callbacks for migrations and seeds.
+description: The infra option - run the databases, caches and brokers in docker-compose.yaml before your services, with readiness, per-profile Compose projects, enabled, and what lifecycle hooks get only on infra - fresh for seeding, control to drive the session, compose, the project's hooks and reset.
 ---
 
 # Infra
@@ -62,8 +62,9 @@ stackctl --profile test infra start   # the test profile's own containers
 See [`stackctl infra`](../reference/cli.md#stackctl-infra).
 
 > [!WARNING]
-> Use `stackctl infra docker-compose …`, not a bare `docker compose …`. stackctl names the
-> Compose project per profile, so a bare command looks at a different, empty project.
+> Use `stackctl infra docker-compose …`, not a bare `docker compose …`. stackctl hands Compose
+> the profile's environment and, unless the repo [names the project](#profiles), a project name
+> per profile, so a bare command can look at a different, empty project.
 
 ## Options
 
@@ -74,8 +75,10 @@ infra: {
     readyTimeout: 300_000,
     services: {
       db: {
-        afterReady: async ({ exec }) => {
-          await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
+        lifecycle: {
+          afterReady: async ({ exec }) => {
+            await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
+          },
         },
       },
       mail: { port: 21054, urls: [''] },
@@ -89,6 +92,7 @@ infra: {
 | -------------- | ---------------------- | ----------------------------------------------------------------------- |
 | `file`         | Compose's own discovery | The compose file, relative to the workspace.                           |
 | `readyTimeout` | `300000` (5 minutes)   | How long `start` waits for the services to be ready, in ms. `--wait-timeout` overrides it. |
+| `lifecycle`    | none                   | Hooks for the whole project. See [The project's hooks](#the-projects-hooks). |
 | `services`     | none                   | Per-service options, keyed by Compose service name.                     |
 
 **Every service in the compose file runs**, listed under `services` or not. List one to give
@@ -103,7 +107,7 @@ Per-service options:
 | [`port`](#port-and-urls)      | Its host port, for the reverse proxy and footer links.                   |
 | [`urls`](#port-and-urls)      | Footer links.                                                            |
 | `publicOrigin`                | Overrides parts of its public origin. See [`publicOrigin`](./urls.md#publicorigin). |
-| [`beforeStart`, `afterReady`, `beforeDestroy`, `afterDestroy`](#callbacks) | Your setup and teardown steps. |
+| [`lifecycle`](#callbacks)     | Your setup and teardown steps, the [lifecycle hooks](./lifecycle.md): `beforeStart`, `afterStart`, `afterReady`, `beforeStop`, `afterStop`, `beforeDestroy`, `afterDestroy`. |
 
 ### The compose file
 
@@ -182,65 +186,52 @@ Mailpit's web UI is then at `http://mail.localhost:4000`, with a `mail ↗` link
 
 ## Callbacks
 
-Async functions that run around stackctl's own steps:
-
-| Callback        | Runs                                                                                          |
-| --------------- | --------------------------------------------------------------------------------------------- |
-| `beforeStart`   | On every start, before the services are started.                                              |
-| `afterReady`    | On every start, once the service is ready, **including when it was already running**.         |
-| `beforeDestroy` | Before the service's containers and data are removed (`destroy`, `reset`).                    |
-| `afterDestroy`  | After they are removed. For state Compose can't see, such as a bind-mounted directory.        |
-
-`afterReady` runs at every session start on purpose: pull a branch with new migrations, start
-stackctl, and they are applied. So what it runs must be idempotent. To skip it on some runs, read
-[`trigger`](#what-started-the-run).
+An infra service's `lifecycle` takes the [lifecycle hooks](./lifecycle.md): `beforeStart`,
+`afterStart`, `afterReady`, `beforeStop`, `afterStop`, `beforeDestroy` and `afterDestroy`. That
+page has when each runs and in what order, what it receives, what a failure does and how hooks
+share `data`. What is only about infra is here.
 
 ```ts
 db: {
-  afterReady: async ({ exec, fresh }) => {
-    // every time
-    await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
-    if (fresh) {
-      // only into a new database
-      await exec('pnpm', ['seed'], { cwd: 'libs/db' });
-    }
+  lifecycle: {
+    afterReady: async ({ exec, fresh }) => {
+      // every time
+      await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
+      if (fresh) {
+        // only into a new database
+        await exec('pnpm', ['seed'], { cwd: 'libs/db' });
+      }
+    },
   },
 },
 ```
 
-A callback that throws fails its service. A failing `beforeDestroy` stops the run before
-anything is removed, and a failing `beforeStart` before anything is started.
+- **`afterStart` and `afterReady` run on every start, including when the service was already
+  running.** That is on purpose: pull a branch with new migrations, start stackctl, and they are
+  applied. So what `afterReady` runs must be idempotent. To skip it on some runs, read
+  [`trigger`](#what-started-the-run).
+- **Which run starts, stops or destroys, and the order of its hooks**, are on
+  [Lifecycle hooks](./lifecycle.md#the-compose-project).
+- **`afterDestroy` is for state Compose can't see**, such as a bind-mounted directory.
 
 ### What a callback receives
 
+The [lifecycle context](./lifecycle.md#what-a-hook-receives), and:
+
 | Field          | What it is                                                                                  |
 | -------------- | ------------------------------------------------------------------------------------------- |
-| `exec`         | `exec(command, args?, opts?)`: runs a command with the profile's environment.               |
-| `compose`      | `compose(args, opts?)`: runs `docker compose <args>` on this project.                       |
-| `log`          | `log(message)`: writes a line to the infra output.                                          |
-| `fresh`        | `afterReady` only. `true` when this run created the service's data.                         |
 | `trigger`      | What started this run. See [What started the run](#what-started-the-run).                    |
-| `profile`      | The active profile.                                                                         |
-| `envs`         | The profile's workspace environment, which `exec` and `compose` give their commands.        |
-| `tokens`       | The config's top-level `tokens`.                                                            |
-| `config`       | The resolved config, read-only: every service's `port` and `publicOrigin`.                  |
+| `compose`      | `compose(args, opts?)`: runs `docker compose <args>` on this project.                       |
+| `fresh`        | `afterReady` only. `true` when this run created the service's data. See [Seeding with `fresh`](#seeding-with-fresh). |
 | `service`      | This infra service: `{ name, kind, port, route, publicOrigin }`.                            |
 | `buildAddress` | Builds a URL from the service's origin. See [`buildAddress`](./urls.md#buildaddress).        |
-| `workspaceDir` | The workspace root, absolute.                                                               |
 | `control`      | A client for the running session, or `undefined`. See [Driving the session](#driving-the-session). |
-| `data`         | An object the service's callbacks share for one run, empty when it starts.                  |
 
-`exec` and `compose` take `{ cwd?, env?, reject? }` and resolve with
-`{ exitCode, stdout, stderr }`.
-
-- **`cwd`** is relative to the workspace root, the default.
-- **A non-zero exit rejects**, failing the service, unless you pass `reject: false`.
-- **A command that can't start** (not installed, or a `cwd` that doesn't exist) exits 127, and
-  the service's output says why.
-- **Their environment is `envs`**: the workspace root's variables and `STACKCTL_PROFILE`. A
-  variable from a `.env` file below the root isn't there. Pass it with `env`.
-- **Use them for anything a callback runs or prints.** A child process you spawn yourself with
-  inherited stdio draws over the terminal UI.
+- **`compose` takes the options [`exec`](./lifecycle.md#exec) takes**, and resolves as it
+  does, with the profile's project name and compose file applied.
+- **`exec` and `compose` run with the workspace's [`envs`](./lifecycle.md#what-a-hook-receives).**
+  A variable from a `.env` file below the root isn't there: pass it with `env`.
+- **Their output is in the infra output**, under the service's name.
 
 ### Seeding with `fresh`
 
@@ -262,32 +253,25 @@ Nothing is remembered between runs. If `afterReady` fails on the fresh run, befo
 
 ### What started the run
 
-`trigger` names the run that is calling the callback:
-
-| `trigger` | The run                                                  | Its callbacks                    |
-| --------- | -------------------------------------------------------- | -------------------------------- |
-| `session` | A dev session's start, bringing its infra up.            | `beforeStart`, `afterReady`      |
-| `start`   | `infra start`, a session's `s` key, or the control API.  | `beforeStart`, `afterReady`      |
-| `restart` | `infra restart`, `r`, or the control API.                | `beforeStart`, `afterReady`      |
-| `reset`   | `infra reset`, `R`, or the control API.                  | All four                         |
-| `destroy` | `infra destroy`.                                         | `beforeDestroy`, `afterDestroy`  |
-
-To migrate at a session's start only into new data:
+`trigger` names the run that is calling the callback: `session`, `start`, `stop`, `restart`,
+`reset` or `destroy`, each callback getting only the runs it is part of. The
+[`trigger` table](./lifecycle.md#trigger) lists them. To migrate at a session's start only into
+new data:
 
 ```ts
 db: {
-  afterReady: async ({ exec, fresh, trigger }) => {
-    if (fresh || trigger !== 'session') {
-      await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
-    }
+  lifecycle: {
+    afterReady: async ({ exec, fresh, trigger }) => {
+      if (fresh || trigger !== 'session') {
+        await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
+      }
+    },
   },
 },
 ```
 
 - **A pulled migration then waits for an explicit start:** `stackctl infra start -s db` runs
   `afterReady` on the running service, without restarting it.
-- **Each callback's `trigger` has only its own runs**, so `trigger === 'session'` in a
-  `beforeDestroy` doesn't compile.
 
 ### Driving the session
 
@@ -297,17 +281,19 @@ an infra service's data. Stop it before a reset, start it again after:
 
 ```ts
 db: {
-  beforeDestroy: async ({ trigger, control, data }) => {
-    const status = await control?.query.status();
-    if (trigger === 'reset' && status?.services?.api === 'running') {
-      data.apiWasRunning = await control?.command.service.stop('api');
-    }
-  },
-  afterReady: async ({ exec, control, data }) => {
-    await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
-    if (data.apiWasRunning) {
-      await control?.command.service.start('api');
-    }
+  lifecycle: {
+    beforeDestroy: async ({ trigger, control, data }) => {
+      const status = await control?.query.status();
+      if (trigger === 'reset' && status?.services?.api === 'running') {
+        data.apiWasRunning = await control?.command.service.stop('api');
+      }
+    },
+    afterReady: async ({ exec, control, data }) => {
+      await exec('pnpm', ['migrate'], { cwd: 'libs/db' });
+      if (data.apiWasRunning) {
+        await control?.command.service.start('api');
+      }
+    },
   },
 },
 ```
@@ -317,6 +303,41 @@ db: {
   This acts on a reset made while the session runs.
 - **Leave the callback's own infra service alone**, and don't `quit()` from a callback.
 
+## The project's hooks
+
+The provider's own `lifecycle` takes the same hooks, once per run, around every service's: its
+`before…` before theirs, its `after…` after theirs. For setup that belongs to the Compose project
+rather than to one service:
+
+```ts
+infra: {
+  'docker-compose': {
+    lifecycle: {
+      beforeStart: async ({ config, exec }) => {
+        const name = config.infra?.['docker-compose']?.projectName;
+        // a network an older script made by hand, for Compose to own
+        await exec('node', [
+          'scripts/adopt-network.ts',
+          `${name}_default`,
+        ]);
+      },
+    },
+    services: {/* … */},
+  },
+},
+```
+
+- **They run on the same runs as a service's hooks, around them.** The
+  [order](./lifecycle.md#examples) is on the lifecycle page.
+- **They run even when no service is enabled**, since what they do is about the project. A
+  failure then fails the command itself.
+- **They get the [callback context](#what-a-callback-receives) without the service**: no
+  `service`, `buildAddress`, `fresh` or `control`. `compose`, `config` (with the profile's
+  `projectName`) and `data` are there.
+- **A failure is reported on every service of the run**, with the project's key:
+  `docker-compose afterStart failed: <message>`. A failed start hook fails them; after a stop or
+  a removal they are reported stopped or destroyed, but with the message.
+
 ## Profiles
 
 stackctl sets the Compose project name to `<workspace directory>-<profile>`:
@@ -324,10 +345,19 @@ stackctl sets the Compose project name to `<workspace directory>-<profile>`:
 volumes and network, so `stackctl infra start` and `stackctl --profile test infra start` run
 side by side on the ports from their own `.env.<profile>` files.
 
-To choose the name yourself, set `COMPOSE_PROJECT_NAME` in a `.env` file. Set where every
-profile reads it (`.env`, `.env.local`), it makes every profile one Compose project: a
-[`reset`](#reset) or a `destroy` with nothing named then acts on every profile's infra. Set it
-in `.env.<profile>` to keep each profile its own.
+To choose the name yourself, set `COMPOSE_PROJECT_NAME` in a `.env` file or give the compose
+file a top-level `name:`. stackctl uses the name as it is, with no profile added, and
+`COMPOSE_PROJECT_NAME` wins over `name:`.
+
+- **One name for every profile makes them one Compose project**: a [`reset`](#reset) or a
+  `destroy` with nothing named then acts on every profile's infra. That is a `name:` without
+  the profile in it, or `COMPOSE_PROJECT_NAME` in a file every profile reads (`.env`,
+  `.env.local`).
+- **To keep each profile its own**, set `COMPOSE_PROJECT_NAME` in `.env.<profile>`, or put the
+  profile in the name: `name: shop-${STACKCTL_PROFILE:-development}`.
+- **A repo already run with `docker compose`** has containers under its directory's name. With
+  no name chosen, stackctl starts a new project beside them, and the old containers keep their
+  ports. Run `docker compose down` first, or keep them with `name: <directory>`.
 
 A stackctl profile is not a Compose profile: stackctl passes no `--profile` to Compose.
 
@@ -338,10 +368,9 @@ stackctl infra reset                 # the whole profile's infra, clean
 stackctl infra reset -s db           # db alone
 ```
 
-- **With nothing named, the profile's whole Compose project is reset**: every enabled service's
-  `beforeDestroy`, the project removed with its volumes and network, disabled services' data
-  included, then `afterDestroy` and `beforeStart`, and the enabled services started with
-  `afterReady` and `fresh: true`.
+- **With nothing named, the profile's whole Compose project is reset**: the destroy hooks, the
+  project removed with its volumes and network, disabled services' data included, then the
+  start hooks, and the enabled services started, with `fresh: true` in `afterReady`.
 - **With services named**, those services: their containers and the volumes they mount, with
   the same callbacks. A volume a disabled service also uses goes too.
 - **On infra that doesn't exist yet**, whole or in part, it starts it, fresh.

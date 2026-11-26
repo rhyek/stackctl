@@ -26,8 +26,8 @@ reference page with the details.
 - **Don't pass `--kill-others` or `killOthers: true`** unless the user said to.
 - **Don't use `stackctl start --detach`.** It is for CI and is refused for an agent.
 - **`stackctl infra reset` and `stackctl infra destroy` delete data.** Only on request.
-- **Use `stackctl infra docker-compose …`**, never a bare `docker compose …`, which talks to
-  a different Compose project.
+- **Use `stackctl infra docker-compose …`**, never a bare `docker compose …`, which misses
+  the profile's environment and, unless the repo names the project, its project.
 - **Write `stackctl`, never its alias `sctl`.** Guide pages type `sctl`; permission rules and
   scripts match the full name.
 
@@ -40,7 +40,7 @@ reference page with the details.
    | keys'`. The key is the name `-s` and the control API take. It need not match the directory.
 3. **Ask stackctl:** `stackctl --profile development status` says whether the profile's session
    runs, each service's state and readiness, and the last commands that acted on it. With
-   `--json` it has the same for `jq`: `.status.services`, `.status.ready`. See
+   `--json` it has the same for `jq`: `.status.services`, `.status.ready`, `.status.errors`. See
    [`stackctl status`](../reference/cli.md#stackctl-status).
 
 | `services.<name>` | Meaning                                                                    |
@@ -48,7 +48,8 @@ reference page with the details.
 | `running`         | Its process is live. `ready.<name>` says whether it passes its healthcheck. |
 | `waiting`         | Held back by a service it waits for.                                       |
 | `restarting`      | On its way back up.                                                        |
-| `stopped`         | Not running: it exited, crashed or was never started.                      |
+| `stopped`         | Not running: it exited, crashed or was never started. `status` prints why when its `beforeStart` failed. |
+| `failed`          | Its process is live, but its [`afterStart` or `afterReady` failed](../config/lifecycle.md): never ready until restarted. `status` prints why. |
 | not a key         | Configured, but not part of this session.                                  |
 
 No services yet means the session is still starting its infra. Check again in a few seconds.
@@ -84,8 +85,8 @@ stackctl --profile development --headless -s web
 1. **Run it with your harness's background-task tool**, so the session ends when the task or
    your conversation does. Never with `&`, `nohup` or `setsid`.
 2. **Wait until it is healthy:** `stackctl --profile development wait`. It exits `0` once the
-   services and the infra are up, and `1` with the reason when a service stops while starting:
-   read the log. See [`stackctl wait`](../reference/cli.md#stackctl-wait).
+   services and the infra are up, and `1` with the reason when a service stops while starting
+   or a lifecycle hook fails: read the log. See [`stackctl wait`](../reference/cli.md#stackctl-wait).
 3. **Stop it** when done: `stackctl --profile development stop`, or stop the background task.
 
 The config's infra comes up first on its own, and stays up after the session ends. For an
@@ -127,9 +128,11 @@ it only on a session you started, or when asked.
 
 ## A service is down
 
-1. **Read its state**, as in [Is it running?](#is-it-running): `stopped`, or `running` but
-   not ready. A dev script that watches its files, such as `node --watch`, outlives its app:
-   when the app exits it stays `running` and waits for an edit.
+1. **Read its state**, as in [Is it running?](#is-it-running): `stopped`, `failed`, or
+   `running` but not ready. A service one of its start hooks failed, and one `waiting` behind
+   it, come with the hook's error in `status`; one still running a hook, with the hook's name.
+   A dev script that watches its files, such as `node --watch`, outlives its app: when the app
+   exits it stays `running` and waits for an edit.
 2. **Find why it stopped:** `stackctl --profile development logs | grep '\[api *\]' | grep -iE
    'error|exception'`. A crash prints its error first, then its stack and anything it dumps, so
    its last lines rarely say why.
@@ -251,6 +254,23 @@ To add a service to stackctl:
 4. **Prefer paths to full URLs** (`'/health'`, `'/admin'`), and a callback only for a value
    that depends on the environment. Config strings are not interpolated.
 5. **Check it:** `stackctl --profile development show-config | jq '.services["my-service"]'`.
+
+## Add a step to every start
+
+Put it in the [lifecycle hook](../config/lifecycle.md) of the step it belongs to:
+
+| The step                                             | Where                                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------------------------ |
+| A migration or seed of one infra service             | That service's [`afterReady`](../config/infra.md#callbacks)              |
+| Setup of the Compose project as a whole              | [`infra['docker-compose'].lifecycle.beforeStart`](../config/infra.md#the-projects-hooks) |
+| Codegen or setup one application service needs       | That service's [`beforeStart`](../config/services.md#lifecycle)          |
+| Something to do once a service answers, or before it stops | Its `afterReady` or `beforeStop`                                   |
+| Tidying the checkout, whatever the profile or infra  | [`session.lifecycle.beforeStart`](../config/config-file.md#the-sessions-hooks) |
+
+- **Run what it runs with its `exec`**, so its output reaches stackctl.
+- **A hook that fails leaves its reason in `status`.** Fix the cause, then
+  `stackctl service restart -s <service>`. A session keeps the config it loaded, so a fix to the
+  hook itself needs the session started again.
 
 ## Apps stackctl doesn't manage
 

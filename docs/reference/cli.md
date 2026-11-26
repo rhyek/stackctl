@@ -112,7 +112,8 @@ stackctl --profile test start --detach -s web
 ```
 
 Starts a headless session with no tie to the terminal, waits until the infra and every service
-are healthy, prints one line and exits `0`, leaving the session running:
+are ready, and the session's own `afterStart` and `afterReady` [hooks](../config/lifecycle.md)
+have finished, prints one line and exits `0`, leaving the session running:
 
 ```
 test session ready: pid 4242, control API on 14012, log /repo/node_modules/.stackctl/profiles/test/sessions/1794164978752/logs.txt
@@ -155,8 +156,9 @@ stackctl stop                # the session of the resolved profile
 stackctl --profile test stop
 ```
 
-Asks the profile's session to quit and waits for its services to stop. A session that doesn't
-exit in time is force-killed with its process tree. Exits `0` when there was nothing to stop
+Asks the profile's session to quit and waits for its services to stop and its
+[stop hooks](../config/lifecycle.md) to run. A session that doesn't exit in time
+is force-killed with its process tree. Exits `0` when there was nothing to stop
 (`No <profile> stackctl session is running.`), and `1` if the session is still running.
 
 Other profiles' sessions and [infra](../config/infra.md) are never touched.
@@ -175,15 +177,21 @@ stackctl --profile test stop
 ```
 
 Waits for the profile's session to start, then until its services and the infra are up and
-healthy, as [`startStack()`](./sdk.md#startstack) waits. Prints the session's pid, control API
+ready, and the session's own `afterStart` and `afterReady` [hooks](../config/lifecycle.md) have
+finished, as [`startStack()`](./sdk.md#startstack) waits. Prints the session's pid, control API
 port and log, and exits `0`.
 
 | Option                | What it does                                                         |
 | --------------------- | -------------------------------------------------------------------- |
 | `--timeout <seconds>` | How long to wait, from the start to ready. Default `300`.            |
 
-- **Exits `1` with the reason** when a service stops while starting, the session ends, or the
-  timeout passes. With no session by then, it says none started.
+- **Exits `1` with the reason** when a service stops while starting, a
+  [start hook failed](../config/lifecycle.md) a service or one it waits on, the
+  session's start fails, the session ends, or the timeout passes: it then names the hook a
+  service still runs.
+- **A session whose start failed since `wait` began** fails it at once, with the session's
+  reason. With no session by the timeout, it says none started, and why the last one failed to
+  start if it did.
 - **A service with `autostart: false`** isn't waited on, since it stays stopped.
 - **Read-only:** it never starts or stops anything.
 
@@ -219,13 +227,25 @@ A service waiting for its dependencies is left to start once they're ready: `sta
 `restart` refuse it and exit `1`.
 
 All take `-s, --service <service>` and `-t, --tag <tag>`, repeatable, and at least one of
-them. `start` and `restart` wait until the services are ready, up to `--wait-timeout <s>`
-(default `300`), and exit `1` if one isn't. For infra services, use
-[`stackctl infra`](#stackctl-infra).
+them. `start` and `restart` wait until the services are ready, and exit `1` if one isn't.
+`--wait-timeout <s>` (default `300`) bounds the whole command, the time a start waits behind a
+stop's hooks included. For infra services, use [`stackctl infra`](#stackctl-infra).
 
 - **`-s` and `-t` pick services as on [`start`](#stackctl-start).**
 - **`start` and `restart` refuse a service named with `-s` that has no dev command**, and
   leave out one only a tag matched.
+- **A service one of its start hooks failed fails the wait at once**, with the hook's error and
+  the command to restart it. `start` of a `failed` one does nothing and exits `1`:
+  `api is running, but failed: afterReady failed: boom. Run stackctl service restart -s api once it is fixed; a change to stackctl.config.ts needs a new session.`
+  One whose `beforeStart` failed was not started:
+  `api failed to start: beforeStart failed: boom. …`.
+- **`stop` waits for the service's stop hooks**, however long they take, and names the one it
+  waits for: `api's beforeStop is still running: the stop goes on once it has finished. To
+  abandon the hook, stop the service again: stackctl service stop -s api`.
+- **`stop` of a service still running a hook of its own
+  [abandons](../config/lifecycle.md) that hook**:
+  `stopped api: its beforeStop was still running, and was abandoned`. A stop is accepted during
+  a restart too.
 
 ## `stackctl status`
 
@@ -251,7 +271,22 @@ last commands
 ```
 
 - **The session** is the profile's running one, checked as
-  [Finding the port](./control-api.md#finding-the-port) does. Without one it says so.
+  [Finding the port](./control-api.md#finding-the-port) does. One whose own `afterStart` or
+  `afterReady` is still to finish reads `running, its afterReady still to finish`, and one whose
+  start failed `development session: failed to start: session afterReady failed: <message> (…)`.
+- **Without a session it says so**, and why the last one failed to start, if it did:
+  `The last one failed to start (today 11:41:53): session beforeStart failed: <message>`
+  (`lastSessionError` in `--json`).
+- **A service one of its start hooks failed** shows why:
+  `api  failed, not ready: afterReady failed: boom` after its `afterStart` or `afterReady`,
+  `api  stopped: beforeStart failed: boom` after its `beforeStart`, and a service waiting on it
+  `web  waiting, not ready: waiting for api, which failed: …`.
+- **A service still running a hook of its own** shows which:
+  `api  running, not ready: its afterReady is still running`. One whose `beforeStop` still runs
+  reads `stopping`.
+- **A restart a stop came before** reads `cancelled, 0.2s`.
+- **An infra command whose hook failed** says which service reached its state anyway:
+  `failed, 2.0s (db stopped, but a hook failed)`.
 - **The last commands** are the last 10 commands and lifecycle entries of the session's event log,
   or the latest session's, each command's two lines as one row. See [Events](./events.md).
 - **Read-only, and exits `0`** with a session or without.
@@ -290,8 +325,11 @@ are applied. It is the same object a session reports as `config` on
 | `infra`         | Per provider: the compose `file`, the profile's `projectName`, and each service's `enabled`, `tags`, `port`, `urls` and `publicOrigin`. |
 | `reverseProxy`  | Its `port`, `tls`, `publicAddress` and `routes`.                                       |
 | `envFiles`      | The `.env` filenames the profile looks for in each directory, in load order. A service's own are on the service. |
+| `workspaceDir`  | The workspace root, absolute.                                                          |
+| `session`       | With a `session` in the config: `{ "lifecycle": {} }`.                                 |
 
-Functions (`logs.formatter`, infra callbacks) have no JSON form and are left out.
+Functions (`logs.formatter`, the [`lifecycle` hooks](../config/lifecycle.md)) have no JSON form
+and are left out, so a `lifecycle` prints as `{}`.
 
 ## `stackctl exec` and `stackctl run`
 
@@ -416,7 +454,11 @@ is done, and none disturbs a running session.
   services to be ready, over the config's [`readyTimeout`](../config/infra.md#options).
 - **A service with no named volume keeps its data in its container**, so `stop` and `restart`
   lose it, and its next start is [`fresh`](../config/infra.md#seeding-with-fresh).
-- **Exits `0`** when every service reached the state the subcommand names, else `1`.
+- **Exits `0`** when every service reached the state the subcommand names and no
+  [lifecycle hook](../config/lifecycle.md) failed, else `1`.
+- **A stop hook that fails doesn't hold the stop back**: `db  stopped, but beforeStop failed:
+  boom`, and a `restart` still starts the service. A failed `afterDestroy` leaves the removal
+  done (`db  destroyed, but afterDestroy failed: boom`), and a `reset` starts nothing.
 - **`start` runs `afterReady` even for a service already running**, so it applies new
   migrations to a database that is up.
 - **`reset` here is not `stackctl reset`**, which deletes the profile's session state and leaves

@@ -1,10 +1,13 @@
 import { type AnyServiceConfig, getRegisteredPackages } from '../config';
 import type { SessionStatus } from '../control-client';
+import { currentEventsPath, sessionEndIn } from '../event-log';
 import { type FoundSession, findSession, unresponsiveMessage } from '../find-session';
 import { definesDevScript } from '../scripts';
 import { writeSdkResult } from '../sdk-result';
+import { sessionLogPath } from '../session-files';
 import { waitUntilHealthy } from '../stack';
 import { findConfigPath } from '../workspace-root';
+import { when } from './status';
 import { type StopTarget, activeTarget, noSessionLine } from './stop';
 import { loadedConfigOrExit } from './workspace';
 
@@ -40,6 +43,8 @@ export interface WaitContext {
   log?: (line: string) => void;
   error?: (line: string) => void;
   pollMs?: number;
+  /** When this wait began, in ms: when its process started, unless given. */
+  since?: number;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -54,6 +59,33 @@ function servicesThatStart(status: SessionStatus, services: AnyServiceConfig[]):
     const service = byName.get(name);
     return service !== undefined && definesDevScript(service) && service.autostart !== false;
   });
+}
+
+/** The profile's latest session, when its start failed: why, when, and its log. */
+interface FailedStart {
+  error: string;
+  /** When it ended, in ms. */
+  at: number;
+  /** As `status` dates it: `today 11:41:53`. */
+  when: string;
+  logFile: string;
+}
+
+/**
+ * How the profile's latest session ended, when no session runs and its start failed: read from
+ * its event log, which outlives it. `null` when it ended any other way, or left no end.
+ */
+function lastFailedStart(root: string, profile: string): FailedStart | null {
+  const end = sessionEndIn(currentEventsPath(root, profile));
+  if (end?.cause !== 'error') {
+    return null;
+  }
+  return {
+    error: end.error ?? 'see its log',
+    at: Date.parse(end.time),
+    when: when(end.time),
+    logFile: end.sessionId === null ? 'its log' : sessionLogPath(root, profile, end.sessionId),
+  };
 }
 
 /** A ready session, as `wait` and the SDK's `attach()` hand it on. */
@@ -82,6 +114,17 @@ export async function awaitSessionReady(
   const timeoutMs = opts.timeoutS * 1000;
   const deadline = Date.now() + timeoutMs;
 
+  // A session that fails its start is gone at once, leaving why in its event log. One that ended
+  // since this wait began is the one it waits for; an earlier one may be an older session, so it
+  // is only named if no session comes.
+  const since = ctx.since ?? Date.now() - Math.round(process.uptime() * 1000);
+  const failedToStart = (failed: FailedStart) =>
+    `stackctl: the ${profile} session failed to start: ${failed.error}. See ${failed.logFile}`;
+  const lastOne = (failed: FailedStart | null) =>
+    failed
+      ? `the last one failed to start (${failed.when}): ${failed.error}. See ${failed.logFile}`
+      : null;
+
   // Until the session answers with its services: it may not have written its record yet, nor
   // started its control API, nor brought up its infra.
   let seen: SessionStatus | null = null;
@@ -99,20 +142,30 @@ export async function awaitSessionReady(
         break;
       }
     } else if (found.kind === 'none' && seen !== null) {
+      const failed = lastFailedStart(ctx.root, profile);
       return {
-        error: `stackctl: the ${profile} session ended while starting; see ${seen.logFile ?? 'its log'}`,
+        error: failed
+          ? failedToStart(failed)
+          : `stackctl: the ${profile} session ended while starting; see ${seen.logFile ?? 'its log'}`,
       };
     } else if (found.kind === 'none' && !opts.waitForStart) {
-      return { error: noSessionLine(ctx.target) };
+      const last = lastOne(lastFailedStart(ctx.root, profile));
+      return { error: `${noSessionLine(ctx.target)}${last ? ` ${last.charAt(0).toUpperCase()}${last.slice(1)}` : ''}` }; // oxfmt-ignore
     } else if (found.kind === 'unresponsive' && !opts.waitForStart) {
       return { error: `stackctl: ${unresponsiveMessage(found, profile)}` };
+    } else if (found.kind === 'none') {
+      const failed = lastFailedStart(ctx.root, profile);
+      if (failed && failed.at >= since) {
+        return { error: failedToStart(failed) };
+      }
     }
     if (Date.now() >= deadline) {
+      const last = found.kind === 'none' ? lastOne(lastFailedStart(ctx.root, profile)) : null;
       return {
         error:
           found.kind === 'unresponsive'
             ? `stackctl: ${unresponsiveMessage(found, profile)}`
-            : `stackctl: no ${profile} session started within ${String(opts.timeoutS)}s`,
+            : `stackctl: no ${profile} session started within ${String(opts.timeoutS)}s${last ? `; ${last}` : ''}`,
       };
     }
     await sleep(ctx.pollMs ?? POLL_MS);

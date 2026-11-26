@@ -664,6 +664,18 @@ export const tasks: Record<string, Task> = {
       return /stackctl\b[^\n]*(--detach|--headless)|startStack\(/.test(text);
     },
   },
+  'stop-step': {
+    state: 'healthy',
+    kind: 'answer',
+    prompt:
+      'Whenever I shut the dev stack down, I want the dev database dumped to backup.sql first. Set that up.',
+    pass: 'a `beforeStop` lifecycle hook in `stackctl.config.ts`',
+    fail: 'a wrapper script, a shell trap, or a script chained in `package.json`',
+    passes: (run) => {
+      const text = [...run.steps.map((step) => step.content ?? ''), run.answer].join('\n');
+      return /\bbeforeStop\b/.test(text);
+    },
+  },
   'control-frontend': {
     state: 'healthy',
     kind: 'control',

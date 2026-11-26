@@ -1,5 +1,5 @@
 ---
-description: Every option of a service in stackctl.config.ts - port, healthcheck and readiness, deps, command, urls, autostart, tags, its own env files and variables, tokens, logs, color and directory.
+description: Every option of a service in stackctl.config.ts - port, healthcheck and readiness, deps, command, urls, autostart, tags, its own env files and variables, tokens, logs, color, directory and its lifecycle hooks.
 ---
 
 # Services
@@ -50,6 +50,7 @@ Every option is optional. `{}` is a valid service: it runs the `dev` script in
 | [`logs`](#logs)                 | inherits              | Timestamps and log formatting for this service.    |
 | [`color`](#color)               | assigned              | The color of its log label.                        |
 | [`publicOrigin`](#publicorigin) | from its route        | Where a browser reaches it, set part by part.      |
+| [`lifecycle`](#lifecycle)       | none                  | Steps of your own around its start and stop.       |
 
 ## `port`
 
@@ -88,7 +89,8 @@ web: { port: 3000, healthcheck: { url: '/', timeout: 5000 } },
 - **Probing** starts moments after the service does and backs off to one probe every couple
   of seconds.
 
-A service with no `healthcheck` counts as ready as soon as it is running.
+A service with no `healthcheck` counts as ready as soon as it is running. Its
+[`lifecycle`](#lifecycle) hooks [count in its ready](./lifecycle.md) too.
 
 ## `deps`
 
@@ -260,6 +262,33 @@ The color of the service's log label: a name (`'magenta'`), a hex (`'#af87ff'`),
 
 Overrides parts of the service's public origin, the URL in its `PUBLIC_ORIGIN`. See
 [`publicOrigin`](./urls.md#publicorigin).
+
+## `lifecycle`
+
+- **Type:** `{ beforeStart?, afterStart?, afterReady?, beforeStop?, afterStop? }`, each an
+  async function
+
+Steps of your own that the session runs around the service's dev process: before it starts,
+once it is ready, before it stops.
+
+```ts
+api: {
+  port: 3001,
+  healthcheck: '/health',
+  lifecycle: {
+    beforeStart: async ({ exec }) => {
+      await exec('pnpm', ['generate']);
+    },
+    afterReady: async ({ buildAddress, log }) => {
+      log(`docs at ${buildAddress({ path: '/docs' })}`);
+    },
+  },
+},
+```
+
+- **`exec` runs in the service's directory**, with the environment its dev process gets.
+- **When each hook runs, what it receives and what a failure does** are on
+  [Lifecycle hooks](./lifecycle.md#an-application-service).
 
 ## Service names
 

@@ -170,6 +170,10 @@ export const ServiceEnvSchema = v.pipe(
   v.transform((env) => (typeof env === 'function' ? { vars: env } : env)),
 );
 
+// One `lifecycle` callback. Its real signature is in infra/types.ts, or session-lifecycle.ts for the
+// session's, and lifecycle/service-types.ts for an application service's.
+const lifecycleCallback = () => v.optional(callback<(...args: never[]) => unknown>());
+
 // All per-service config is flat (no `run` nesting). The service's *name* is the key it's
 // declared under in `services` (injected by `defineConfig` after parsing), so it isn't a field
 // here; the rest describe how to run/select/link it. Strict, so a misspelled key fails at load
@@ -205,6 +209,16 @@ export const ServiceConfigSchema = v.strictObject({
     }),
   ),
   env: v.optional(ServiceEnvSchema),
+  // Strict, as the infra ones are: a misspelled hook is an error.
+  lifecycle: v.optional(
+    v.strictObject({
+      beforeStart: lifecycleCallback(),
+      afterStart: lifecycleCallback(),
+      afterReady: lifecycleCallback(),
+      beforeStop: lifecycleCallback(),
+      afterStop: lifecycleCallback(),
+    }),
+  ),
 });
 
 // `reverseProxy.publicAddress`, as written or as its callback returns it. Its domains' hostname
@@ -254,9 +268,6 @@ export const ReverseProxySchema = v.strictObject({
   ),
 });
 
-// One callback an infra service can attach. Its real signature is in infra/types.ts.
-const infraCallback = () => v.optional(callback<(...args: never[]) => unknown>());
-
 // Strict throughout: a misspelled callback (`onReady`) must be an error, not a silently ignored key.
 export const InfraServiceSchema = v.strictObject({
   // A literal, or a callback `defineConfig` resolves to a boolean while the config loads.
@@ -267,16 +278,47 @@ export const InfraServiceSchema = v.strictObject({
   // The service's footer links, and its public origin, as for a service.
   urls: v.optional(UrlsSchema),
   publicOrigin: v.optional(PublicOriginSchema),
-  beforeDestroy: infraCallback(),
-  afterDestroy: infraCallback(),
-  beforeStart: infraCallback(),
-  afterReady: infraCallback(),
+  lifecycle: v.optional(
+    v.strictObject({
+      beforeDestroy: lifecycleCallback(),
+      afterDestroy: lifecycleCallback(),
+      beforeStart: lifecycleCallback(),
+      afterStart: lifecycleCallback(),
+      afterReady: lifecycleCallback(),
+      beforeStop: lifecycleCallback(),
+      afterStop: lifecycleCallback(),
+    }),
+  ),
 });
 
 export const DockerComposeInfraSchema = v.strictObject({
   file: v.optional(nonEmptyString()),
   readyTimeout: v.optional(v.pipe(finiteNumber(), v.gtValue(0))),
+  lifecycle: v.optional(
+    v.strictObject({
+      beforeStart: lifecycleCallback(),
+      afterStart: lifecycleCallback(),
+      afterReady: lifecycleCallback(),
+      beforeStop: lifecycleCallback(),
+      afterStop: lifecycleCallback(),
+      beforeDestroy: lifecycleCallback(),
+      afterDestroy: lifecycleCallback(),
+    }),
+  ),
   services: v.optional(v.record(nonEmptyString(), InfraServiceSchema)),
+});
+
+// The dev session's own callbacks. Strict, as the infra ones are.
+export const SessionSchema = v.strictObject({
+  lifecycle: v.optional(
+    v.strictObject({
+      beforeStart: lifecycleCallback(),
+      afterStart: lifecycleCallback(),
+      afterReady: lifecycleCallback(),
+      beforeStop: lifecycleCallback(),
+      afterStop: lifecycleCallback(),
+    }),
+  ),
 });
 
 // Keyed by provider.
@@ -304,6 +346,7 @@ export const DefineConfigSchema = v.strictObject({
   urls: v.optional(UrlsSchema),
   reverseProxy: v.optional(ReverseProxySchema),
   infra: v.optional(InfraSchema),
+  session: v.optional(SessionSchema),
   workspaceDir: v.optional(v.string()),
   tokens: v.optional(v.record(v.string(), v.optional(v.string()))),
   env: v.optional(

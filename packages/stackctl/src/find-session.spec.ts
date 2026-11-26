@@ -52,6 +52,7 @@ function status(over: Record<string, unknown> = {}): Record<string, unknown> {
     logFile: null,
     services: null,
     ready: null,
+    errors: null,
     infra: null,
     sessionReady: false,
     config: null,

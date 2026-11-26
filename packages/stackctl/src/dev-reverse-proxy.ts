@@ -6,6 +6,7 @@ import picomatch from 'picomatch/posix.js';
 import type { Config, ResolvedReverseProxyRoute } from './config';
 import { infraServicesOf } from './config';
 import type { ProxyTls } from './dev-tls';
+import { CONFIG_CHANGE_NOTE, restartCommand } from './retry-advice';
 import { routeHosts } from './route-hosts';
 import { createUpstreamPool, isBodyless } from './upstream-pool';
 
@@ -142,8 +143,18 @@ export function resolvedRoutesOf(entries: DevReverseProxyEntry[]): ResolvedRever
 export interface DevReverseProxyManager {
   /** A package's live status, or `null` for one this session isn't managing. */
   getStatus(name: string): string | null;
-  /** Whether the package's healthcheck is currently passing. */
-  isReady(name: string): boolean;
+  /**
+   * Whether the package can be reached: its healthcheck passes, or, without one, its process
+   * runs. Its start hooks needn't have finished, and a stop's `beforeStop` keeps its process
+   * reachable until it is signalled: a hook can call its own service through the proxy.
+   */
+  isReachable(name: string): boolean;
+  /**
+   * The error of the start hook that failed a package: `afterStart failed: <message>` or
+   * `afterReady failed: <message>` for a `failed` one, `beforeStart failed: <message>` for a
+   * `stopped` one that was never started for it; else `null`.
+   */
+  failureOf(name: string): string | null;
   /** Called on buffer/status changes; returns the unsubscribe. Readiness alone doesn't fire it. */
   subscribe(listener: () => void): () => void;
   /** stackctl's own `[stackctl]` log channel: attrs render as indented lines under the message. */
@@ -170,7 +181,7 @@ export interface DevReverseProxyServer {
   close(): Promise<void>;
 }
 
-/** How long a request to a running-but-not-yet-ready package is held before a 503. */
+/** How long a request to a running package that can't be reached yet is held before a 503. */
 export const READY_HOLD_MS = 15_000;
 /** How often a held request re-checks readiness (the manager doesn't announce it). */
 const READY_POLL_MS = 250;
@@ -482,6 +493,14 @@ export async function startDevReverseProxy(opts: {
    */
   const upstreamPool = createUpstreamPool();
 
+  /**
+   * A status, not `running`, under which a package's process may still be up and be reached:
+   * `failed` (a start hook failed after the spawn), and `stopped`, `restarting` or `waiting` (a
+   * start asked for meanwhile) while a stop's `beforeStop` runs, before the process is signalled.
+   */
+  const reachableAs = (status: string | null | undefined): boolean =>
+    status === 'failed' || status === 'stopped' || status === 'restarting' || status === 'waiting';
+
   const restartHint = (name: string) =>
     opts.controlApiPort !== undefined
       ? `POST http://127.0.0.1:${String(opts.controlApiPort())}/command/service/restart/${name}`
@@ -564,7 +583,8 @@ export async function startDevReverseProxy(opts: {
 
   /**
    * A 503 for a package in the session the proxy can't forward to right now. `status` is the
-   * package's live status, or "starting" for one whose readiness is still pending.
+   * package's live status, or "starting" for one that isn't reachable yet. A `failed` one gets
+   * {@link failedPage}.
    */
   const unavailable = (
     req: ProxyRequest,
@@ -572,18 +592,60 @@ export async function startDevReverseProxy(opts: {
     route: PackageRoute,
     status: string,
   ) => {
+    if (status === 'failed') {
+      failedPage(req, res, route);
+      return;
+    }
+    // Stopped because its `beforeStart` failed: it was never started, and says why.
+    const error = status === 'stopped' ? (manager?.failureOf(route.package) ?? null) : null;
     sendProblem(req, res, {
       status: 503,
       title: `${route.package} is ${status}`,
       detail: {
         service: route.package,
         status,
+        ...(error === null ? {} : { error }),
         host: route.host,
         hint: `start it with the s hotkey, or ${restartHint(route.package)}`,
       },
       paragraphs: [
         routesTo(route, status),
+        ...(error === null
+          ? []
+          : [
+              `It failed to start: <code>${escapeHtml(error)}</code>. If the fix is in <code>stackctl.config.ts</code>, quit the session and start it again: a running session keeps the config it loaded.`,
+            ]),
         `Start it with the <code>s</code> hotkey in stackctl, or <code>${escapeHtml(restartHint(route.package))}</code>.`,
+        'This page refreshes on its own.',
+      ],
+      headers: { 'retry-after': '2', refresh: '2' },
+    });
+  };
+
+  /**
+   * The 503 for a package a start hook failed, that can't be reached: it says so, gives the hook's
+   * error, and says to restart it (a start of a failed service does nothing).
+   */
+  const failedPage = (req: ProxyRequest, res: ProxyResponse, route: PackageRoute) => {
+    const name = route.package;
+    const error = manager?.failureOf(name) ?? null;
+    const restart = restartCommand(name);
+    sendProblem(req, res, {
+      status: 503,
+      title: `${name} failed`,
+      detail: {
+        service: name,
+        status: 'failed',
+        error,
+        host: route.host,
+        hint: `restart it once it is fixed: focus ${name} in stackctl and press r, or run ${restart}; ${CONFIG_CHANGE_NOTE}`,
+      },
+      paragraphs: [
+        routesTo(route, 'failed'),
+        error === null
+          ? 'Its <code>afterStart</code> or <code>afterReady</code> hook failed.'
+          : `One of its start hooks failed: <code>${escapeHtml(error)}</code>`,
+        `Once it is fixed, restart it: focus ${escapeHtml(name)} in stackctl and press <code>r</code>, or run <code>${escapeHtml(restart)}</code>. If the fix is in <code>stackctl.config.ts</code>, quit the session and start it again: a running session keeps the config it loaded.`,
         'This page refreshes on its own.',
       ],
       headers: { 'retry-after': '2', refresh: '2' },
@@ -700,24 +762,33 @@ export async function startDevReverseProxy(opts: {
   };
 
   /**
-   * Resolves once the package can be forwarded to (`true`), or when it can't (`false`): status no
-   * longer `running`, or the hold deadline passed. Re-checks on manager notifications and on a
-   * short poll, since a readiness flip on its own doesn't notify. Also gives up if the client
-   * goes away while waiting (its connection, or over HTTP/2 its stream), so a held request can't
-   * outlive it.
+   * Resolves once the package can be reached (`true`), or when it can't (`false`): status no
+   * longer `running` (one whose process may still be up — `failed`, or a stop's `beforeStop`
+   * running — only while it is reachable), or the hold deadline passed.
+   * Re-checks on manager notifications and on a short poll, since a health flip on its own doesn't
+   * notify. Also gives up if the client goes away while waiting (its connection, or over HTTP/2
+   * its stream), so a held request can't outlive it.
    */
-  const waitUntilReady = (route: DevReverseProxyRoute & { kind: 'package' }, res: ProxyResponse) =>
+  const waitUntilReachable = (
+    route: DevReverseProxyRoute & { kind: 'package' },
+    res: ProxyResponse,
+  ) =>
     // oxfmt-ignore
     new Promise<boolean>((resolve) => {
       const check = (): boolean => {
         if (!manager) {
           return false;
         }
-        if (manager.getStatus(route.package) !== 'running') {
+        const status = manager.getStatus(route.package);
+        if (reachableAs(status)) {
+          finish(manager.isReachable(route.package));
+          return true;
+        }
+        if (status !== 'running') {
           finish(false);
           return true;
         }
-        if (manager.isReady(route.package)) {
+        if (manager.isReachable(route.package)) {
           finish(true);
           return true;
         }
@@ -842,13 +913,20 @@ export async function startDevReverseProxy(opts: {
     if (status === null) {
       return forward(req, res, route, outsideSession);
     }
+    // A start hook after the spawn failed, or a stop's `beforeStop` runs: its process may still
+    // be up, and answer.
+    if (reachableAs(status)) {
+      return manager.isReachable(route.package)
+        ? forward(req, res, route)
+        : unavailable(req, res, route, status);
+    }
     if (status !== 'running') {
       return unavailable(req, res, route, status);
     }
-    if (route.hasHealthcheck && !manager.isReady(route.package)) {
+    if (route.hasHealthcheck && !manager.isReachable(route.package)) {
       let gone = false;
       res.once('close', () => (gone = true));
-      const ready = await waitUntilReady(route, res);
+      const ready = await waitUntilReachable(route, res);
       if (gone) {
         return;
       }
@@ -962,14 +1040,18 @@ export async function startDevReverseProxy(opts: {
     const resolution = resolveRoute(host, req.url);
     const route = resolution.kind === 'route' ? resolution.route : undefined;
     // Not routable right now (no route, a disabled infra service, infra or manager not there yet,
-    // or a package in the session but not `running`): just drop it — websocket clients such as
-    // Vite's HMR reconnect on their own, and a real answer will be there once the target is up. A
-    // package the session doesn't run is dialled like a running one, and dropped the same way when
-    // nothing listens.
+    // or a package in the session that is neither `running` nor reachable while its process may
+    // still be up): just drop it — websocket clients such as Vite's HMR reconnect on their own,
+    // and a real answer will be there once the target is up. A package the session doesn't run is
+    // dialled like a running one, and dropped the same way when nothing listens.
     const status = route?.kind === 'package' ? manager?.getStatus(route.package) : undefined;
     const routable =
       route !== undefined &&
-      (route.kind === 'service' ? infraReady : status === 'running' || status === null);
+      (route.kind === 'service'
+        ? infraReady
+        : status === 'running' ||
+          status === null ||
+          (reachableAs(status) && manager!.isReachable(route.package)));
     if (!route || !routable) {
       socket.destroy();
       return;

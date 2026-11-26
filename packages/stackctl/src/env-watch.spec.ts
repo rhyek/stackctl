@@ -9,7 +9,9 @@ import { watchEnvFiles } from './env-watch';
 let dir: string;
 let dispose: (() => void) | undefined;
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function waitFor(pred: () => boolean, timeout = 2000, step = 20): Promise<void> {
+// Its deadline is long: the system's file events can be late on a busy machine, and a wait that
+// is met returns at once.
+async function waitFor(pred: () => boolean, timeout = 10_000, step = 20): Promise<void> {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (pred()) {
@@ -26,6 +28,8 @@ afterEach(() => {
   dispose?.();
   dispose = undefined;
   fs.rmSync(dir, { recursive: true, force: true });
+  // Its spies are put back, whatever config the suite runs under.
+  vi.restoreAllMocks();
 });
 
 describe('watchEnvFiles', () => {

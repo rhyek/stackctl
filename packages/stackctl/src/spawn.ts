@@ -1,7 +1,7 @@
 import { type ChildProcess, type SpawnOptions, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
-import type { Readable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 
 // How stackctl runs a command: Node's own `spawn`, with a `done` promise on the child it returns.
@@ -98,6 +98,13 @@ export interface RunCommandOptions extends Omit<SpawnOptions, 'stdio'> {
   onLine?: (line: string, isError: boolean) => void;
   /** `false` keeps none of the output, for a command that prints for as long as it runs. */
   collect?: boolean;
+  /**
+   * The command leads a process group of its own, which every signal stackctl sends it reaches:
+   * what it starts ends with it. Still ended when this process exits, unlike a `detached` one.
+   * Made by a detached spawn, so it is a new session too: the command has no controlling
+   * terminal, cannot prompt on one, and a terminal's Ctrl+C never reaches it.
+   */
+  group?: boolean;
 }
 
 /** A command {@link runCommand} started: the child, with how it ended and what it printed. */
@@ -111,27 +118,171 @@ export interface Running extends ChildProcess {
 
 /** Commands started here and running; this process ending ends them (a detached one excepted). */
 const living = new Set<ChildProcess>();
+/** The commands of {@link living} that lead a process group of their own (`group`). */
+const leaders = new WeakSet<ChildProcess>();
+
+/**
+ * What a group guard runs: a shell that reads `+<pgid>` and `-<pgid>` lines, and once its input
+ * ends kills every group it still holds. Its input ends when the process writing to it is gone,
+ * however it went: a SIGKILL too, which leaves that process no chance to end anything itself.
+ * POSIX `sh` only, with no command but the `kill` built in.
+ */
+const GUARD_SCRIPT = [
+  'groups=""',
+  'while IFS= read -r line; do',
+  '  case "$line" in',
+  '    +*) groups="$groups ${line#+}" ;;',
+  '    -*) kept=""; for g in $groups; do [ "$g" = "${line#-}" ] || kept="$kept $g"; done; groups=$kept ;;',
+  '  esac',
+  'done',
+  'for g in $groups; do kill -s KILL -- "-$g" 2>/dev/null; done',
+  'exit 0',
+].join('\n');
+
+/** Process groups that end with the process that holds them. */
+export interface GroupGuard {
+  /** Holds the group `pgid`. The function it returns lets the group go: it has ended. */
+  add: (pgid: number) => () => void;
+  /** Lets go of the guard itself, which kills every group it still holds. */
+  close: () => void;
+}
+
+/**
+ * A guard for process groups this process starts: a small shell, started with the first group it
+ * is given, in a session of its own so no signal for this process reaches it. Once this process
+ * is gone, by any means, it kills (SIGKILL) the groups it still holds. macOS has nothing that ties
+ * a child's life to its parent's, and a process killed outright runs no code, so the watching is
+ * done from outside. Without a guard (Windows, or a shell that can't start) nothing is held, and
+ * what this process ends itself is all that ends.
+ */
+export function createGroupGuard(): GroupGuard {
+  let input: Writable | null = null;
+  let broken = process.platform === 'win32';
+  const write = (line: string) => {
+    if (broken) {
+      return;
+    }
+    if (!input) {
+      const shell = spawn('/bin/sh', ['-c', GUARD_SCRIPT], {
+        detached: true,
+        stdio: ['pipe', 'ignore', 'ignore'],
+      });
+      const fail = () => {
+        broken = true;
+        input = null;
+      };
+      shell.on('error', fail);
+      shell.stdin.on('error', fail);
+      // Neither the shell nor the pipe to it keeps this process alive.
+      shell.unref();
+      (shell.stdin as Writable & { unref?: () => void }).unref?.();
+      input = shell.stdin;
+    }
+    input.write(`${line}\n`);
+  };
+  return {
+    add: (pgid) => {
+      write(`+${String(pgid)}`);
+      let held = true;
+      return () => {
+        if (held) {
+          held = false;
+          write(`-${String(pgid)}`);
+        }
+      };
+    },
+    close: () => {
+      input?.end();
+      input = null;
+    },
+  };
+}
+
+/** This process's guard: every command that leads a group of its own is held by it. */
+const guard = createGroupGuard();
+
+/**
+ * Has the process group `pgid`, one this process started and is to end, die with this process
+ * however it goes. Returns what to call once the group has ended.
+ */
+export function guardGroup(pgid: number): () => void {
+  return guard.add(pgid);
+}
+
+/** Sends `signal` to `child`, and to its whole process group when it leads one. */
+function signalCommand(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (leaders.has(child) && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal);
+    } catch {
+      /* the group is gone */
+    }
+    return;
+  }
+  child.kill(signal);
+}
+
 const endLiving = () => {
   for (const child of living) {
-    child.kill('SIGTERM');
+    signalCommand(child, 'SIGTERM');
   }
 };
 
 /**
- * Makes SIGTERM and SIGHUP sent to this process end the commands {@link runCommand} started (a
- * detached one excepted) with the same signal, then exit with the signal's code (143, 129). For a
- * command with no signal handling of its own: Node's default would leave them running, since a
- * signal for this process alone (a `kill <pid>`) never reaches them. SIGINT is left out: a
- * terminal's Ctrl+C reaches the whole foreground group already, and a second one reads as "force"
- * to many tools. Returns the undo.
+ * Makes a signal that ends this process end the commands {@link runCommand} started (a detached
+ * one excepted), for a command with no signal handling of its own: Node's default would leave them
+ * running, since a signal for this process alone (a `kill <pid>`) never reaches them.
+ *
+ * - **SIGTERM, SIGHUP**: every command gets the same signal, a group's leader for its group.
+ * - **SIGINT**: only the commands that lead a group of their own get it. A terminal's Ctrl+C has
+ *   reached everything in its foreground group already, and a second one reads as "force" to
+ *   many tools.
+ *
+ * A command that leads a group then has {@link COMMAND_END_GRACE_MS} to end before this process
+ * exits, and the {@link createGroupGuard guard} kills what is left of its group. A second signal
+ * skips the wait. The exit is the signal's: its code (143, 129) or, for SIGINT, the signal
+ * itself, as with no handler. Returns the undo.
  */
 export function endCommandsOnSignals(): () => void {
-  const handlers = (['SIGTERM', 'SIGHUP'] as const).map((signal) => {
-    const handler = () => {
-      for (const child of living) {
-        child.kill(signal);
+  let ending = false;
+  const handlers = (['SIGTERM', 'SIGHUP', 'SIGINT'] as const).map((signal) => {
+    const exit = () => {
+      if (signal === 'SIGINT') {
+        process.off(signal, handler);
+        if (process.listenerCount(signal) === 0) {
+          // As Node's default does: ended by the signal, with no exit handler run.
+          process.kill(process.pid, signal);
+          return;
+        }
+        // Another listener would swallow the signal raised again.
       }
       process.exit(128 + os.constants.signals[signal]);
+    };
+    const handler = () => {
+      if (ending) {
+        exit();
+        return;
+      }
+      ending = true;
+      const led: Promise<unknown>[] = [];
+      for (const child of living) {
+        const leads = leaders.has(child);
+        if (leads || signal !== 'SIGINT') {
+          signalCommand(child, signal);
+        }
+        if (leads) {
+          led.push(new Promise((resolve) => child.once('exit', resolve)));
+        }
+      }
+      if (led.length === 0) {
+        exit();
+        return;
+      }
+      const timer = setTimeout(exit, COMMAND_END_GRACE_MS);
+      void Promise.all(led).then(() => {
+        clearTimeout(timer);
+        exit();
+      });
     };
     process.on(signal, handler);
     return [signal, handler] as const;
@@ -147,18 +298,28 @@ export function endCommandsOnSignals(): () => void {
  * Runs `command` with its output piped: collected into the result (unless `collect: false`) and
  * handed to `onLine` line by line. stdin is closed, or fed `input`. Spawn `options` pass through
  * (`cwd`, `env`, `detached`, `timeout`…). A command still running when this process exits is sent
- * SIGTERM, unless it is `detached`, which is then the caller's to end.
+ * SIGTERM (its group too, with `group`), unless it is `detached`, which is then the caller's to end.
  */
 export function runCommand(
   command: string,
   args: readonly string[],
   options: RunCommandOptions = {},
 ): Running {
-  const { input, onLine, collect = true, ...spawnOptions } = options;
+  const { input, onLine, collect = true, group = false, ...spawnOptions } = options;
+  // Windows has no process groups: there the command is signalled itself, and nothing guards it.
+  const leads = group && process.platform !== 'win32';
   const child = spawn(command, args, {
     ...spawnOptions,
+    // A detached spawn makes the group (a new session: no controlling terminal); it is still this
+    // process's to end.
+    ...(leads ? { detached: true } : {}),
     stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
   });
+  // A group of its own is held by the guard until the command ends.
+  const release = leads && child.pid !== undefined ? guard.add(child.pid) : null;
+  if (leads) {
+    leaders.add(child);
+  }
   if (input !== undefined) {
     // A command that never started, or one that exits without reading, closes the pipe under us.
     child.stdin!.on('error', () => {});
@@ -185,6 +346,7 @@ export function runCommand(
     living.add(child);
   }
   const done = endOf(child).then((end) => {
+    release?.();
     if (living.delete(child) && living.size === 0) {
       process.off('exit', endLiving);
     }
@@ -201,7 +363,26 @@ export interface ExecOptions {
   env: Record<string, string>;
   /** Called with each complete output line as it arrives (`isError` for stderr). */
   onLine?: (line: string, isError: boolean) => void;
+  /**
+   * For an {@link Exec}: aborting kills the command and every process it started (SIGKILL to its
+   * process group, which it then leads); it resolves as a command ended by a signal does. A
+   * {@link Stream} ignores it.
+   */
+  signal?: AbortSignal;
+  /**
+   * For an {@link Exec}: aborting asks the command, and every process it started, to end: SIGTERM
+   * to its process group (which it then leads), and SIGKILL if it still runs
+   * {@link COMMAND_END_GRACE_MS} later. One aborted before the command starts kills it at once,
+   * as `signal` does at any time. A {@link Stream} ignores it.
+   */
+  abandon?: AbortSignal;
 }
+
+/**
+ * How long a command asked to end (`abandon`) has to do so after its SIGTERM, before it is
+ * killed.
+ */
+export const COMMAND_END_GRACE_MS = 2_000;
 
 export interface ExecResult {
   exitCode: number;
@@ -246,17 +427,46 @@ const notRun = (command: string, error: NodeJS.ErrnoException, cwd: string) =>
  * Runs a command with stdin closed and both output streams captured, handing each line to
  * `onLine` as it arrives. **Never rejects**: a non-zero exit is a result, and a command that
  * can't be spawned at all comes back as exit 127 with the reason in `stderr`, and in a line to
- * `onLine`; callers decide what a failure means.
+ * `onLine`; callers decide what a failure means. `endGraceMs` is how long a command asked to end
+ * (`abandon`) has before it is killed.
  */
-export const execLines: Exec = async (command, args, { cwd, env, onLine }) => {
-  const end = await runCommand(command, args, { cwd, env, onLine }).done;
-  if (end.error) {
-    const why = notRun(command, end.error, cwd);
-    onLine?.(why, true);
-    return { exitCode: SPAWN_FAILED, stdout: '', stderr: why };
-  }
-  return { exitCode: exitCodeOf(end), stdout: end.stdout, stderr: end.stderr };
-};
+export function execLinesWith(endGraceMs: number): Exec {
+  return async (command, args, { cwd, env, onLine, signal, abandon }) => {
+    // One that can be ended leads a group of its own, so its end is the end of what it started
+    // too: a shell's or a package manager's children would otherwise outlive it, and hold its
+    // pipes open.
+    const group = signal !== undefined || abandon !== undefined;
+    const child = runCommand(command, args, { cwd, env, onLine, group });
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    const kill = () => {
+      clearTimeout(grace);
+      signalCommand(child, 'SIGKILL');
+    };
+    const end = () => {
+      signalCommand(child, 'SIGTERM');
+      grace = setTimeout(kill, endGraceMs);
+    };
+    if (signal?.aborted || abandon?.aborted) {
+      kill();
+    } else {
+      signal?.addEventListener('abort', kill, { once: true });
+      abandon?.addEventListener('abort', end, { once: true });
+    }
+    const ended = await child.done;
+    clearTimeout(grace);
+    signal?.removeEventListener('abort', kill);
+    abandon?.removeEventListener('abort', end);
+    if (ended.error) {
+      const why = notRun(command, ended.error, cwd);
+      onLine?.(why, true);
+      return { exitCode: SPAWN_FAILED, stdout: '', stderr: why };
+    }
+    return { exitCode: exitCodeOf(ended), stdout: ended.stdout, stderr: ended.stderr };
+  };
+}
+
+/** {@link execLinesWith}, a command asked to end getting {@link COMMAND_END_GRACE_MS}. */
+export const execLines: Exec = execLinesWith(COMMAND_END_GRACE_MS);
 
 /**
  * Starts a command with stdin closed, handing each output line to `onLine` as it arrives and

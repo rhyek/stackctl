@@ -46,6 +46,8 @@ export class InfraFailedError extends Error {
 export async function runSessionInfra(
   onEvent?: (event: InfraEvent) => void,
   deps?: InfraManagerDeps,
+  /** The callbacks' shared `data`: what the session's own `beforeStart` began. Default: empty. */
+  data?: Record<string, unknown>,
 ): Promise<SessionInfra | undefined> {
   const config = getLoadedConfig();
   const manager = config ? await InfraManager.fromConfig(config, deps) : null;
@@ -57,6 +59,7 @@ export async function runSessionInfra(
   const log: InfraLogLine[] = [];
   const summary = await manager.up({
     trigger: 'session',
+    data,
     onEvent: (event) => {
       if (event.type === 'targets') {
         const declared = infraServicesOf(config);

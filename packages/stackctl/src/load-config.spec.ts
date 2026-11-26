@@ -71,6 +71,20 @@ describe('formatConfigLoadFailure', () => {
     expect(msg).toContain('Unexpected token');
   });
 
+  test("a config that fails validation is its message alone: no stack of stackctl's own frames", () => {
+    const invalid = new Error('invalid stackctl config:\n  - services.api.lifecycle.afterRedy: Invalid key: Expected never but received "afterRedy"'); // oxfmt-ignore
+    expect(invalid.stack).toContain('    at ');
+    expect(formatConfigLoadFailure('/w/stackctl.config.ts', invalid)).toBe(
+      'Failed to load /w/stackctl.config.ts:\n' +
+        'invalid stackctl config:\n' +
+        '  - services.api.lifecycle.afterRedy: Invalid key: Expected never but received "afterRedy"',
+    );
+    // Any other error keeps its stack: where in the config it was thrown.
+    expect(formatConfigLoadFailure('/w/stackctl.config.ts', new Error('boom'))).toContain(
+      '    at ',
+    );
+  });
+
   test('adds the Node-version hint when Node cannot import TypeScript', () => {
     const err = Object.assign(new TypeError('Unknown file extension ".ts"'), {
       code: 'ERR_UNKNOWN_FILE_EXTENSION',

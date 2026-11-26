@@ -40,6 +40,10 @@ export default defineConfig({
   serviceRootDir: 'apps',
   // The failed-startup scenario pins the control API to a port the test holds.
   ...(process.env.E2E_API_PORT ? { apiPort: Number(process.env.E2E_API_PORT) } : {}),
+  // The session's own beforeStart, for the test that sets \`E2E_SESSION_HOOK\`.
+  ...(process.env.E2E_SESSION_HOOK
+    ? { session: { lifecycle: { beforeStart: ({ mode, log }) => log(\`session hook: \${mode}\`) } } }
+    : {}),
   services: {
     api: { port: ${String(PORTS.api)}, healthcheck: '/health', tags: ['backend'] },
     web: {

@@ -634,9 +634,9 @@ describe('fresh', () => {
   /** Runs `up` over a Docker in the given state; returns the `fresh` each afterReady saw. */
   async function freshSeen(state: { volumes: string[]; containers: string[] }) {
     const seen: Record<string, boolean> = {};
-    const note = { enabled: true, tags: [], afterReady: (ctx: { service: { name: string }; fresh: boolean }) => {
+    const note = { enabled: true, tags: [], lifecycle: { afterReady: (ctx: { service: { name: string }; fresh: boolean }) => {
       seen[ctx.service.name] = ctx.fresh;
-    } }; // oxfmt-ignore
+    } } }; // oxfmt-ignore
     let polls = 0;
     const { provider } = setup(
       servicesThen((args) => {
@@ -706,6 +706,100 @@ describe('down, the passthrough, and the compose helper', () => {
     expect(subs().flat()).not.toContain('--volumes');
   });
 
+  test("the stop hooks, the provider's and each service's, run around `docker compose down`, with the helper on the same project", async () => {
+    const triggers: string[] = [];
+    const { provider, subs } = setup(
+      servicesThen(() => undefined),
+      {
+        lifecycle: {
+          beforeStop: async ({ compose, trigger }) => {
+            triggers.push(`project beforeStop ${trigger}`);
+            await compose(['ls']);
+          },
+          afterStop: async ({ compose, envs }) => {
+            expect(envs.COMPOSE_PROJECT_NAME).toBe('example-test');
+            await compose(['network', 'ls']);
+          },
+        },
+        services: {
+          db: {
+            enabled: true,
+            tags: [],
+            lifecycle: {
+              beforeStop: async ({ compose, service, trigger }) => {
+                triggers.push(`${service.name} beforeStop ${trigger}`);
+                await compose(['exec', '-T', 'db', 'pg_dump']);
+              },
+              afterStop: ({ trigger, service }) => {
+                triggers.push(`${service.name} afterStop ${trigger}`);
+              },
+            },
+          },
+        },
+      },
+    );
+    expect((await provider.down({ services: ['db'], trigger: 'restart' })).ok).toBe(true);
+    expect(subs()).toEqual([
+      ['config', '--services'],
+      ['ls'],
+      ['exec', '-T', 'db', 'pg_dump'],
+      ['down', 'db'],
+      ['network', 'ls'],
+    ]);
+    expect(triggers).toEqual([
+      'project beforeStop restart',
+      'db beforeStop restart',
+      'db afterStop restart',
+    ]);
+  });
+
+  test("the start and destroy hooks, the provider's and the service's afterStart, run around `up` and `down --volumes`, with the helper on the same project", async () => {
+    const order: string[] = [];
+    const { provider, subs } = setup(
+      servicesThen((args) => {
+        if (args[0] === 'up' || args[0] === 'down') {
+          order.push(args.slice(0, 2).join(' '));
+        }
+        // The readiness poll; the network check before a reset sees nothing in the way.
+        return args[0] === 'ps' && args[1] === '--all'
+          ? ndjson(row('db', 'running'), row('redis', 'running'))
+          : undefined;
+      }),
+      {
+        lifecycle: {
+          afterStart: async ({ compose, trigger }) => {
+            order.push(`project afterStart ${trigger}`);
+            await compose(['top']);
+          },
+          afterReady: ({ trigger }) => void order.push(`project afterReady ${trigger}`),
+          beforeDestroy: ({ trigger }) => void order.push(`project beforeDestroy ${trigger}`),
+          afterDestroy: ({ trigger }) => void order.push(`project afterDestroy ${trigger}`),
+        },
+        services: {
+          db: {
+            enabled: true,
+            tags: [],
+            lifecycle: {
+              afterStart: ({ service, trigger }) =>
+                void order.push(`${service.name} afterStart ${trigger}`),
+            },
+          },
+        },
+      },
+    );
+    expect((await provider.up({ trigger: 'reset' })).ok).toBe(true);
+    expect(order).toEqual([
+      'project beforeDestroy reset',
+      'down --volumes',
+      'project afterDestroy reset',
+      'up --detach',
+      'db afterStart reset',
+      'project afterStart reset',
+      'project afterReady reset',
+    ]);
+    expect(subs()).toContainEqual(['top']);
+  });
+
   test('the passthrough runs where the user is standing, with the arguments untouched', async () => {
     const { provider, inherited } = setup();
     const args = ['build', '-m', '2g', '--', 'db'];
@@ -732,9 +826,11 @@ describe('down, the passthrough, and the compose helper', () => {
           db: {
             enabled: true,
             tags: [],
-            afterReady: async ({ compose, envs }) => {
-              expect(envs.COMPOSE_PROJECT_NAME).toBe('example-test');
-              await compose(['exec', '-T', 'db', 'psql', '-c', 'SELECT 1']);
+            lifecycle: {
+              afterReady: async ({ compose, envs }) => {
+                expect(envs.COMPOSE_PROJECT_NAME).toBe('example-test');
+                await compose(['exec', '-T', 'db', 'psql', '-c', 'SELECT 1']);
+              },
             },
           },
         },
@@ -753,6 +849,30 @@ describe('down, the passthrough, and the compose helper', () => {
       line: 'psql: could not connect',
       isError: true,
     });
+  });
+
+  test("the provider's own beforeStart gets the helper on the same project, its output the run's own", async () => {
+    const events: InfraEvent[] = [];
+    const { provider, calls, subs } = setup(
+      servicesThen((args) => (args[0] === 'network' ? fail('network ls: denied') : undefined)),
+      {
+        lifecycle: {
+          beforeStart: async ({ compose, envs }) => {
+            expect(envs.COMPOSE_PROJECT_NAME).toBe('example-test');
+            await compose(['network', 'ls'], { reject: false });
+          },
+        },
+      },
+    );
+    await provider.up({ onEvent: (e) => events.push(e) });
+    const network = calls.find((c) => sub(c)[0] === 'network')!;
+    expect(network.args.slice(0, 3)).toEqual(['compose', '--project-directory', WS]);
+    expect(network.env.COMPOSE_PROJECT_NAME).toBe('example-test');
+    // Before the start.
+    expect(subs().findIndex((a) => a[0] === 'network')).toBeLessThan(
+      subs().findIndex((a) => a[0] === 'up'),
+    );
+    expect(events).toContainEqual({ type: 'output', line: 'network ls: denied', isError: true });
   });
 });
 

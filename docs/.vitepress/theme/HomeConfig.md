@@ -28,11 +28,13 @@ export default defineConfig({
     'docker-compose': {
       services: {
         db: {
-          afterReady: async ({ exec, fresh }) => {
-            await exec('pnpm', ['migrate']);
-            if (fresh) {
-              await exec('pnpm', ['seed']);
-            }
+          lifecycle: {
+            afterReady: async ({ exec, fresh }) => {
+              await exec('pnpm', ['migrate']);
+              if (fresh) {
+                await exec('pnpm', ['seed']);
+              }
+            },
           },
         },
       },

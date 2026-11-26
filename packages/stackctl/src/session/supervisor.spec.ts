@@ -11,6 +11,10 @@ import { type AnyServiceConfig, defineConfig } from '../config';
 import { recordWorkspaceEnv } from '../env';
 import type { EnvWatch, WatchTarget } from '../env-watch';
 import { stripAnsi } from '../format';
+import { type HookOutcome, runHook } from '../lifecycle/hooks';
+import type { ServiceHooks } from '../lifecycle/service-hooks';
+import type { ServiceCallbacks } from '../lifecycle/service-types';
+import { COMMAND_END_GRACE_MS } from '../spawn';
 import { labelGutter } from './log-layout';
 import { LogStore } from './log-store';
 import { buildSessionPlan } from './plan';
@@ -28,7 +32,7 @@ const HC = 'http://127.0.0.1:1/health';
 
 /** Every `.env` watch the Supervisor opens: the directories it covers, and whether it was closed. */
 const watches = vi.hoisted(
-  () => [] as { dirs: string[]; targets: WatchTarget[]; disposed: boolean }[],
+  () => [] as { dirs: string[]; targets: WatchTarget[]; disposed: boolean; ready: Promise<void> }[],
 );
 
 vi.mock('../env-watch', async (importOriginal) => {
@@ -43,6 +47,7 @@ vi.mock('../env-watch', async (importOriginal) => {
         dirs: opts.targets.map((target) => target.dir),
         targets: opts.targets,
         disposed: false,
+        ready: watch.ready,
       };
       watches.push(entry);
       return Object.assign(
@@ -248,6 +253,12 @@ function setup(opts: {
   cwd?: string;
   /** The config's top-level `env`. */
   env?: Record<string, unknown>;
+  /** The services' lifecycle hooks. */
+  hooks?: ServiceHooks;
+  /** Gets `spawn <name>` for every dev process spawned, beside what `hooks` records there. */
+  events?: string[];
+  /** The session shows the terminal UI. */
+  interactive?: boolean;
 }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-sup-')));
   for (const [name, service] of Object.entries(opts.services)) {
@@ -296,9 +307,12 @@ function setup(opts: {
     logs,
     readiness,
     clock,
+    hooks: opts.hooks,
+    interactive: opts.interactive,
     createProcess: (o) => {
       const proc = new StubProcess(o, opts.failSpawn?.includes(o.name) ?? false);
       procs.push(proc);
+      opts.events?.push(`spawn ${o.name}`);
       return proc;
     },
   });
@@ -367,7 +381,7 @@ async function withColors<T>(fn: () => Promise<T> | T): Promise<T> {
 const drawn = (logs: LogStore, line: LogLine) => labelGutter(line.label, logs.labelWidth);
 
 describe('publicStatus', () => {
-  test('held services wait, spawning reads running, a crash reads stopped', () => {
+  test('held services wait, spawning reads running, a crash reads stopped, a failed hook reads failed', () => {
     expect(publicStatus('pending')).toBe('waiting');
     expect(publicStatus('waiting')).toBe('waiting');
     expect(publicStatus('starting')).toBe('running');
@@ -375,6 +389,7 @@ describe('publicStatus', () => {
     expect(publicStatus('restarting')).toBe('restarting');
     expect(publicStatus('stopped')).toBe('stopped');
     expect(publicStatus('crashed')).toBe('stopped');
+    expect(publicStatus('failed')).toBe('failed');
   });
 });
 
@@ -393,6 +408,7 @@ describe('starting the session', () => {
       exitCode: null,
       ready: true,
       pid: t.proc('api').pid,
+      hook: null,
     });
   });
 
@@ -531,6 +547,7 @@ describe('starting the session', () => {
       exitCode: 1,
       ready: false,
       pid: null,
+      hook: null,
     });
     expect(t.said('broken')).toEqual([
       'started',
@@ -1676,4 +1693,1720 @@ describe("an add while it reads the added service's own .env files", () => {
     await until(() => expect(t.of('worker')).toHaveLength(1));
     expect(t.proc('worker').opts.env.HELD).toBe('1');
   });
+});
+
+/** A hook call as the stub records it. */
+interface HookCall {
+  name: string;
+  hook: keyof ServiceCallbacks;
+  trigger: string;
+  data: Record<string, unknown>;
+}
+
+/**
+ * A {@link ServiceHooks} every service has `beforeStart` and `afterStart` in, recording each call
+ * as `name:hook:trigger` into `events` (which `setup` also gets each spawn in), and
+ * `name:hook:abandoned` when a start hook is abandoned while it runs. `impl` decides how a call ends:
+ * `'done'` unless it says otherwise. The commands of a service's hooks have ended unless
+ * `commands` holds a promise for it.
+ */
+function recordingHooks(
+  impl: (call: HookCall) => HookOutcome | void | Promise<HookOutcome | void> = () => {},
+  /** The hooks every service has. */
+  defined: readonly string[] = ['beforeStart', 'afterStart'],
+) {
+  const events: string[] = [];
+  const calls: HookCall[] = [];
+  const commands = new Map<string, Promise<void>>();
+  const hooks: ServiceHooks = {
+    has: (_name, hook) => defined.includes(hook),
+    // The real runner's rule, so the fake abandons (and skips a hook whose budget is spent) as
+    // production does: only a hook that is called is recorded.
+    run: async (name, hook, trigger, data, budget) => {
+      let own: HookOutcome = 'done';
+      let running = false;
+      const abandoned = () => {
+        // A start hook's only: the stop hooks' abandonment is asserted through their lines.
+        if (running && !hook.endsWith('Stop')) {
+          events.push(`${name}:${hook}:abandoned`);
+        }
+      };
+      budget?.addEventListener('abort', abandoned, { once: true });
+      const outcome = await runHook(
+        async () => {
+          const call = { name, hook, trigger, data };
+          events.push(`${name}:${hook}:${trigger}`);
+          calls.push(call);
+          running = true;
+          try {
+            own = (await impl(call)) ?? 'done';
+          } finally {
+            running = false;
+          }
+        },
+        undefined,
+        { budget },
+      );
+      budget?.removeEventListener('abort', abandoned);
+      return outcome === 'done' ? own : outcome;
+    },
+    commandsEnded: (name) => commands.get(name) ?? Promise.resolve(),
+  };
+  return { hooks, events, calls, commands };
+}
+
+/** A promise the test resolves when it likes. */
+function gate(): { promise: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
+}
+
+describe('start hooks', () => {
+  test("beforeStart runs before the spawn, afterStart after it, with the start's trigger", async () => {
+    const r = recordingHooks();
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() =>
+      expect(r.events).toEqual(['api:beforeStart:session', 'spawn api', 'api:afterStart:session']),
+    );
+
+    r.events.length = 0;
+    const stopping = t.supervisor.stop('api');
+    t.proc('api').exit({ code: null, signal: 'SIGTERM' });
+    await stopping;
+    await t.supervisor.start('api');
+    expect(r.events).toEqual(['api:beforeStart:start', 'spawn api', 'api:afterStart:start']);
+
+    r.events.length = 0;
+    let old = t.proc('api');
+    const restarting = t.supervisor.restart('api');
+    old.exit({ code: null, signal: 'SIGTERM' });
+    await restarting;
+    expect(r.events).toEqual(['api:beforeStart:restart', 'spawn api', 'api:afterStart:restart']);
+
+    r.events.length = 0;
+    old = t.proc('api');
+    const changed = t.supervisor.envChanged('api');
+    old.exit({ code: null, signal: 'SIGTERM' });
+    await changed;
+    expect(r.events).toEqual(['api:beforeStart:env', 'spawn api', 'api:afterStart:env']);
+    expect(t.state('api')).toBe('running');
+  });
+
+  test('a service added to a running session starts with the trigger start', async () => {
+    const r = recordingHooks();
+    const t = setup({
+      services: { api: {}, worker: {} },
+      selected: ['api'],
+      hooks: r.hooks,
+      events: r.events,
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events).toHaveLength(3));
+    expect(await t.supervisor.add('worker')).toBe('done');
+    await until(() =>
+      expect(r.events.slice(3)).toEqual([
+        'worker:beforeStart:start',
+        'spawn worker',
+        'worker:afterStart:start',
+      ]),
+    );
+  });
+
+  test('one data object for an operation, a new one for the next', async () => {
+    const r = recordingHooks();
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.calls).toHaveLength(2));
+    for (let i = 0; i < 2; i++) {
+      const old = t.proc('api');
+      const restarting = t.supervisor.restart('api');
+      old.exit({ code: null, signal: 'SIGTERM' });
+      await restarting;
+    }
+    const [, , first, firstAfter, second, secondAfter] = r.calls;
+    expect(first!.trigger).toBe('restart');
+    expect(firstAfter!.data).toBe(first!.data);
+    expect(secondAfter!.data).toBe(second!.data);
+    expect(second!.data).not.toBe(first!.data);
+  });
+
+  test("launchAll's data reaches every service it launches, one that waited for a dep included", async () => {
+    const r = recordingHooks();
+    const t = setup({
+      services: { db: { healthcheck: HC }, api: { deps: [{ service: 'db', wait: true }] } },
+      hooks: r.hooks,
+      events: r.events,
+    });
+    const data = { from: 'session' };
+    t.supervisor.launchAll(data);
+    await until(() => expect(t.of('db')).toHaveLength(1));
+    t.answers.set('db', true);
+    await t.clock.advance(1600);
+    await until(() => expect(r.calls).toHaveLength(4));
+    expect(r.calls.map((c) => `${c.name}:${c.hook}`)).toEqual([
+      'db:beforeStart',
+      'db:afterStart',
+      'api:beforeStart',
+      'api:afterStart',
+    ]);
+    for (const call of r.calls) {
+      expect(call.data).toBe(data);
+      expect(call.trigger).toBe('session');
+    }
+  });
+
+  test('a beforeStart that throws spawns nothing: the service is stopped with the reason, and no exit is reported for a process that never ran', async () => {
+    const r = recordingHooks(({ hook }) =>
+      hook === 'beforeStart' ? { error: 'boom' } : undefined,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    const exits: unknown[] = [];
+    t.supervisor.on('exit', (...args) => exits.push(args));
+    t.supervisor.launchAll();
+    await until(() => expect(t.state('api')).toBe('crashed'));
+    expect(r.events).toEqual(['api:beforeStart:session']);
+    expect(t.of('api')).toHaveLength(0);
+    expect(t.said('api')).toEqual(['failed to start: beforeStart failed: boom']);
+    expect(t.logs.getVisibleLines().find((l) => l.service === 'api')!.isError).toBe(true);
+    expect(publicStatus(t.state('api')!)).toBe('stopped');
+    expect(t.supervisor.failure('api')).toBe('beforeStart failed: boom');
+    expect(t.supervisor.states().get('api')!.exitCode).toBeNull();
+    expect(exits).toEqual([]);
+  });
+
+  test('the reason a beforeStart left is gone once the service is started again, and it gets ready', async () => {
+    let fails = true;
+    const r = recordingHooks(({ hook }) => (hook === 'beforeStart' && fails ? { error: 'boom' } : undefined)); // oxfmt-ignore
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(t.supervisor.failure('api')).toBe('beforeStart failed: boom'));
+    fails = false;
+    await t.supervisor.restart('api');
+    expect(t.supervisor.failure('api')).toBeNull();
+    expect(t.state('api')).toBe('running');
+    await until(() => expect(t.readiness.isReady('api')).toBe(true));
+  });
+
+  test.each([
+    { screen: 'with no screen', interactive: false, how: 'Run stackctl service restart -s db once it is fixed; a change to stackctl.config.ts needs a new session' }, // oxfmt-ignore
+    { screen: 'on the terminal UI', interactive: true, how: 'Once it is fixed, focus db and press r, or run stackctl service restart -s db; a change to stackctl.config.ts needs a new session' }, // oxfmt-ignore
+  ])(
+    'what waits on a service whose beforeStart failed is told why, and is blocked by it through a chain, $screen',
+    async ({ interactive, how }) => {
+      const r = recordingHooks(({ name, hook }) => (name === 'db' && hook === 'beforeStart' ? { error: 'boom' } : undefined)); // oxfmt-ignore
+      const t = setup({
+        services: {
+          db: { healthcheck: HC },
+          api: { healthcheck: HC, deps: [{ service: 'db', wait: true }] },
+          web: { deps: [{ service: 'api', wait: true }] },
+        },
+        hooks: r.hooks,
+        events: r.events,
+        interactive,
+      });
+      t.supervisor.launchAll();
+      await until(() => expect(t.supervisor.failure('db')).toBe('beforeStart failed: boom'));
+      expect(t.state('api')).toBe('waiting');
+      expect(t.said('api').at(-1)).toBe(`db failed to start: beforeStart failed: boom; still waiting for db. ${how}`); // oxfmt-ignore
+      const advice = 'Run stackctl service restart -s db once it is fixed; a change to stackctl.config.ts needs a new session'; // oxfmt-ignore
+      expect(t.supervisor.blockedBy('api')).toBe(`waiting for db, which failed to start: beforeStart failed: boom. ${advice}`); // oxfmt-ignore
+      expect(t.supervisor.blockedBy('web')).toBe(`waiting for api, which waits for db, which failed to start: beforeStart failed: boom. ${advice}`); // oxfmt-ignore
+      // The services never started: nothing was spawned.
+      expect(t.procs).toHaveLength(0);
+    },
+  );
+
+  test('an afterStart that throws fails the service and leaves its process running', async () => {
+    const r = recordingHooks(({ hook }) => (hook === 'afterStart' ? { error: 'boom' } : undefined));
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(t.state('api')).toBe('failed'));
+    expect(t.of('api')).toHaveLength(1);
+    expect(t.proc('api').stops).toBe(0);
+    expect(t.proc('api').state).toBe('running');
+    expect(t.supervisor.states().get('api')!.pid).toBe(t.proc('api').pid);
+    expect(t.supervisor.states().get('api')!.ready).toBe(false);
+    expect(t.said('api')).toEqual(['started', 'afterStart failed: boom']);
+    const failure = t.logs.getVisibleLines().filter((l) => l.service === 'api')[1]!;
+    expect(failure.isError).toBe(true);
+  });
+
+  test('a stop while beforeStart runs starts nothing; a restart while it runs starts once', async () => {
+    {
+      const held = gate();
+      const r = recordingHooks(({ hook }) => (hook === 'beforeStart' ? held.promise : undefined));
+      const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+      t.supervisor.launchAll();
+      await until(() => expect(r.events).toEqual(['api:beforeStart:session']));
+      expect(t.state('api')).toBe('pending');
+      await t.supervisor.stop('api');
+      expect(t.state('api')).toBe('stopped');
+      held.open();
+      await settle();
+      expect(t.of('api')).toHaveLength(0);
+      expect(t.state('api')).toBe('stopped');
+      expect(r.events).toEqual(['api:beforeStart:session', 'api:beforeStart:abandoned']);
+    }
+    {
+      const held = gate();
+      const r = recordingHooks(({ hook, trigger }) =>
+        hook === 'beforeStart' && trigger === 'session' ? held.promise : undefined,
+      );
+      const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+      t.supervisor.launchAll();
+      await until(() => expect(r.events).toEqual(['api:beforeStart:session']));
+      await t.supervisor.restart('api');
+      held.open();
+      await settle();
+      expect(t.of('api')).toHaveLength(1);
+      expect(t.state('api')).toBe('running');
+      expect(r.events).toEqual([
+        'api:beforeStart:session',
+        'api:beforeStart:abandoned',
+        'api:beforeStart:restart',
+        'spawn api',
+        'api:afterStart:restart',
+      ]);
+    }
+  });
+
+  test('a .env change while a restart runs afterStart restarts the service again', async () => {
+    const held = gate();
+    const r = recordingHooks(({ hook, trigger }) =>
+      hook === 'afterStart' && trigger === 'restart' ? held.promise : undefined,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events).toHaveLength(3));
+    const first = t.proc('api');
+    const restarting = t.supervisor.restart('api');
+    first.exit({ code: null, signal: 'SIGTERM' });
+    await until(() => expect(r.events.at(-1)).toBe('api:afterStart:restart'));
+    const second = t.proc('api');
+    const changed = t.supervisor.envChanged('api');
+    expect(changed).not.toBe(restarting);
+    second.exit({ code: null, signal: 'SIGTERM' });
+    held.open();
+    await Promise.all([restarting, changed]);
+    expect(t.of('api')).toHaveLength(3);
+    expect(r.events.slice(3)).toEqual([
+      'api:beforeStart:restart',
+      'spawn api',
+      'api:afterStart:restart',
+      'api:afterStart:abandoned',
+      'api:beforeStart:env',
+      'spawn api',
+      'api:afterStart:env',
+    ]);
+    expect(t.state('api')).toBe('running');
+  });
+
+  test('a shutdown while beforeStart runs starts nothing, and runs no hook after it', async () => {
+    const held = gate();
+    const r = recordingHooks(({ hook }) => (hook === 'beforeStart' ? held.promise : undefined));
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events).toEqual(['api:beforeStart:session']));
+    await t.supervisor.stopAll();
+    held.open();
+    await settle();
+    expect(t.of('api')).toHaveLength(0);
+    expect(t.state('api')).toBe('stopped');
+    expect(r.events).toEqual(['api:beforeStart:session', 'api:beforeStart:abandoned']);
+  });
+
+  test('a shutdown at any moment around the end of beforeStart leaves no process behind', async () => {
+    // However many microtasks after the hook was called the shutdown lands, a process is either
+    // never spawned, or spawned before it and stopped by it.
+    for (let depth = 0; depth < 12; depth++) {
+      let stop = () => {};
+      const r = recordingHooks(({ hook }) => {
+        if (hook === 'beforeStart') {
+          let chain = Promise.resolve();
+          for (let i = 0; i < depth; i++) {
+            chain = chain.then(() => {});
+          }
+          void chain.then(() => stop());
+        }
+      });
+      const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+      stop = () => void t.supervisor.stopAll();
+      t.supervisor.launchAll();
+      await until(() => expect(r.events).toContain('api:beforeStart:session'));
+      await settle();
+      const unstopped = t.of('api').filter((p) => p.stops === 0 && p.kills === 0);
+      expect({ depth, unstopped: unstopped.length }).toEqual({ depth, unstopped: 0 });
+    }
+  });
+
+  test("a stop while a restart's beforeStart runs starts nothing, and logs no restarted", async () => {
+    const held = gate();
+    const r = recordingHooks(({ hook, trigger }) =>
+      hook === 'beforeStart' && trigger === 'restart' ? held.promise : undefined,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events).toHaveLength(3));
+    const old = t.proc('api');
+    const restarting = t.supervisor.restart('api');
+    old.exit({ code: null, signal: 'SIGTERM' });
+    await until(() => expect(r.events.at(-1)).toBe('api:beforeStart:restart'));
+    expect(t.state('api')).toBe('restarting');
+    await t.supervisor.stop('api');
+    expect(t.state('api')).toBe('stopped');
+    held.open();
+    await restarting;
+    expect(t.of('api')).toHaveLength(1);
+    expect(t.state('api')).toBe('stopped');
+    expect(t.said('api')).toEqual([
+      'started',
+      'stopping...',
+      'stopped',
+      'beforeStart abandoned: the service was stopped',
+    ]);
+  });
+
+  test("a restart's beforeStart that throws ends it as a failed start, with no restarted line", async () => {
+    const r = recordingHooks(({ hook, trigger }) =>
+      hook === 'beforeStart' && trigger === 'restart' ? { error: 'boom' } : undefined,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    const exits: unknown[] = [];
+    t.supervisor.on('exit', (...args) => exits.push(args));
+    t.supervisor.launchAll();
+    await until(() => expect(r.events).toHaveLength(3));
+    const old = t.proc('api');
+    const restarting = t.supervisor.restart('api');
+    old.exit({ code: null, signal: 'SIGTERM' });
+    await restarting;
+    expect(t.state('api')).toBe('crashed');
+    expect(t.of('api')).toHaveLength(1);
+    expect(t.said('api')).toEqual([
+      'started',
+      'stopping...',
+      'stopped',
+      'failed to start: beforeStart failed: boom',
+    ]);
+    expect(t.supervisor.failure('api')).toBe('beforeStart failed: boom');
+    expect(exits).toEqual([]);
+  });
+
+  test('a .env change restarts a failed service whose process still runs', async () => {
+    const r = recordingHooks(({ hook, trigger }) =>
+      hook === 'afterStart' && trigger === 'session' ? { error: 'boom' } : undefined,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(t.state('api')).toBe('failed'));
+    const old = t.proc('api');
+    const changed = t.supervisor.envChanged('api');
+    old.exit({ code: null, signal: 'SIGTERM' });
+    await changed;
+    expect(t.of('api')).toHaveLength(2);
+    expect(r.events.slice(-3)).toEqual(['api:beforeStart:env', 'spawn api', 'api:afterStart:env']);
+    expect(t.state('api')).toBe('running');
+  });
+
+  test('an edit to the .env file of a failed service whose process runs restarts it', async () => {
+    const r = recordingHooks(({ hook, trigger }) =>
+      hook === 'afterStart' && trigger === 'session' ? { error: 'boom' } : undefined,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    const reported: string[][] = [];
+    t.supervisor.on('env-change', (_dir, services) => reported.push(services));
+    t.supervisor.launchAll();
+    await until(() => expect(t.state('api')).toBe('failed'));
+    await until(() => expect(watches.some((w) => w.dirs.includes(t.root))).toBe(true));
+    const stopped = () => t.of('api')[0]!.stops > 0;
+    for (let attempt = 1; attempt <= 8 && !stopped(); attempt++) {
+      fs.writeFileSync(path.join(t.root, 'packages/api/.env'), `GREETING=edit-${attempt}\n`);
+      for (let waited = 0; waited < 2000 && !stopped(); waited += 20) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    expect(t.of('api')[0]!.stops).toBe(1);
+    expect(reported.at(-1)).toEqual(['api']);
+    t.of('api')[0]!.exit({ code: null, signal: 'SIGTERM' });
+    await until(() => expect(t.state('api')).toBe('running'));
+  }, 30_000);
+
+  test('one add that brings in several services is one operation: they share one data', async () => {
+    const r = recordingHooks();
+    const t = setup({
+      services: { api: {}, db: {}, worker: { deps: [{ service: 'db' }] } },
+      selected: ['api'],
+      hooks: r.hooks,
+      events: r.events,
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(r.calls).toHaveLength(2));
+    expect(await t.supervisor.add('worker')).toBe('done');
+    await until(() => expect(r.calls).toHaveLength(6));
+    const added = r.calls.slice(2);
+    expect(added.map((c) => `${c.name}:${c.hook}:${c.trigger}`).sort()).toEqual([
+      'db:afterStart:start',
+      'db:beforeStart:start',
+      'worker:afterStart:start',
+      'worker:beforeStart:start',
+    ]);
+    for (const call of added) {
+      expect(call.data).toBe(added[0]!.data);
+    }
+    expect(added[0]!.data).not.toBe(r.calls[0]!.data);
+  });
+
+  test("a hook's lines go under its service's label, red when they are errors", async () => {
+    const t = setup({ services: { api: {} } });
+    await withColors(() => {
+      t.supervisor.hookLine('api', 'seeding', false);
+      t.supervisor.hookLine('api', 'seed failed', true);
+      t.supervisor.hookLine('nope', 'lost', false);
+    });
+    const lines = t.logs.getVisibleLines();
+    expect(lines.map((l) => [l.service, stripAnsi(l.text), l.isError])).toEqual([
+      ['api', 'seeding', false],
+      ['api', 'seed failed', true],
+    ]);
+    expect(lines[1]!.text).not.toBe('seed failed');
+  });
+
+  test('a service with no dev command, or autostart false, runs no hook until it is started', async () => {
+    const r = recordingHooks();
+    const t = setup({
+      services: { api: { autostart: false }, lib: {} },
+      noDev: ['lib'],
+      hooks: r.hooks,
+      events: r.events,
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.state('api')).toBe('stopped'));
+    expect(t.state('lib')).toBe('stopped');
+    await t.supervisor.start('lib');
+    await t.supervisor.restart('lib');
+    expect(r.events).toEqual([]);
+    await t.supervisor.start('api');
+    expect(r.events).toEqual(['api:beforeStart:start', 'spawn api', 'api:afterStart:start']);
+  });
+});
+
+describe('afterReady, and ready including the hooks', () => {
+  const ALL = ['beforeStart', 'afterStart', 'afterReady'];
+
+  test('afterReady runs once the healthcheck first passes, after afterStart, and the service is ready only when it has finished', async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ hook }) => (hook === 'afterReady' ? held.promise.then(() => undefined) : undefined),
+      ALL,
+    );
+    const t = setup({ services: { api: { healthcheck: HC } }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() =>
+      expect(r.events).toEqual(['api:beforeStart:session', 'spawn api', 'api:afterStart:session']),
+    );
+    await t.clock.advance(1000);
+    expect(r.events).toHaveLength(3);
+    t.answers.set('api', true);
+    await t.clock.advance(2000);
+    await until(() => expect(r.events.at(-1)).toBe('api:afterReady:session'));
+    expect(t.readiness.isHealthy('api')).toBe(true);
+    expect(t.readiness.isReady('api')).toBe(false);
+    expect(t.supervisor.states().get('api')!.ready).toBe(false);
+    held.open();
+    await until(() => expect(t.readiness.isReady('api')).toBe(true));
+    expect(t.supervisor.states().get('api')!.ready).toBe(true);
+    expect(t.state('api')).toBe('running');
+  });
+
+  test('with no healthcheck, afterReady runs after afterStart', async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ hook }) => (hook === 'afterStart' ? held.promise.then(() => undefined) : undefined),
+      ALL,
+    );
+    const t = setup({ services: { worker: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events.at(-1)).toBe('worker:afterStart:session'));
+    // Healthy since its spawn, but its afterStart still runs: nothing more, and not ready.
+    expect(t.readiness.isHealthy('worker')).toBe(true);
+    expect(t.readiness.isReady('worker')).toBe(false);
+    await t.clock.advance(1000);
+    expect(r.events.at(-1)).toBe('worker:afterStart:session');
+    held.open();
+    await until(() => expect(t.readiness.isReady('worker')).toBe(true));
+    expect(r.events).toEqual([
+      'worker:beforeStart:session',
+      'spawn worker',
+      'worker:afterStart:session',
+      'worker:afterReady:session',
+    ]);
+  });
+
+  test('with only an afterStart, the service is ready once it has finished', async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ hook }) => (hook === 'afterStart' ? held.promise.then(() => undefined) : undefined),
+      ['afterStart'],
+    );
+    const t = setup({ services: { worker: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events).toEqual(['spawn worker', 'worker:afterStart:session']));
+    expect(t.readiness.isReady('worker')).toBe(false);
+    held.open();
+    await until(() => expect(t.readiness.isReady('worker')).toBe(true));
+    expect(r.events).toHaveLength(2);
+  });
+
+  test('a service with no hook after its spawn is ready on its health alone, as before', async () => {
+    const r = recordingHooks(() => undefined, ['beforeStart']);
+    const t = setup({ services: { worker: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events).toEqual(['worker:beforeStart:session', 'spawn worker']));
+    expect(t.readiness.isReady('worker')).toBe(true);
+  });
+
+  test("a dependent waits for the dependency's afterReady", async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ name, hook }) =>
+        name === 'api' && hook === 'afterReady' ? held.promise.then(() => undefined) : undefined,
+      ALL,
+    );
+    const t = setup({
+      services: {
+        api: { healthcheck: HC },
+        web: { deps: [{ service: 'api', wait: true }] },
+      },
+      hooks: r.hooks,
+      events: r.events,
+    });
+    t.answers.set('api', true);
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    await t.clock.advance(2000);
+    await until(() => expect(r.events.at(-1)).toBe('api:afterReady:session'));
+    await t.clock.advance(5000);
+    expect(t.state('web')).toBe('waiting');
+    expect(r.events).not.toContain('spawn web');
+    held.open();
+    await until(() => expect(r.events).toContain('spawn web'));
+    expect(r.events.indexOf('web:beforeStart:session')).toBeGreaterThan(
+      r.events.indexOf('api:afterReady:session'),
+    );
+  });
+
+  test('an afterReady that throws fails the service, keeps its process, and its dependents stay waiting with the reason', async () => {
+    const r = recordingHooks(
+      ({ name, hook }) => (name === 'api' && hook === 'afterReady' ? { error: 'boom' } : undefined),
+      ALL,
+    );
+    const t = setup({
+      services: {
+        api: { healthcheck: HC },
+        web: { deps: [{ service: 'api', wait: true }] },
+      },
+      hooks: r.hooks,
+      events: r.events,
+    });
+    t.answers.set('api', true);
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    await t.clock.advance(2000);
+    await until(() => expect(t.state('api')).toBe('failed'));
+    await t.clock.advance(5000);
+    expect(t.of('api')).toHaveLength(1);
+    expect(t.proc('api').stops).toBe(0);
+    expect(t.supervisor.states().get('api')!.pid).toBe(t.proc('api').pid);
+    expect(t.supervisor.states().get('api')!.ready).toBe(false);
+    expect(t.readiness.isHealthy('api')).toBe(true);
+    expect(t.readiness.isReady('api')).toBe(false);
+    expect(t.said('api')).toEqual(['started', 'afterReady failed: boom']);
+    expect(t.logs.getVisibleLines().filter((l) => l.service === 'api')[1]!.isError).toBe(true);
+    expect(t.supervisor.failure('api')).toBe('afterReady failed: boom');
+
+    expect(t.state('web')).toBe('waiting');
+    expect(t.of('web')).toHaveLength(0);
+    expect(t.said('web').some((line) => line.includes('api failed: afterReady failed: boom'))).toBe(
+      true,
+    );
+    expect(t.supervisor.blockedBy('web')).toBe(
+      'waiting for api, which failed: afterReady failed: boom. Run stackctl service restart -s api once it is fixed; a change to stackctl.config.ts needs a new session',
+    );
+    expect(t.supervisor.blockedBy('api')).toBeNull();
+  });
+
+  test('a service waiting on a service that waits on a failed one is blocked by the failed one', async () => {
+    const r = recordingHooks(
+      ({ name, hook }) => (name === 'db' && hook === 'afterReady' ? { error: 'boom' } : undefined),
+      ALL,
+    );
+    const t = setup({
+      services: {
+        db: { healthcheck: HC },
+        api: { healthcheck: HC, deps: [{ service: 'db', wait: true }] },
+        web: { healthcheck: HC, deps: [{ service: 'api', wait: true }] },
+        admin: { deps: [{ service: 'web', wait: true }] },
+      },
+      selected: ['db', 'api', 'web'],
+      hooks: r.hooks,
+      events: r.events,
+    });
+    t.answers.set('db', true);
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('db')).toHaveLength(1));
+    await t.clock.advance(200);
+    await until(() => expect(t.state('db')).toBe('failed'));
+    expect(t.state('api')).toBe('waiting');
+    expect(t.state('web')).toBe('waiting');
+    expect(t.supervisor.blockedBy('api')).toBe(
+      'waiting for db, which failed: afterReady failed: boom. Run stackctl service restart -s db once it is fixed; a change to stackctl.config.ts needs a new session',
+    );
+    expect(t.supervisor.blockedBy('web')).toBe(
+      'waiting for api, which waits for db, which failed: afterReady failed: boom. Run stackctl service restart -s db once it is fixed; a change to stackctl.config.ts needs a new session',
+    );
+    // One more level: each service in between is named.
+    expect(await t.supervisor.add('admin')).toBe('done');
+    await until(() => expect(t.state('admin')).toBe('waiting'));
+    expect(t.supervisor.blockedBy('admin')).toBe(
+      'waiting for web, which waits for api, which waits for db, which failed: afterReady failed: boom. Run stackctl service restart -s db once it is fixed; a change to stackctl.config.ts needs a new session',
+    );
+  });
+
+  test('a service waiting on two failed services gives a sentence for each, each starting with a capital but the first', async () => {
+    const r = recordingHooks(
+      ({ name, hook }) => (name !== 'web' && hook === 'afterStart' ? { error: `${name} broke` } : undefined), // oxfmt-ignore
+      ALL,
+    );
+    const t = setup({
+      services: {
+        api: { healthcheck: HC },
+        worker: { healthcheck: HC },
+        web: {
+          deps: [
+            { service: 'api', wait: true },
+            { service: 'worker', wait: true },
+          ],
+        },
+      },
+      hooks: r.hooks,
+      events: r.events,
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.state('worker')).toBe('failed'));
+    await until(() => expect(t.state('api')).toBe('failed'));
+    expect(t.supervisor.blockedBy('web')).toBe(
+      'waiting for api, which failed: afterStart failed: api broke. Run stackctl service restart -s api once it is fixed; a change to stackctl.config.ts needs a new session. ' +
+        'Waiting for worker, which failed: afterStart failed: worker broke. Run stackctl service restart -s worker once it is fixed; a change to stackctl.config.ts needs a new session',
+    );
+  });
+
+  test('afterReady runs once per start: health lost and regained runs it no second time', async () => {
+    const r = recordingHooks(() => undefined, ALL);
+    const t = setup({ services: { api: { healthcheck: HC } }, hooks: r.hooks, events: r.events });
+    t.answers.set('api', true);
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    await t.clock.advance(200);
+    await until(() => expect(t.readiness.isReady('api')).toBe(true));
+    t.answers.set('api', false);
+    await t.clock.advance(2000);
+    expect(t.readiness.isReady('api')).toBe(false);
+    t.answers.set('api', true);
+    await t.clock.advance(2000);
+    expect(t.readiness.isReady('api')).toBe(true);
+    expect(r.events.filter((e) => e.startsWith('api:afterReady'))).toEqual([
+      'api:afterReady:session',
+    ]);
+
+    // A restart is a new start: it runs once more.
+    const old = t.proc('api');
+    const restarting = t.supervisor.restart('api');
+    old.exit({ code: null, signal: 'SIGTERM' });
+    await restarting;
+    await t.clock.advance(2000);
+    await until(() => expect(t.readiness.isReady('api')).toBe(true));
+    expect(r.events.filter((e) => e.startsWith('api:afterReady'))).toEqual([
+      'api:afterReady:session',
+      'api:afterReady:restart',
+    ]);
+  });
+
+  test("a start resolves once afterStart is done: it doesn't wait for the healthcheck or afterReady", async () => {
+    const r = recordingHooks(() => undefined, ALL);
+    const t = setup({
+      services: { api: { healthcheck: HC, autostart: false } },
+      hooks: r.hooks,
+      events: r.events,
+    });
+    t.supervisor.launchAll();
+    await t.supervisor.start('api');
+    expect(r.events).toEqual(['api:beforeStart:start', 'spawn api', 'api:afterStart:start']);
+    expect(t.readiness.isReady('api')).toBe(false);
+  });
+
+  test("an afterStart that throws runs no afterReady, and the service's dependents are told why they wait", async () => {
+    const r = recordingHooks(
+      ({ name, hook }) => (name === 'api' && hook === 'afterStart' ? { error: 'boom' } : undefined),
+      ALL,
+    );
+    const t = setup({
+      services: { api: { healthcheck: HC }, web: { deps: [{ service: 'api', wait: true }] } },
+      hooks: r.hooks,
+      events: r.events,
+    });
+    t.answers.set('api', true);
+    t.supervisor.launchAll();
+    await until(() => expect(t.state('api')).toBe('failed'));
+    await t.clock.advance(2000);
+    expect(r.events.filter((e) => e.startsWith('api:'))).toEqual([
+      'api:beforeStart:session',
+      'api:afterStart:session',
+    ]);
+    expect(t.readiness.isHealthy('api')).toBe(true);
+    expect(t.readiness.isReady('api')).toBe(false);
+    expect(t.state('web')).toBe('waiting');
+    expect(t.said('web').some((line) => line.includes('api failed: afterStart failed: boom'))).toBe(
+      true,
+    );
+  });
+
+  test.each([
+    {
+      screen: 'with no screen',
+      interactive: false,
+      how: 'Run stackctl service restart -s api once it is fixed; a change to stackctl.config.ts needs a new session',
+    },
+    {
+      screen: 'on the terminal UI',
+      interactive: true,
+      how: 'Once it is fixed, focus api and press r, or run stackctl service restart -s api; a change to stackctl.config.ts needs a new session',
+    },
+  ])(
+    'a dependent that starts waiting on a service already failed is told why at once, $screen',
+    async ({ interactive, how }) => {
+      const r = recordingHooks(
+        ({ name, hook }) =>
+          name === 'api' && hook === 'afterReady' ? { error: 'boom' } : undefined,
+        ALL,
+      );
+      const t = setup({
+        services: { api: { healthcheck: HC }, web: { deps: [{ service: 'api', wait: true }] } },
+        selected: ['api'],
+        hooks: r.hooks,
+        events: r.events,
+        interactive,
+      });
+      t.answers.set('api', true);
+      t.supervisor.launchAll();
+      await until(() => expect(t.of('api')).toHaveLength(1));
+      await t.clock.advance(200);
+      await until(() => expect(t.state('api')).toBe('failed'));
+      expect(await t.supervisor.add('web')).toBe('done');
+      await until(() => expect(t.state('web')).toBe('waiting'));
+      expect(t.said('web')).toEqual([
+        'added to the session',
+        'waiting for api...',
+        `api failed: afterReady failed: boom; still waiting for api. ${how}`,
+      ]);
+    },
+  );
+
+  test('a restart while afterReady runs abandons it: its late failure touches nothing of the new start', async () => {
+    const first = gate();
+    let n = 0;
+    const r = recordingHooks(({ hook }) => {
+      if (hook !== 'afterReady') {
+        return undefined;
+      }
+      n++;
+      return n === 1 ? first.promise.then(() => ({ error: 'late' })) : undefined;
+    }, ALL);
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events.at(-1)).toBe('api:afterReady:session'));
+    const old = t.proc('api');
+    const restarting = t.supervisor.restart('api');
+    old.exit({ code: null, signal: 'SIGTERM' });
+    await until(() => expect(t.of('api')).toHaveLength(2));
+    first.open();
+    await restarting;
+    await until(() => expect(r.events.at(-1)).toBe('api:afterReady:restart'));
+    await until(() => expect(t.readiness.isReady('api')).toBe(true));
+    expect(t.said('api')).toContain('afterReady abandoned: the service was restarted');
+    expect(t.said('api')).not.toContain('afterReady failed: late');
+    expect(t.state('api')).toBe('running');
+    expect(t.supervisor.failure('api')).toBeNull();
+  });
+
+  test("a late afterReady never releases a newer start's hold", async () => {
+    const oldRun = gate();
+    const newStart = gate();
+    let readyRuns = 0;
+    const r = recordingHooks(({ hook }) => {
+      if (hook === 'afterReady') {
+        readyRuns++;
+        return readyRuns === 1 ? oldRun.promise.then(() => undefined) : undefined;
+      }
+      if (hook === 'afterStart' && readyRuns === 1) {
+        return newStart.promise.then(() => undefined);
+      }
+      return undefined;
+    }, ALL);
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events.at(-1)).toBe('api:afterReady:session'));
+    const old = t.proc('api');
+    const restarting = t.supervisor.restart('api');
+    old.exit({ code: null, signal: 'SIGTERM' });
+    await until(() => expect(r.events.at(-1)).toBe('api:afterStart:restart'));
+    // The old afterReady succeeds while the new start's afterStart still runs.
+    oldRun.open();
+    await t.clock.advance(100);
+    expect(t.readiness.isHealthy('api')).toBe(true);
+    expect(t.readiness.isReady('api')).toBe(false);
+    newStart.open();
+    await restarting;
+    await until(() => expect(t.readiness.isReady('api')).toBe(true));
+    expect(r.events.filter((e) => e.startsWith('api:afterReady'))).toEqual([
+      'api:afterReady:session',
+      'api:afterReady:abandoned',
+      'api:afterReady:restart',
+    ]);
+  });
+
+  test('a restart of a failed service starts it afresh: its failure is cleared and it gets ready', async () => {
+    let fail = true;
+    const r = recordingHooks(
+      ({ hook }) => (hook === 'afterReady' && fail ? { error: 'boom' } : undefined),
+      ALL,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(t.state('api')).toBe('failed'));
+    fail = false;
+    const old = t.proc('api');
+    const restarting = t.supervisor.restart('api');
+    old.exit({ code: null, signal: 'SIGTERM' });
+    await restarting;
+    await until(() => expect(t.readiness.isReady('api')).toBe(true));
+    expect(t.state('api')).toBe('running');
+    expect(t.supervisor.failure('api')).toBeNull();
+  });
+
+  test('a stop while afterReady waits for health runs no afterReady', async () => {
+    const r = recordingHooks(() => undefined, ALL);
+    const t = setup({ services: { api: { healthcheck: HC } }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events.at(-1)).toBe('api:afterStart:session'));
+    const stopping = t.supervisor.stop('api');
+    t.proc('api').exit({ code: null, signal: 'SIGTERM' });
+    await stopping;
+    t.answers.set('api', true);
+    await t.clock.advance(5000);
+    expect(r.events.filter((e) => e.startsWith('api:afterReady'))).toEqual([]);
+  });
+
+  describe('a stop or restart of a service whose hooks hold its ready', () => {
+    /** `api` (healthchecked, its `afterReady` failing the first time) and `web` waiting on it. */
+    async function failedApiWithWaiter() {
+      let fail = true;
+      const r = recordingHooks(
+        ({ name, hook }) =>
+          name === 'api' && hook === 'afterReady' && fail ? { error: 'boom' } : undefined,
+        ALL,
+      );
+      const t = setup({
+        services: { api: { healthcheck: HC }, web: { deps: [{ service: 'api', wait: true }] } },
+        hooks: r.hooks,
+        events: r.events,
+      });
+      t.answers.set('api', true);
+      t.supervisor.launchAll();
+      await until(() => expect(t.of('api')).toHaveLength(1));
+      await t.clock.advance(200);
+      await until(() => expect(t.state('api')).toBe('failed'));
+      fail = false;
+      return { t, r };
+    }
+
+    test("a restart doesn't release the dependents while the old process still answers", async () => {
+      const { t, r } = await failedApiWithWaiter();
+      const old = t.proc('api');
+      const restarting = t.supervisor.restart('api');
+      // The old process is in its grace period, and still answers the healthcheck.
+      await t.clock.advance(2000);
+      expect(r.events).not.toContain('spawn web');
+      expect(t.readiness.isReady('api')).toBe(false);
+      // api is no longer failed: web just waits for it.
+      expect(t.supervisor.blockedBy('web')).toBeNull();
+      // The new process: its afterReady waits for a probe of its own to pass.
+      t.answers.set('api', false);
+      old.exit({ code: null, signal: 'SIGTERM' });
+      await restarting;
+      expect(t.of('api')).toHaveLength(2);
+      await t.clock.advance(1000);
+      expect(r.events).not.toContain('api:afterReady:restart');
+      expect(r.events).not.toContain('spawn web');
+      t.answers.set('api', true);
+      await t.clock.advance(2000);
+      await until(() => expect(r.events).toContain('spawn web'));
+      expect(r.events.indexOf('api:afterReady:restart')).toBeLessThan(
+        r.events.indexOf('spawn web'),
+      );
+      expect(t.supervisor.blockedBy('web')).toBeNull();
+    });
+
+    test("a stop doesn't release the dependents while the old process still answers", async () => {
+      const { t, r } = await failedApiWithWaiter();
+      const stopping = t.supervisor.stop('api');
+      await t.clock.advance(2000);
+      expect(r.events).not.toContain('spawn web');
+      expect(t.readiness.isReady('api')).toBe(false);
+      t.proc('api').exit({ code: null, signal: 'SIGTERM' });
+      await stopping;
+      await t.clock.advance(2000);
+      expect(r.events).not.toContain('spawn web');
+      expect(t.state('web')).toBe('waiting');
+    });
+  });
+
+  test('a shutdown while afterReady runs: no line, no state change after it', async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ hook }) =>
+        hook === 'afterReady' ? held.promise.then(() => ({ error: 'late' })) : undefined,
+      ALL,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events.at(-1)).toBe('api:afterReady:session'));
+    const stopping = t.supervisor.stopAll();
+    t.proc('api').exit({ code: null, signal: 'SIGTERM' });
+    await stopping;
+    const said = t.said('api');
+    held.open();
+    await t.clock.advance(100);
+    await settle();
+    expect(t.said('api')).toEqual(said);
+    expect(t.state('api')).toBe('stopped');
+  });
+
+  test('a process that exits by itself while afterReady runs: the crash stands, nothing is released', async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ hook }) => (hook === 'afterReady' ? held.promise.then(() => undefined) : undefined),
+      ALL,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events.at(-1)).toBe('api:afterReady:session'));
+    t.proc('api').exit({ code: 1, signal: null });
+    await until(() => expect(t.state('api')).toBe('crashed'));
+    held.open();
+    await settle();
+    expect(t.state('api')).toBe('crashed');
+    expect(t.readiness.isReady('api')).toBe(false);
+  });
+});
+
+describe('stop hooks', () => {
+  const ALL = ['beforeStart', 'afterStart', 'afterReady', 'beforeStop', 'afterStop'];
+  const STOPS = ['beforeStop', 'afterStop'];
+
+  /** Records `stop <name>` in `events` when `proc` is signalled; with `exit`, it exits at once. */
+  function recordStop(proc: StubProcess, events: string[], exit = true): void {
+    const stop = proc.stop.bind(proc);
+    proc.stop = () => {
+      events.push(`stop ${proc.opts.name}`);
+      const exited = stop();
+      if (exit) {
+        proc.exit({ code: null, signal: 'SIGTERM' });
+      }
+      return exited;
+    };
+  }
+
+  test('a restart runs beforeStop, the stop, afterStop, beforeStart, the spawn, afterStart, afterReady, in that order, with one data', async () => {
+    const r = recordingHooks(() => undefined, ALL);
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events.at(-1)).toBe('api:afterReady:session'));
+    r.events.length = 0;
+    r.calls.length = 0;
+    recordStop(t.proc('api'), r.events);
+    const data = {};
+    await t.supervisor.restart('api', data);
+    await until(() => expect(r.events.at(-1)).toBe('api:afterReady:restart'));
+    expect(r.events).toEqual([
+      'api:beforeStop:restart',
+      'stop api',
+      'api:afterStop:restart',
+      'api:beforeStart:restart',
+      'spawn api',
+      'api:afterStart:restart',
+      'api:afterReady:restart',
+    ]);
+    expect(r.calls).toHaveLength(5);
+    for (const call of r.calls) {
+      expect(call.data).toBe(data);
+      expect(call.trigger).toBe('restart');
+    }
+  });
+
+  test('a restart for a .env change runs its stop hooks with the trigger env', async () => {
+    const r = recordingHooks(() => undefined, STOPS);
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    recordStop(t.proc('api'), r.events);
+    await t.supervisor.envChanged('api');
+    expect(r.events).toEqual(['spawn api', 'api:beforeStop:env', 'stop api', 'api:afterStop:env', 'spawn api']); // oxfmt-ignore
+    expect(r.calls[0]!.data).toBe(r.calls[1]!.data);
+  });
+
+  test('a stop runs beforeStop before the signal and afterStop once the process has exited, with trigger stop', async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ hook }) => (hook === 'beforeStop' ? held.promise.then(() => undefined) : undefined),
+      STOPS,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    const proc = t.proc('api');
+    recordStop(proc, r.events, false);
+    const data = {};
+    let stopped = false;
+    const stopping = t.supervisor.stop('api', data).then(() => {
+      stopped = true;
+    });
+    await until(() => expect(r.events.at(-1)).toBe('api:beforeStop:stop'));
+    await t.clock.advance(1000);
+    // The state flips at once; the signal waits for the hook.
+    expect(t.state('api')).toBe('stopped');
+    expect(proc.stops).toBe(0);
+    held.open();
+    await until(() => expect(proc.stops).toBe(1));
+    await settle();
+    expect(r.events).toEqual(['spawn api', 'api:beforeStop:stop', 'stop api']);
+    expect(stopped).toBe(false);
+    proc.exit({ code: null, signal: 'SIGTERM' });
+    await stopping;
+    expect(r.events).toEqual(['spawn api', 'api:beforeStop:stop', 'stop api', 'api:afterStop:stop']); // oxfmt-ignore
+    expect(r.calls.map((c) => c.data)).toEqual([data, data]);
+    expect(r.calls[0]!.data).toBe(data);
+    expect(r.calls[1]!.data).toBe(data);
+    expect(t.said('api')).toEqual(['started', 'stopping...', 'stopped']);
+  });
+
+  test('stop hooks run only for a running process', async () => {
+    const r = recordingHooks(() => undefined, STOPS);
+    const t = setup({
+      services: {
+        api: { healthcheck: HC },
+        web: { deps: [{ service: 'api', wait: true }] },
+        worker: {},
+      },
+      hooks: r.hooks,
+      events: r.events,
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('worker')).toHaveLength(1));
+    // web waits for api, which never gets healthy.
+    expect(t.state('web')).toBe('waiting');
+    await t.supervisor.stop('web');
+    expect(t.state('web')).toBe('stopped');
+    // A stopped one.
+    await t.supervisor.stop('web');
+    // A crashed one.
+    t.proc('worker').exit({ code: 1, signal: null });
+    expect(t.state('worker')).toBe('crashed');
+    await t.supervisor.stop('worker');
+    await t.supervisor.restart('worker');
+    expect(r.events.filter((e) => !e.startsWith('spawn'))).toEqual([]);
+    expect(t.of('worker')).toHaveLength(2);
+  });
+
+  test('a service that exits on its own runs no hook', async () => {
+    const r = recordingHooks(() => undefined, STOPS);
+    const t = setup({ services: { api: {}, worker: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(t.procs).toHaveLength(2));
+    t.proc('api').exit({ code: 0, signal: null });
+    t.proc('worker').exit({ code: 1, signal: null });
+    await t.clock.advance(1000);
+    await settle();
+    expect(t.state('api')).toBe('stopped');
+    expect(t.state('worker')).toBe('crashed');
+    expect(r.calls).toEqual([]);
+  });
+
+  test('a stop hook that throws is logged as an error and the stop goes ahead', async () => {
+    const r = recordingHooks(({ hook }) => ({ error: hook === 'beforeStop' ? 'boom' : 'bang' }), STOPS); // oxfmt-ignore
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    const proc = t.proc('api');
+    recordStop(proc, r.events);
+    await t.supervisor.stop('api');
+    expect(r.events).toEqual(['spawn api', 'api:beforeStop:stop', 'stop api', 'api:afterStop:stop']); // oxfmt-ignore
+    expect(t.said('api')).toEqual([
+      'started',
+      'stopping...',
+      'beforeStop failed: boom',
+      'stopped',
+      'afterStop failed: bang',
+    ]);
+    const lines = t.logs.getVisibleLines().filter((l) => l.service === 'api');
+    expect(lines.filter((l) => l.isError).map((l) => stripAnsi(l.text))).toEqual([
+      'beforeStop failed: boom',
+      'afterStop failed: bang',
+    ]);
+    expect(t.state('api')).toBe('stopped');
+    expect(proc.stops).toBe(1);
+  });
+
+  test('a restart reads restarting at once, before its beforeStop has finished', async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ hook }) => (hook === 'beforeStop' ? held.promise.then(() => undefined) : undefined),
+      STOPS,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    recordStop(t.proc('api'), r.events);
+    const restarting = t.supervisor.restart('api');
+    // Before the hook has begun: a control API's restart answers on this state.
+    expect(t.state('api')).toBe('restarting');
+    expect(r.events).toEqual(['spawn api']);
+    await until(() => expect(r.events.at(-1)).toBe('api:beforeStop:restart'));
+    expect(t.said('api')).toEqual(['started', 'stopping...']);
+    expect(t.state('api')).toBe('restarting');
+    held.open();
+    await restarting;
+    expect(t.of('api')).toHaveLength(2);
+    expect(t.state('api')).toBe('running');
+  });
+
+  test("a stop during a restart's beforeStop abandons it and signals the process at once; its afterStop runs, nothing spawns", async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ hook }) => (hook === 'beforeStop' ? held.promise.then(() => undefined) : undefined),
+      ALL,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events.at(-1)).toBe('api:afterReady:session'));
+    r.events.length = 0;
+    recordStop(t.proc('api'), r.events);
+    const restarting = t.supervisor.restart('api');
+    await until(() => expect(r.events).toEqual(['api:beforeStop:restart']));
+    const stopping = t.supervisor.stop('api');
+    expect(t.state('api')).toBe('stopped');
+    // The hook never settles: the stop goes on without it.
+    await Promise.all([restarting, stopping]);
+    expect(r.events).toEqual(['api:beforeStop:restart', 'stop api', 'api:afterStop:restart']);
+    expect(t.said('api')).toContain('beforeStop abandoned: the stop was asked for again');
+    held.open();
+    await settle();
+    expect(t.of('api')).toHaveLength(1);
+    expect(t.state('api')).toBe('stopped');
+  });
+
+  test.each(['beforeStop', 'afterStop'])(
+    'a start while a stop runs its %s waits for the stop to finish: one process at a time',
+    async (during) => {
+      const held = gate();
+      const r = recordingHooks(
+        ({ hook }) => (hook === during ? held.promise.then(() => undefined) : undefined),
+        STOPS,
+      );
+      const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+      t.supervisor.launchAll();
+      await until(() => expect(t.of('api')).toHaveLength(1));
+      recordStop(t.proc('api'), r.events);
+      const stopping = t.supervisor.stop('api');
+      await until(() => expect(r.events.at(-1)).toBe(`api:${during}:stop`));
+      const starting = t.supervisor.start('api');
+      await t.clock.advance(1000);
+      await settle();
+      expect(t.of('api')).toHaveLength(1);
+      held.open();
+      await Promise.all([stopping, starting]);
+      expect(r.events).toEqual(['spawn api', 'api:beforeStop:stop', 'stop api', 'api:afterStop:stop', 'spawn api']); // oxfmt-ignore
+      expect(t.state('api')).toBe('running');
+    },
+  );
+
+  test.each([
+    {
+      how: 'stopAll',
+      shut: async (t: ReturnType<typeof setup>, proc: StubProcess) => {
+        const all = t.supervisor.stopAll();
+        proc.exit({ code: null, signal: 'SIGTERM' });
+        await all;
+      },
+      signalled: (proc: StubProcess) => proc.stops,
+    },
+    {
+      how: 'killEverything',
+      shut: async (t: ReturnType<typeof setup>) => t.supervisor.killEverything(),
+      signalled: (proc: StubProcess) => proc.kills,
+    },
+  ])(
+    'a shutdown ($how) during a beforeStop: the process is signalled at once, and no afterStop runs',
+    async ({ shut, signalled }) => {
+      const held = gate();
+      const r = recordingHooks(
+        ({ hook }) => (hook === 'beforeStop' ? held.promise.then(() => undefined) : undefined),
+        STOPS,
+      );
+      const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+      t.supervisor.launchAll();
+      await until(() => expect(t.of('api')).toHaveLength(1));
+      const proc = t.proc('api');
+      const stopping = t.supervisor.stop('api');
+      await until(() => expect(r.events.at(-1)).toBe('api:beforeStop:stop'));
+      // Resolves with the hook still running.
+      await shut(t, proc);
+      expect(signalled(proc)).toBe(1);
+      const said = t.said('api');
+      held.open();
+      await stopping;
+      await settle();
+      expect(r.events).toEqual(['spawn api', 'api:beforeStop:stop']);
+      expect(t.said('api')).toEqual(said);
+      expect(t.state('api')).toBe('stopped');
+    },
+  );
+
+  test('a process that exits by itself while its beforeStop runs: no crash, no exit event, and its afterStop runs', async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ hook }) => (hook === 'beforeStop' ? held.promise.then(() => undefined) : undefined),
+      STOPS,
+    );
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    const exits: string[] = [];
+    t.supervisor.on('exit', (name) => exits.push(name));
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    const stopping = t.supervisor.stop('api');
+    await until(() => expect(r.events.at(-1)).toBe('api:beforeStop:stop'));
+    t.proc('api').exit({ code: 1, signal: null });
+    await settle();
+    expect(t.state('api')).toBe('stopped');
+    // Gone: nothing to reach, no pid.
+    expect(t.supervisor.hasProcess('api')).toBe(false);
+    expect(t.readiness.isHealthy('api')).toBe(false);
+    expect(t.supervisor.states().get('api')!.pid).toBeNull();
+    held.open();
+    await stopping;
+    expect(r.events).toEqual(['spawn api', 'api:beforeStop:stop', 'api:afterStop:stop']);
+    expect(t.state('api')).toBe('stopped');
+    expect(exits).toEqual([]);
+  });
+
+  test.each([
+    {
+      how: 'a stop',
+      act: (t: ReturnType<typeof setup>) => t.supervisor.stop('api'),
+      state: 'stopped',
+    },
+    {
+      how: 'a restart',
+      act: (t: ReturnType<typeof setup>) => t.supervisor.restart('api'),
+      state: 'restarting',
+    },
+  ])(
+    'while $how runs its beforeStop, the process can still be reached and its pid is shown, but the service is not ready; from the signal on, neither',
+    async ({ act, state }) => {
+      const held = gate();
+      const r = recordingHooks(
+        ({ hook }) => (hook === 'beforeStop' ? held.promise.then(() => undefined) : undefined),
+        ['beforeStop'],
+      );
+      const t = setup({
+        services: { api: { healthcheck: HC }, worker: {} },
+        hooks: r.hooks,
+        events: r.events,
+      });
+      t.answers.set('api', true);
+      t.supervisor.launchAll();
+      await until(() => expect(t.of('api')).toHaveLength(1));
+      await t.clock.advance(200);
+      await until(() => expect(t.readiness.isReady('api')).toBe(true));
+      const proc = t.proc('api');
+      const pid = proc.pid;
+      recordStop(proc, r.events, false);
+      const acting = act(t);
+      await until(() => expect(r.events.at(-1)).toMatch(/^api:beforeStop:/));
+      // The probes go on, and the old process still answers them.
+      await t.clock.advance(3000);
+      expect(t.state('api')).toBe(state);
+      expect(t.supervisor.hasProcess('api')).toBe(true);
+      expect(t.readiness.isHealthy('api')).toBe(true);
+      expect(t.readiness.isReady('api')).toBe(false);
+      expect(t.supervisor.states().get('api')).toMatchObject({ pid, ready: false });
+      held.open();
+      await until(() => expect(proc.stops).toBe(1));
+      expect(t.supervisor.hasProcess('api')).toBe(false);
+      expect(t.readiness.isHealthy('api')).toBe(false);
+      expect(t.supervisor.states().get('api')!.pid).toBeNull();
+      proc.exit({ code: null, signal: 'SIGTERM' });
+      await acting;
+    },
+  );
+
+  test('a service with no healthcheck can be reached while its beforeStop runs', async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ hook }) => (hook === 'beforeStop' ? held.promise.then(() => undefined) : undefined),
+      ['beforeStop'],
+    );
+    const t = setup({ services: { worker: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('worker')).toHaveLength(1));
+    const proc = t.proc('worker');
+    recordStop(proc, r.events);
+    const stopping = t.supervisor.stop('worker');
+    await until(() => expect(r.events.at(-1)).toBe('worker:beforeStop:stop'));
+    expect(t.readiness.isHealthy('worker')).toBe(true);
+    expect(t.readiness.isReady('worker')).toBe(false);
+    held.open();
+    await stopping;
+    expect(t.readiness.isHealthy('worker')).toBe(false);
+  });
+
+  test('a stop with only an afterStop signals at once', async () => {
+    const r = recordingHooks(() => undefined, ['afterStop']);
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    const proc = t.proc('api');
+    const stopping = t.supervisor.stop('api');
+    expect(t.supervisor.states().get('api')!.pid).toBeNull();
+    await settle();
+    expect(proc.stops).toBe(1);
+    proc.exit({ code: null, signal: 'SIGTERM' });
+    await stopping;
+    expect(r.events).toEqual(['spawn api', 'api:afterStop:stop']);
+  });
+
+  test("a restart doesn't make the service ready while its beforeStop runs and the old process still answers", async () => {
+    const held = gate();
+    const r = recordingHooks(
+      ({ hook }) => (hook === 'beforeStop' ? held.promise.then(() => undefined) : undefined),
+      ['beforeStop'],
+    );
+    const t = setup({
+      services: { api: { healthcheck: HC }, web: { deps: [{ service: 'api', wait: true }] } },
+      hooks: r.hooks,
+      events: r.events,
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    expect(t.state('web')).toBe('waiting');
+    const old = t.proc('api');
+    const restarting = t.supervisor.restart('api');
+    await until(() => expect(r.events.at(-1)).toBe('api:beforeStop:restart'));
+    // The old process answers while its beforeStop runs.
+    t.answers.set('api', true);
+    await t.clock.advance(3000);
+    expect(t.readiness.isReady('api')).toBe(false);
+    expect(r.events).not.toContain('spawn web');
+    t.answers.set('api', false);
+    held.open();
+    await until(() => expect(old.stops).toBe(1));
+    old.exit({ code: null, signal: 'SIGTERM' });
+    await restarting;
+    expect(t.of('api')).toHaveLength(2);
+    await t.clock.advance(1000);
+    expect(r.events).not.toContain('spawn web');
+    t.answers.set('api', true);
+    await t.clock.advance(2000);
+    await until(() => expect(r.events).toContain('spawn web'));
+  });
+});
+
+describe('a newer request abandons the start hooks still running', () => {
+  const ALL = ['beforeStart', 'afterStart', 'afterReady', 'beforeStop', 'afterStop'];
+  const STARTS = ['beforeStart', 'afterStart', 'afterReady'];
+  /** Never settles: a hook that hangs. */
+  const never = new Promise<void>(() => {});
+
+  /** A session whose `api` hangs in `hook` of its first start. */
+  async function hungIn(hook: string, defined: readonly string[] = STARTS) {
+    const r = recordingHooks((call) => (call.hook === hook && call.trigger === 'session' ? never : undefined), defined); // oxfmt-ignore
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events.at(-1)).toBe(`api:${hook}:session`));
+    return { r, t };
+  }
+
+  test.each(STARTS)(
+    'a stop while %s runs abandons it, with a line, and neither fails the service nor makes it ready',
+    async (hook) => {
+      const { r, t } = await hungIn(hook);
+      const stopping = t.supervisor.stop('api');
+      t.of('api').at(-1)?.exit({ code: null, signal: 'SIGTERM' });
+      await stopping;
+      expect(r.events.at(-1)).toBe(`api:${hook}:abandoned`);
+      expect(t.said('api')).toContain(`${hook} abandoned: the service was stopped`);
+      expect(t.state('api')).toBe('stopped');
+      expect(t.supervisor.failure('api')).toBeNull();
+      expect(t.readiness.isReady('api')).toBe(false);
+    },
+  );
+
+  test("a hook abandoned by a stop that fails later logs nothing: it is no longer the service's", async () => {
+    const held = gate();
+    const r = recordingHooks(({ hook }) => (hook === 'afterReady' ? held.promise.then(() => ({ error: 'late' })) : undefined), STARTS); // oxfmt-ignore
+    const t = setup({ services: { api: {} }, hooks: r.hooks, events: r.events });
+    t.supervisor.launchAll();
+    await until(() => expect(r.events.at(-1)).toBe('api:afterReady:session'));
+    const stopping = t.supervisor.stop('api');
+    t.proc('api').exit({ code: null, signal: 'SIGTERM' });
+    await stopping;
+    const said = t.said('api');
+    held.open();
+    await settle();
+    expect(t.said('api')).toEqual(said);
+    expect(said).not.toContain('afterReady failed: late');
+  });
+
+  test("a stop's beforeStop begins only once the abandoned afterReady's commands have ended", async () => {
+    const { r, t } = await hungIn('afterReady', ALL);
+    const ended = gate();
+    r.commands.set('api', ended.promise);
+    const proc = t.proc('api');
+    r.events.length = 0;
+    const stopping = t.supervisor.stop('api');
+    await settle();
+    // Abandoned, and the stop under way, but its own hook waits for the commands to end.
+    expect(r.events).toEqual(['api:afterReady:abandoned']);
+    expect(t.state('api')).toBe('stopped');
+    expect(proc.stops).toBe(0);
+    ended.open();
+    await until(() => expect(proc.stops).toBe(1));
+    proc.exit({ code: null, signal: 'SIGTERM' });
+    await stopping;
+    expect(r.events).toEqual(['api:afterReady:abandoned', 'api:beforeStop:stop', 'api:afterStop:stop']); // oxfmt-ignore
+  });
+
+  test("a restart's new start begins only once the abandoned hook's commands have ended, though its process is stopped at once", async () => {
+    const { r, t } = await hungIn('afterStart');
+    const ended = gate();
+    r.commands.set('api', ended.promise);
+    const old = t.proc('api');
+    r.events.length = 0;
+    const restarting = t.supervisor.restart('api');
+    expect(old.stops).toBe(1);
+    old.exit({ code: null, signal: 'SIGTERM' });
+    // The restart re-reads the `.env` files before it gets here, and nothing marks that read's
+    // end: a real wait long enough for it, so a start that didn't wait would have begun.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(r.events).toEqual(['api:afterStart:abandoned']);
+    expect(t.said('api')).toContain('afterStart abandoned: the service was restarted');
+    r.events.push('commands ended');
+    ended.open();
+    expect(await restarting).toBe('done');
+    expect(r.events.slice(0, 5)).toEqual([
+      'api:afterStart:abandoned',
+      'commands ended',
+      'api:beforeStart:restart',
+      'spawn api',
+      'api:afterStart:restart',
+    ]);
+    expect(t.of('api')).toHaveLength(2);
+  });
+
+  test('a start after a stop waits for the commands of the beforeStart the stop abandoned', async () => {
+    const { r, t } = await hungIn('beforeStart');
+    const ended = gate();
+    r.commands.set('api', ended.promise);
+    const stopping = t.supervisor.stop('api');
+    expect(t.state('api')).toBe('stopped');
+    r.events.length = 0;
+    const starting = t.supervisor.start('api');
+    await settle();
+    expect(r.events).toEqual([]);
+    expect(t.of('api')).toHaveLength(0);
+    ended.open();
+    await Promise.all([stopping, starting]);
+    expect(r.events.slice(0, 3)).toEqual(['api:beforeStart:start', 'spawn api', 'api:afterStart:start']); // oxfmt-ignore
+  });
+
+  test('a start after a crash abandons the afterReady of the start before it', async () => {
+    const { r, t } = await hungIn('afterReady');
+    t.proc('api').exit({ code: 1, signal: null });
+    await until(() => expect(t.state('api')).toBe('crashed'));
+    r.events.length = 0;
+    await t.supervisor.start('api');
+    expect(r.events.slice(0, 2)).toEqual(['api:afterReady:abandoned', 'api:beforeStart:start']);
+    expect(t.said('api')).toContain('afterReady abandoned: the service was started again');
+    expect(t.of('api')).toHaveLength(2);
+  });
+
+  test("the shutdown abandons it with a line, and the service's beforeStop waits for its commands within the stop hooks' time", async () => {
+    const { r, t } = await hungIn('afterReady', ALL);
+    const ended = gate();
+    r.commands.set('api', ended.promise);
+    r.events.length = 0;
+    t.supervisor.beginShutdown();
+    expect(r.events).toEqual(['api:afterReady:abandoned']);
+    expect(t.said('api')).toContain('afterReady abandoned: the session is quitting');
+    const budget = new AbortController();
+    const hooks = t.supervisor.runStopHooks('beforeStop', t.supervisor.running(), {}, budget.signal); // oxfmt-ignore
+    await settle();
+    expect(r.events).toEqual(['api:afterReady:abandoned']);
+    ended.open();
+    await hooks;
+    expect(r.events).toEqual(['api:afterReady:abandoned', 'api:beforeStop:quit']);
+  });
+
+  test("commands that never end don't hold the stop: it goes on once their time to end is up", async () => {
+    const { r, t } = await hungIn('afterReady', ALL);
+    r.commands.set('api', never);
+    const proc = t.proc('api');
+    r.events.length = 0;
+    const stopping = t.supervisor.stop('api');
+    await t.clock.advance(COMMAND_END_GRACE_MS);
+    expect(proc.stops).toBe(0);
+    await t.clock.advance(1_000);
+    await until(() => expect(proc.stops).toBe(1));
+    proc.exit({ code: null, signal: 'SIGTERM' });
+    await stopping;
+    expect(r.events).toEqual(['api:afterReady:abandoned', 'api:beforeStop:stop', 'api:afterStop:stop']); // oxfmt-ignore
+  });
+
+  test('a second stop while those commands are still ending signals the process at once', async () => {
+    const { r, t } = await hungIn('afterReady', ALL);
+    r.commands.set('api', never);
+    const proc = t.proc('api');
+    const first = t.supervisor.stop('api');
+    await settle();
+    expect(proc.stops).toBe(0);
+    const second = t.supervisor.stop('api');
+    await until(() => expect(proc.stops).toBe(1));
+    proc.exit({ code: null, signal: 'SIGTERM' });
+    await until(() => expect(t.said('api')).toContain('beforeStop abandoned: the stop was asked for again')); // oxfmt-ignore
+    // Each stop resolves once nothing of the service runs: here, once the commands' time is up.
+    await t.clock.advance(COMMAND_END_GRACE_MS + 1_000);
+    await Promise.all([first, second]);
+  });
+});
+
+describe('a beforeStart that writes its own .env file', () => {
+  /** The `.env` watch of the supervisor over `root`, once it has read what the files start as. */
+  async function watchOf(root: string) {
+    const mine = () => watches.filter((w) => w.dirs[0] === root && !w.disposed);
+    await until(() => expect(mine()).toHaveLength(1));
+    await mine()[0]!.ready;
+    return mine()[0]!;
+  }
+
+  /**
+   * Reports a change in `api`'s directory, as the file watch does a moment after a write, and
+   * resolves with what the supervisor made of it: the services it restarts, and whether it took
+   * the change for a `beforeStart`'s own.
+   */
+  async function reportChange(t: { root: string; supervisor: Supervisor }) {
+    const watch = await watchOf(t.root);
+    const made = new Promise<{ restarts: string[]; byHook: boolean }>((resolve) =>
+      t.supervisor.once('env-change', (_dir, restarts, byHook) => resolve({ restarts, byHook })),
+    );
+    watch.targets.find((target) => target.dir === path.join(t.root, 'packages/api'))!.onChange();
+    return made;
+  }
+
+  /** A session of `api`, whose only hook is a `beforeStart` that runs `write` with its `.env`. */
+  function hooked(write: (file: string, call: HookCall) => void | Promise<void>) {
+    let file = '';
+    const r = recordingHooks((call) => write(file, call), ['beforeStart']);
+    const t = setup({
+      services: { api: {} },
+      hooks: r.hooks,
+      events: r.events,
+      files: { 'packages/api/.env': 'GREETING=before\n' },
+    });
+    file = path.join(t.root, 'packages/api/.env');
+    return t;
+  }
+
+  test('the spawn gets what it wrote, and the write, reported after the spawn, restarts nothing', async () => {
+    const t = hooked((file, { trigger }) => {
+      if (trigger === 'restart') {
+        fs.writeFileSync(file, 'GREETING=from-hook\n');
+      }
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    expect(t.proc('api').opts.env.GREETING).toBe('before');
+    const restarting = t.supervisor.restart('api');
+    t.proc('api').exit({ code: null, signal: 'SIGTERM' });
+    await restarting;
+    expect(t.of('api')).toHaveLength(2);
+    expect(t.proc('api').opts.env.GREETING).toBe('from-hook');
+    expect(await reportChange(t)).toEqual({ restarts: [], byHook: true });
+    expect(t.proc('api').stops).toBe(0);
+    expect(t.said('api')).not.toContain('.env changed, restarting...');
+    expect(t.state('api')).toBe('running');
+  });
+
+  test("at the session's start: exactly one process, with what the hook wrote", async () => {
+    const t = hooked((file) => fs.writeFileSync(file, 'GREETING=from-hook\n'));
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    expect(t.proc('api').opts.env.GREETING).toBe('from-hook');
+    expect(await reportChange(t)).toEqual({ restarts: [], byHook: true });
+    expect(t.of('api')).toHaveLength(1);
+    expect(t.proc('api').stops).toBe(0);
+    expect(t.state('api')).toBe('running');
+  });
+
+  test('a write while its beforeStart runs, reported before the hook returns, restarts nothing', async () => {
+    let during: { restarts: string[]; byHook: boolean } | undefined;
+    const t: ReturnType<typeof hooked> = hooked(async (file) => {
+      fs.writeFileSync(file, 'GREETING=from-hook\n');
+      // The hook goes on until the watch has reported its write.
+      during = await reportChange(t);
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    expect(during).toEqual({ restarts: [], byHook: true });
+    expect(t.proc('api').opts.env.GREETING).toBe('from-hook');
+    expect(t.proc('api').stops).toBe(0);
+  });
+
+  test("a change that is not the hook's restarts the service, and is not taken for the hook's", async () => {
+    const t = hooked(() => {});
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    fs.writeFileSync(path.join(t.root, 'packages/api/.env'), 'GREETING=edited\n');
+    expect(await reportChange(t)).toEqual({ restarts: ['api'], byHook: false });
+  });
+
+  test('an edit after the spawn still restarts it, through the real file watch', async () => {
+    const t = hooked((file, { trigger }) => {
+      if (trigger === 'restart') {
+        fs.writeFileSync(file, 'GREETING=from-hook\n');
+      }
+    });
+    t.supervisor.launchAll();
+    await until(() => expect(t.of('api')).toHaveLength(1));
+    await watchOf(t.root);
+    const restarting = t.supervisor.restart('api');
+    t.proc('api').exit({ code: null, signal: 'SIGTERM' });
+    await restarting;
+    const second = t.proc('api');
+    fs.writeFileSync(path.join(t.root, 'packages/api/.env'), 'GREETING=edited\n');
+    // A wait on the system's file events: long, so a busy machine doesn't fail it.
+    await vi.waitFor(() => expect(second.stops).toBe(1), { timeout: 12_000, interval: 20 });
+    expect(t.said('api')).toContain('.env changed, restarting...');
+  }, 15_000);
 });

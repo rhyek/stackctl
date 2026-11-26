@@ -57,13 +57,14 @@ first time).
 
 | `type`          | Fields                                                                       |
 | --------------- | ---------------------------------------------------------------------------- |
-| `service-state` | `service`, `status`, `ready`, `previousStatus`, `previousReady`              |
+| `service-state` | `service`, `status`, `ready`, `previousStatus`, `previousReady`; `error` while a start hook keeps it from getting ready (its own, or one of a service it waits for), as the status's `errors` has it |
 | `infra-state`   | `service`, `status`, `previousStatus`                                        |
-| `session-state` | `ready`: every service that isn't stopped ready, every infra service running |
+| `session-state` | `ready`: every service that isn't stopped ready, every infra service running, the session's `afterStart` and `afterReady` finished; `hooks`: the status's `sessionStartHooks`; `error`, once the session's start has failed after its services were started (its `afterStart` or `afterReady` threw, say) |
 
-A service's `status` is `running`, `waiting`, `restarting` or `stopped`. A dev script that watches
-its files, such as `node --watch`, outlives the app it runs: when the app crashes the service stays
-`running`, and its `ready` turns `false`.
+A service's `status` is `running`, `waiting`, `restarting`, `stopped` or `failed` (its
+[`afterStart` or `afterReady` failed](../config/lifecycle.md)). A dev script
+that watches its files, such as `node --watch`, outlives the app it runs: when the app crashes
+the service stays `running`, and its `ready` turns `false`.
 
 ## Commands
 
@@ -73,14 +74,19 @@ no `end` is a command still running, or one whose process was killed.
 
 | `type`            | Asked                                                                       | `end` adds                    |
 | ----------------- | --------------------------------------------------------------------------- | ----------------------------- |
-| `service-command` | `action` (`start`, `stop`, `restart`), `service`                            | `outcome`: `done`, `busy`, `waiting`, `unknown`, `unavailable` |
-| `infra-command`   | `action` (`start`, `stop`, `restart`, `reset`, `destroy`), `requested` (`[]` for all) | `services`, `results` (each `ready`, `stopped`, `destroyed` or `failed`), `everything`, `error` |
+| `service-command` | `action` (`start`, `stop`, `restart`), `service`                            | `outcome`: `done`, `cancelled`, `busy`, `waiting`, `unknown`, `unavailable`, `closing` |
+| `infra-command`   | `action` (`start`, `stop`, `restart`, `reset`, `destroy`), `requested` (`[]` for all) | `services`, `results` (each `ready`, `stopped`, `destroyed` or `failed`), `hookErrors`, `notStarted`, `everything`, `error` |
 | `compose-command` | `args`: what followed `infra docker-compose`                                | `exitCode`                    |
 | `one-off-command` | `kind` (`exec`, `run`), `service` or `dir`, `command`, or `script` and `args` | `exitCode`, `signal`        |
 | `session-command` | `action` (`quit`, `reset`)                                                  |                               |
 
-- **A `restart` ends** when the service has been started again. Whether it got ready follows in
-  `service-state` lines.
+- **A `restart` ends** when the service has been started again, or with `cancelled` when a stop
+  or the shutdown came first. Whether it got ready follows in `service-state` lines.
+- **An `infra-command`'s `hookErrors`** are the services that reached their state in `results`
+  while a hook around the step failed, their own or the project's, with its error: a
+  `beforeStop` that threw, the service stopped all the same. **`notStarted`** are the services a
+  reset destroyed and then didn't start because another's `afterDestroy` failed, with why:
+  `not started: db failed in afterDestroy`.
 - **A `quit` ends** when the session's services are down, just before its `session-end`.
 - **A `reset`'s lines open** the new file, since the reset deleted the old one.
 - **An `exec` or `run` inside a command stackctl runs writes no line**, such as one in a
@@ -106,6 +112,6 @@ What the session does on its own.
 | `type`          | Fields                                                                     |
 | --------------- | -------------------------------------------------------------------------- |
 | `session-start` | `services`, `headless`, `startedByAgent`, `argv`, `version`, `logFile`, `replaced`: the `sessionId` it took over, or `null` |
-| `session-end`   | `cause` (`quit`, `signal`, `error`), `durationMs`                          |
+| `session-end`   | `cause` (`quit`, `signal`, `error`), `durationMs`; `error`, why its start failed, when `cause` is `error` |
 | `service-exit`  | `service`, `exitCode`, `signal`: its process exited, and stackctl hadn't stopped it |
-| `env-change`    | `dir`: where a `.env` file changed, `services`: the ones it restarts       |
+| `env-change`    | `dir`: where a `.env` file changed, `services`: the ones it restarts. None for what a service's own `beforeStart` wrote. |

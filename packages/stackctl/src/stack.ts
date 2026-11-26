@@ -4,15 +4,22 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { WaitedSession } from './commands/wait';
-import type { ControlClient, SessionEvent, SessionServiceStatus } from './control-client';
+import type {
+  ControlClient,
+  SessionEvent,
+  SessionServiceStatus,
+  SessionStartHooks,
+} from './control-client';
 import {
   DETACHED_SESSION_VAR,
   type ProfileSource,
   assertSdkCall,
   assertStringArrays,
 } from './env-base';
+import { eventsFileBeside, sessionEndIn } from './event-log';
 import type { InfraStatus } from './infra/control';
 import type { ServiceName } from './register';
+import { retryAdvice } from './retry-advice';
 import { flagArgs, selectionArgs } from './sdk/cli-child';
 import {
   type ServiceCommandResult,
@@ -419,9 +426,18 @@ export async function launchSession<P extends string = ServiceName>(opts: {
 
   const session = { child, exited, gone, started };
   const control = createControlClient<P>(started.port);
-  const fail = async (error: string): Promise<never> => {
-    // Read before the session is ended, which it would then have exited for.
-    const reason = gone() ? `the session ${describeExit()} while starting` : error;
+  const fail = async (error: string, sessionSaid = false): Promise<never> => {
+    // Read before the session is ended, which it would then have exited for. What the session
+    // said of its own failed start is the reason, wherever it was read: its events as they came,
+    // or its event log once it was gone.
+    const ended = sessionSaid ? null : sessionEndIn(eventsFileBeside(started.logFile));
+    const reason = sessionSaid
+      ? error
+      : ended?.cause === 'error' && ended.error !== undefined
+        ? ended.error
+        : gone()
+          ? `the session ${describeExit()} while starting`
+          : error;
     const tail = output.tail();
     output.remove();
     // The failure that matters is the one being thrown; a failed quit is only reported beside it.
@@ -437,7 +453,7 @@ export async function launchSession<P extends string = ServiceName>(opts: {
   note(`session up (pid ${String(started.pid)}, control port ${String(started.port)})`);
 
   const wanted = started.services as P[];
-  const verdict = await waitUntilHealthy(control, wanted, {
+  const verdict = await waitUntilReady(control, wanted, {
     deadline,
     exited,
     signal: opts.signal,
@@ -445,7 +461,7 @@ export async function launchSession<P extends string = ServiceName>(opts: {
     logFile: started.logFile,
   });
   if (verdict !== undefined) {
-    return fail(verdict);
+    return fail(verdict.reason, verdict.sessionSaid);
   }
   // Up: the session's output is in its log from here on.
   output.remove();
@@ -497,26 +513,56 @@ async function endChild({
   await stopChild(child, exited, gone);
 }
 
+/** What {@link waitUntilHealthy} takes besides the client and the services. */
+interface WaitOptions {
+  deadline: number;
+  /** Settles when the session's process is gone, for a session this process started. */
+  exited?: Promise<void>;
+  signal?: AbortSignal;
+  timeoutMs: number;
+  logFile: string;
+  /** Whether the infra must be running too; default true. */
+  infra?: boolean;
+  /**
+   * Whether this waits for the whole session: for the session's own `afterStart` and `afterReady`
+   * too, those its config has (`sessionStartHooks`), giving up at once on a failure of its start
+   * (`sessionError`); default true. Either way it waits on `wanted` only, never on the session's
+   * other services. False for a wait on the services named, such as `service start`.
+   */
+  session?: boolean;
+}
+
 /**
- * Follows the session's `/events` until every one of `wanted` is ready, and the infra too unless
- * `infra` is false. Returns why it gave up — a service stopped, the session gone or silent, the
- * deadline — or `undefined` once all of it is ready.
+ * Follows the session's `/events` until every one of `wanted` is ready, the infra too unless
+ * `infra` is false, and the session's own configured start hooks unless `session` is false.
+ * Returns why it gave up — a service stopped, or never started because its `beforeStart` failed;
+ * failed by its `afterStart` or `afterReady`, or waiting for one a start hook failed (with the
+ * hook's error); the session's start failed; the session gone or silent; the deadline, with the
+ * hook each service still runs — or `undefined` once all of it is ready.
  */
 export async function waitUntilHealthy<P extends string>(
   control: ControlClient<P>,
   wanted: P[],
-  opts: {
-    deadline: number;
-    /** Settles when the session's process is gone, for a session this process started. */
-    exited?: Promise<void>;
-    signal?: AbortSignal;
-    timeoutMs: number;
-    logFile: string;
-    /** Whether the infra must be running too; default true. */
-    infra?: boolean;
-  },
+  opts: WaitOptions,
 ): Promise<string | undefined> {
+  return (await waitUntilReady(control, wanted, opts))?.reason;
+}
+
+/** Why a wait gave up; `sessionSaid` when it is the session's own report of its failed start. */
+interface WaitVerdict {
+  reason: string;
+  sessionSaid: boolean;
+}
+
+/** {@link waitUntilHealthy}, saying also whether the reason is the session's own. */
+async function waitUntilReady<P extends string>(
+  control: ControlClient<P>,
+  wanted: P[],
+  opts: WaitOptions,
+): Promise<WaitVerdict | undefined> {
   const waitsOnInfra = opts.infra ?? true;
+  const waitsOnSession = opts.session ?? true;
+  const gaveUp = (reason: string, sessionSaid = false): WaitVerdict => ({ reason, sessionSaid });
   note(`waiting for ${wanted.length > 0 ? wanted.join(', ') : 'the infra'} to be healthy`);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(0, opts.deadline - Date.now()));
@@ -524,32 +570,76 @@ export async function waitUntilHealthy<P extends string>(
   opts.signal?.addEventListener('abort', () => controller.abort(), { once: true });
   const services: Partial<Record<string, SessionServiceStatus>> = {};
   const ready: Partial<Record<string, boolean>> = {};
+  const errors: Partial<Record<string, string>> = {};
   const infra: Record<string, InfraStatus> = {};
+  const session: SessionWaitState = { hooks: 'none' };
   let attached = false;
-  let pending: string[] = [...wanted];
+  /** What is still to get ready: infra services, services of `wanted`, the session's own hook. */
+  let pending: { infra: string[]; services: string[]; session: string | null } = {
+    infra: [],
+    services: [...wanted],
+    session: null,
+  };
   // Set while everything is ready, to when it has been so for long enough.
   let settled: ReturnType<typeof setTimeout> | undefined;
   let healthy = false;
   try {
     for await (const event of control.events({ signal: controller.signal })) {
-      if (!apply(event, { services, ready, infra })) {
+      if (!apply(event, { services, ready, errors, infra, session })) {
         continue;
+      }
+      // The session's start failed and it is on its way out: its own word for why.
+      if (session.ended?.cause === 'error') {
+        return gaveUp(`${session.ended.error ?? "the session's start failed"}. See ${opts.logFile}`, true); // oxfmt-ignore
       }
       attached ||= event.type !== 'snapshot' || event.services !== null;
       if (!attached) {
         continue;
       }
+      // The session's own start failed: its services may be stopping because of it.
+      if (waitsOnSession && (session.error !== undefined || session.hooks === 'failed')) {
+        return gaveUp(`${session.error ?? "the session's start hooks failed"}. See ${opts.logFile}`, true); // oxfmt-ignore
+      }
+      // A start hook failed it (its process runs, or was never started), or it waits for a
+      // service one failed: none is ready until the failed one is restarted, so there is no
+      // waiting it out.
+      const said = new Set<string>();
+      const why = wanted.flatMap((name) => {
+        const error = errors[name];
+        if (services[name] === 'failed') {
+          said.add(name);
+          return [`${name} failed: ${error ?? 'its afterStart or afterReady failed'}. ${retryAdvice(name)}.`]; // oxfmt-ignore
+        }
+        if (services[name] === 'stopped' && error !== undefined) {
+          said.add(name);
+          return [`${name} failed to start: ${error}. ${retryAdvice(name)}.`];
+        }
+        if (services[name] !== 'waiting' || error === undefined) {
+          return [];
+        }
+        // Held by a service this verdict has already said failed, and why: its name is enough.
+        const held = [...said].find((failed) => error.startsWith(`waiting for ${failed}, which failed`)); // oxfmt-ignore
+        return [held === undefined ? `${name} is ${error}.` : `${name} is waiting for ${held}.`];
+      });
+      if (why.length > 0) {
+        return gaveUp(`${why.join(' ')} See ${opts.logFile}`);
+      }
       const stopped = wanted.filter((name) => services[name] === 'stopped');
       if (stopped.length > 0) {
-        return `${stopped.join(', ')} stopped while starting; see ${opts.logFile}`;
+        return gaveUp(`${stopped.join(', ')} stopped while starting; see ${opts.logFile}`);
       }
-      pending = [
-        ...Object.entries(waitsOnInfra ? infra : {})
+      pending = {
+        infra: Object.entries(waitsOnInfra ? infra : {})
           .filter(([, state]) => state !== 'running')
-          .map(([name]) => `infra service ${name}`),
-        ...wanted.filter((name) => ready[name] !== true),
-      ];
-      if (pending.length > 0) {
+          .map(([name]) => name),
+        services: wanted.filter((name) => ready[name] !== true),
+        // The session's own start hook still to finish, if its config has one.
+        session:
+          waitsOnSession && (session.hooks === 'afterStart' || session.hooks === 'afterReady')
+            ? session.hooks
+            : null,
+      };
+      if (pending.infra.length + pending.services.length > 0 || pending.session !== null) {
         clearTimeout(settled);
         settled = undefined;
       } else {
@@ -560,7 +650,7 @@ export async function waitUntilHealthy<P extends string>(
       }
     }
   } catch (error) {
-    return `lost the session's events: ${error instanceof Error ? error.message : String(error)}`;
+    return gaveUp(`lost the session's events: ${error instanceof Error ? error.message : String(error)}`); // oxfmt-ignore
   } finally {
     clearTimeout(timer);
     clearTimeout(settled);
@@ -571,11 +661,51 @@ export async function waitUntilHealthy<P extends string>(
     return undefined;
   }
   if (opts.signal?.aborted) {
-    return `interrupted while waiting for ${pending.join(', ')}`;
+    return gaveUp(`interrupted while waiting for ${pendingNames(pending).join(', ')}`);
   }
-  return Date.now() >= opts.deadline
-    ? `not healthy after ${String(Math.round(opts.timeoutMs / 1000))}s: ${pending.join(', ')}`
-    : 'the session ended its events while starting';
+  if (Date.now() < opts.deadline) {
+    return gaveUp(`the session ended before everything was ready; see ${opts.logFile}`);
+  }
+  // What each service still runs, asked once: the events don't say.
+  const now = await control.query.status().catch(() => null);
+  const waiting = pendingNames(pending, services, now?.serviceHooks ?? {});
+  return gaveUp(`not ready after ${String(Math.round(opts.timeoutMs / 1000))}s: ${waiting.join(', ')}`); // oxfmt-ignore
+}
+
+/**
+ * What a wait still waits for, each in a few words; given the services' statuses and the hook
+ * each runs now, with what holds it: `api (its afterReady is still running)`, `web (waiting for
+ * its dependencies)`, `the session's afterReady (it runs once they are ready)`.
+ */
+export function pendingNames(
+  pending: { infra: string[]; services: string[]; session: string | null },
+  services: Partial<Record<string, SessionServiceStatus>> = {},
+  hooks: Partial<Record<string, string>> = {},
+): string[] {
+  const names = [
+    ...pending.infra.map((name) => `infra service ${name}`),
+    ...pending.services.map((name) => {
+      const hook = hooks[name];
+      return hook !== undefined
+        ? `${name} (its ${hook} is still running)`
+        : services[name] === 'waiting'
+          ? `${name} (waiting for its dependencies)`
+          : name;
+    }),
+  ];
+  if (pending.session !== null) {
+    const others = names.length > 0 && pending.session === 'afterReady';
+    names.push(`the session's ${pending.session}${others ? ' (it runs once they are ready)' : ''}`);
+  }
+  return names;
+}
+
+/** What a wait follows of the session itself: its own start hooks, and why its start failed. */
+interface SessionWaitState {
+  hooks: SessionStartHooks;
+  error?: string;
+  /** How the session ended, once it has written that. */
+  ended?: { cause: string; error?: string };
 }
 
 /** Folds an `/events` line into the state it tracks; false for one that changes nothing (a heartbeat). */
@@ -584,24 +714,38 @@ function apply(
   state: {
     services: Partial<Record<string, SessionServiceStatus>>;
     ready: Partial<Record<string, boolean>>;
+    errors: Partial<Record<string, string>>;
     infra: Record<string, InfraStatus>;
+    session: SessionWaitState;
   },
 ): boolean {
   switch (event.type) {
     case 'snapshot':
       Object.assign(state.services, event.services ?? {});
       Object.assign(state.ready, event.ready ?? {});
+      Object.assign(state.errors, event.errors ?? {});
       Object.assign(state.infra, event.infra ?? {});
+      // An older session reports no hooks: nothing to wait for.
+      state.session.hooks = event.sessionStartHooks ?? 'none';
+      state.session.error = event.sessionError ?? undefined;
+      return true;
+    case 'session-state':
+      state.session.hooks = event.hooks ?? 'none';
+      state.session.error = event.error;
       return true;
     case 'service-state':
       state.services[event.service] = event.status;
       state.ready[event.service] = event.ready;
+      state.errors[event.service] = event.error;
       return true;
     case 'infra-state':
       state.infra[event.service] = event.status;
       return true;
+    case 'session-end':
+      state.session.ended = { cause: event.cause, error: event.error };
+      return true;
     default:
-      // `session-state`, `heartbeat`, and the event log's commands and lifecycle: no state to fold.
+      // `heartbeat`, and the event log's commands and lifecycle: no state to fold.
       return false;
   }
 }

@@ -14,7 +14,13 @@ export type Phase = SessionSnapshot['phase'];
 
 /** A services-row entry, as the keys and the reducer see it. */
 export type Entry =
-  | { kind: 'app'; name: string; state: ServiceState }
+  | {
+      kind: 'app';
+      name: string;
+      state: ServiceState;
+      /** A stop's `beforeStop` or `afterStop` still runs: `s` stops it again, abandoning the hook. */
+      stopping?: boolean;
+    }
   | { kind: 'infra'; name: string; state: SessionInfraState };
 
 /** Everything a key, a click or the reducer can ask the run screen to do. */
@@ -148,12 +154,13 @@ export interface Hint {
   action: Action;
 }
 
-/** An app service whose dot reads running, starting or restarting. */
+/** An app service whose dot reads running, starting or restarting, or whose failed one still runs. */
 export function isActive(state: ServiceState): boolean {
   switch (state) {
     case 'running':
     case 'starting':
     case 'restarting':
+    case 'failed':
       return true;
     case 'pending':
     case 'waiting':
@@ -200,7 +207,9 @@ const infra = (ctx: KeyContext) => ctx.focused?.kind === 'infra';
 const appActive = (ctx: KeyContext) => ctx.focused?.kind === 'app' && isActive(ctx.focused.state);
 /** `s` reads stop: an active service, or one pending at startup, about to start. */
 const appStops = (ctx: KeyContext) =>
-  appActive(ctx) || (ctx.phase === 'starting' && ctx.focused?.state === 'pending');
+  appActive(ctx) ||
+  (ctx.focused?.kind === 'app' && ctx.focused.stopping === true) ||
+  (ctx.phase === 'starting' && ctx.focused?.state === 'pending');
 const infraUp = (ctx: KeyContext) => ctx.focused?.kind === 'infra' && isInfraUp(ctx.focused.state);
 const infraBusy = (ctx: KeyContext) =>
   ctx.focused?.kind === 'infra' && isInfraBusy(ctx.focused.state);

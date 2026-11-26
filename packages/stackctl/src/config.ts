@@ -37,10 +37,13 @@ import {
   type InfraEnabledContext,
   type InfraInput,
   type InfraServiceCallbacks,
+  type ResolvedDockerComposeInfra,
   type ResolvedInfra,
   type ResolvedInfraService,
 } from './infra/types';
+import type { ServiceCallbacks } from './lifecycle/service-types';
 import type { InfraServiceName, ServiceName } from './register';
+import type { SessionCallbacks } from './session-lifecycle';
 import { recordedConfigDir } from './workspace-root';
 
 /** A single link: a bare URL, or a labeled URL (the label is shown in place of the URL). */
@@ -119,7 +122,10 @@ export interface ServiceRoute {
   subdomain: string;
 }
 
-/** A service as its `healthcheck`/`urls` callbacks and the infra callbacks see it: everything resolved. */
+/**
+ * A service as its `healthcheck` and `urls` callbacks, its own `lifecycle` hooks and the infra
+ * callbacks see it: everything resolved.
+ */
 export interface ServiceDetails extends ServiceIdentity {
   /** Its resolved `port`, on loopback; `undefined` for a service that declares none. */
   port: number | undefined;
@@ -716,6 +722,17 @@ export type ServiceConfigInput<
      *   this service's code: `watches`→nothing, else restart.
      */
     command?: CommandInput | null;
+    /**
+     * Async functions the dev session runs around this service's dev process: `beforeStart`
+     * before every start of it (the session's start, a start, a restart, a restart because a
+     * `.env` file changed), `afterStart` right after it starts, `afterReady` once per start when
+     * its `healthcheck` first passes (with no `healthcheck`, right after `afterStart`),
+     * `beforeStop` before it is stopped on request (a stop, a restart, the session quitting; not
+     * for a service that isn't running) and `afterStop` once it has exited. Each receives
+     * `{ trigger, service, buildAddress, tokens, envs, exec, log, data, … }`: this service's
+     * `tokens`, and its dev process's environment as `envs`. See {@link ServiceCallbacks}.
+     */
+    lifecycle?: ServiceCallbacks<ServiceTokens<Top, Own>> | undefined;
   };
 
 /**
@@ -1099,6 +1116,14 @@ export type DefineConfigOptions<
    */
   infra?: InfraInput<Top>;
   /**
+   * The dev session's own options: its `lifecycle` hooks. `beforeStart` runs once as a session
+   * starts (after the picker), before its infra and its services; `afterStart` once its services
+   * are launched (they may still be waiting or starting), and `afterReady` once they are all
+   * ready; `beforeStop` and `afterStop` once as it quits, around the stop of its services. See
+   * {@link SessionCallbacks}.
+   */
+  session?: { lifecycle?: SessionCallbacks<Top> | undefined } | undefined;
+  /**
    * The directory the services live under, relative to `workspaceDir` — `'apps'`, say. With
    * it set, a service's directory is inferred as `<serviceRootDir>/<key>` and its `dir`
    * becomes optional (an override); without it, every service must set `dir`.
@@ -1213,6 +1238,8 @@ export type ResolvedServiceConfig<N extends string, T = TokenRecord> = {
    * own `.env` file overrides it), and what its relative `urls` are based on.
    */
   publicOrigin?: string;
+  /** The service's `lifecycle` callbacks, as the config wrote them. */
+  lifecycle?: ServiceCallbacks | undefined;
 };
 
 export type AnyServiceConfig = ResolvedServiceConfig<string>;
@@ -1244,6 +1271,10 @@ export interface Config<
   reverseProxy?: ResolvedReverseProxy;
   /** The infra providers, resolved, or `undefined` when the config declares none. */
   infra?: ResolvedInfra<I>;
+  /** The dev session's callbacks, as written, or `undefined` when the config declares none. */
+  session?: { lifecycle?: SessionCallbacks | undefined };
+  /** The workspace root, absolute: what each service's `dir` resolved against. */
+  workspaceDir: string;
   /**
    * The `.env` filenames looked for in each directory for the active profile, ascending precedence:
    * stackctl's own, with `env.additionalFiles` placed among them.
@@ -1741,7 +1772,7 @@ type ParsedInfraService = v.InferOutput<typeof InfraServiceSchema>;
  */
 function resolveInfraService(
   name: string,
-  { enabled, tags, port, urls, publicOrigin: originInput, ...callbacks }: ParsedInfraService,
+  { enabled, tags, port, urls, publicOrigin: originInput, lifecycle }: ParsedInfraService,
   opts: {
     reverseProxy: ResolvedReverseProxy | undefined;
     ctx: () => ConfigContext;
@@ -1807,7 +1838,7 @@ function resolveInfraService(
   );
   const noPublicOrigin = reach.routed && publicOrigin === undefined;
   const resolved: ResolvedInfraService = {
-    ...(callbacks as InfraServiceCallbacks),
+    lifecycle: lifecycle as InfraServiceCallbacks | undefined,
     enabled: isEnabled,
     tags: [...new Set(tags ?? [])],
     port: resolvedPort,
@@ -1826,10 +1857,49 @@ function infraConfigPath(name: string): string {
   return `infra.docker-compose.services.${name}`;
 }
 
-/** Each resolved infra service as its callbacks see it: what `infraServiceDetails` returns. */
+/**
+ * Each resolved service and infra service as its callbacks see it: what `serviceDetails` and
+ * `infraServiceDetails` return.
+ */
 const serviceDetailsOf = new WeakMap<object, ServiceDetails>();
-/** The `buildAddress` each resolved infra service's callbacks get: what `infraBuildAddress` returns. */
+/**
+ * The `buildAddress` each resolved service's and infra service's callbacks get: what
+ * `serviceBuildAddress` and `infraBuildAddress` return.
+ */
 const buildAddressOf = new WeakMap<object, (opts?: BuildAddressOptions) => string>();
+
+/**
+ * A service as its `lifecycle` hooks see it (`service` in their context): the same
+ * {@link ServiceDetails} its `urls` callbacks got when the config loaded.
+ */
+export function serviceDetails(service: AnyServiceConfig): ServiceDetails {
+  return (
+    serviceDetailsOf.get(service) ?? {
+      name: service.name,
+      kind: 'service',
+      port: service.port,
+      route: null,
+      publicOrigin: service.publicOrigin,
+    }
+  );
+}
+
+/**
+ * The `buildAddress` a service's `lifecycle` hooks get: the same one its `urls` callbacks got when
+ * the config loaded, else one starting from `config`'s proxy (its route's subdomain, else the bare
+ * domain), or from `http://localhost:<port>` without one.
+ */
+export function serviceBuildAddress(
+  service: AnyServiceConfig,
+  config: Pick<Config<string>, 'reverseProxy'> | null | undefined,
+): (opts?: BuildAddressOptions) => string {
+  const known = buildAddressOf.get(service);
+  if (known !== undefined) {
+    return known;
+  }
+  const proxy = config?.reverseProxy;
+  return addressBuilder(baseParts(proxy, reachOf(proxy, service.name), service.port), `services.${service.name}`); // oxfmt-ignore
+}
 
 /**
  * An infra service as its `beforeStart`/`afterReady`/… callbacks see it (`service` in their
@@ -2613,10 +2683,12 @@ export function defineConfig<
       override: resolvePublicOriginInput(config.publicOrigin, baseCtx, `services.${config.name}`),
       owner: `services.${config.name}`,
     });
+    // What its `urls` callbacks get as `service`, and its `lifecycle` hooks too.
+    const details: ServiceDetails = { ...identity, port, route: reach.route, publicOrigin };
     const ctx = once((): ServiceContext =>
       packageContext(
         baseCtx(),
-        { ...identity, port, route: reach.route, publicOrigin },
+        details,
         buildAddress,
         () =>
           `${config.name}: a callback read \`port\`, but this service declares no \`port\`. ` +
@@ -2625,7 +2697,7 @@ export function defineConfig<
     );
     const noPublicOrigin = reach.routed && publicOrigin === undefined;
     const scope = (where: string): UrlScope => ({ ctx, port, publicOrigin, where, noPublicOrigin });
-    return {
+    const resolvedService = {
       ...declared,
       deps: resolveDeps(config.name, config.deps, () => ({
         ...baseCtx(),
@@ -2649,7 +2721,12 @@ export function defineConfig<
           : resolveHealthcheck(config.healthcheck, scope(`${config.name} healthcheck`)),
       // The same value the service's process gets as `PUBLIC_ORIGIN`, on the exported config.
       publicOrigin,
+      // As written: typed over the service's tokens in the config, stackctl's own object here.
+      lifecycle: config.lifecycle as ServiceCallbacks | undefined,
     };
+    serviceDetailsOf.set(resolvedService, details);
+    buildAddressOf.set(resolvedService, buildAddress);
+    return resolvedService;
   });
 
   // A workspace-wide `urls` callback is typed over `WorkspaceUrlsContext`; the throwing `port` is
@@ -2687,16 +2764,19 @@ export function defineConfig<
       ]),
     );
   const compose = parsed.infra?.['docker-compose'];
+  const composeFile =
+    compose?.file === undefined ? undefined : path.resolve(resolvedWorkspaceDir, compose.file);
   const infra: ResolvedInfra | undefined = compose && {
     'docker-compose': {
-      file:
-        compose.file === undefined ? undefined : path.resolve(resolvedWorkspaceDir, compose.file),
+      file: composeFile,
       projectName: composeProjectName({
         envs: workspaceEnv.envs(),
         workspaceDir: resolvedWorkspaceDir,
         profile: currentProfile(),
+        file: composeFile,
       }),
       readyTimeout: compose.readyTimeout ?? DEFAULT_READY_TIMEOUT_MS,
+      lifecycle: compose.lifecycle as ResolvedDockerComposeInfra['lifecycle'],
       services: resolveServices(compose.services),
     },
   };
@@ -2718,6 +2798,8 @@ export function defineConfig<
     urls,
     reverseProxy,
     infra,
+    session: parsed.session as Config<string>['session'],
+    workspaceDir: resolvedWorkspaceDir,
     envFiles,
     profile: currentProfile(),
     envOverride,

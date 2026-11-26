@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, test, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { withCliEnv } from './env';
 import {
   packageDir,
   buildDir,
@@ -14,6 +15,9 @@ import {
   lastLine,
   setUpCliWorkspace,
 } from './harness';
+
+// `resolveEnv()`, called in this process, starts the CLI with its environment.
+withCliEnv();
 
 /** The commands that run a script or a command once (`run`, `exec`, `infra`), how they find the
  * workspace and the service, and the environment they hand it. See `harness.ts`. */

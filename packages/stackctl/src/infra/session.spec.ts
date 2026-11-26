@@ -44,7 +44,7 @@ describe('runSessionInfra', () => {
       serviceRootDir: 'packages',
       infra: {
         'docker-compose': {
-          services: { db: { afterReady: ({ log }) => log('2 migrations applied') } },
+          services: { db: { lifecycle: { afterReady: ({ log }) => log('2 migrations applied') } } },
         },
       },
       services: { web: {} },
@@ -79,8 +79,10 @@ describe('runSessionInfra', () => {
         'docker-compose': {
           services: {
             db: {
-              beforeStart: ({ trigger, log }) => log(`beforeStart: ${trigger}`),
-              afterReady: ({ trigger, log }) => log(`afterReady: ${trigger}`),
+              lifecycle: {
+                beforeStart: ({ trigger, log }) => log(`beforeStart: ${trigger}`),
+                afterReady: ({ trigger, log }) => log(`afterReady: ${trigger}`),
+              },
             },
           },
         },
@@ -97,6 +99,83 @@ describe('runSessionInfra', () => {
       { exec: docker({ State: 'running' }) },
     );
     expect(printed).toEqual(['beforeStart: session', 'afterReady: session']);
+  });
+
+  test('hands the `data` it is given to every infra callback of the run, as it was when the run began', async () => {
+    const order: string[] = [];
+    const up = docker({ State: 'running' });
+    const exec: Exec = (command, args, opts) => {
+      if (args.slice(3).join(' ').startsWith('up ')) {
+        order.push('compose up');
+      }
+      return up(command, args, opts);
+    };
+    defineConfig({
+      workspaceDir: ws,
+      serviceRootDir: 'packages',
+      services: { web: {} },
+      infra: {
+        'docker-compose': {
+          lifecycle: {
+            beforeStart: ({ data }) =>
+              void order.push(`project beforeStart ${JSON.stringify(data)}`),
+          },
+          services: {
+            db: {
+              lifecycle: {
+                afterReady: ({ data }) => void order.push(`db afterReady ${JSON.stringify(data)}`),
+              },
+            },
+          },
+        },
+      },
+    });
+    // What the session's own `beforeStart` wrote before its infra startup.
+    const data = { cleaned: true };
+    await runSessionInfra(undefined, { exec }, data);
+    expect(order).toEqual([
+      'project beforeStart {"cleaned":true}',
+      'compose up',
+      'db afterReady {"cleaned":true}',
+    ]);
+  });
+
+  test("a hook's commands run on the signal it is handed: the session's hard kill kills them", async () => {
+    defineConfig({
+      workspaceDir: ws,
+      serviceRootDir: 'packages',
+      infra: {
+        'docker-compose': {
+          services: {
+            db: {
+              lifecycle: {
+                afterReady: async ({ exec }) => {
+                  await exec('pnpm', ['migrate']);
+                },
+              },
+            },
+          },
+        },
+      },
+      services: { web: {} },
+    });
+    const hardKill = new AbortController();
+    const seen: (AbortSignal | undefined)[] = [];
+    const compose = docker({ State: 'running' });
+    await runSessionInfra(undefined, {
+      exec: (command, args, opts) => {
+        if (command === 'pnpm') {
+          seen.push(opts.signal);
+        }
+        return compose(command, args, opts);
+      },
+      signal: hardKill.signal,
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
+    expect(seen[0]!.aborted).toBe(false);
+    hardKill.abort();
+    expect(seen[0]!.aborted).toBe(true);
   });
 
   test("carries a service's resolved urls, for the footer", async () => {
@@ -139,10 +218,12 @@ describe('runSessionInfra', () => {
         'docker-compose': {
           services: {
             db: {
-              afterReady: ({ log }) => {
-                log('applying 0002_add_index');
-                log('ERROR: relation "todos" does not exist');
-                throw new Error('`migrate` exited with code 1');
+              lifecycle: {
+                afterReady: ({ log }) => {
+                  log('applying 0002_add_index');
+                  log('ERROR: relation "todos" does not exist');
+                  throw new Error('`migrate` exited with code 1');
+                },
               },
             },
           },
@@ -170,11 +251,13 @@ describe('runSessionInfra', () => {
         'docker-compose': {
           services: {
             db: {
-              afterReady: ({ log }) => {
-                for (let i = 1; i <= 40; i++) {
-                  log(`line ${String(i)}`);
-                }
-                throw new Error('boom');
+              lifecycle: {
+                afterReady: ({ log }) => {
+                  for (let i = 1; i <= 40; i++) {
+                    log(`line ${String(i)}`);
+                  }
+                  throw new Error('boom');
+                },
               },
             },
           },

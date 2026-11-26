@@ -42,6 +42,13 @@ test('a click on a service focuses it; m commands, then a script row, runs the s
   );
 });
 
+test("the session's beforeStart runs in the terminal UI, as ui, before the services", async () => {
+  const pty = await startEveryService(ws(), { env: { E2E_SESSION_HOOK: '1' } });
+  const log = logRows(pty).join('\n');
+  expect(log).toMatch(/\[session\s*\] session hook: ui/);
+  expect(log.indexOf('session hook: ui')).toBeLessThan(log.search(/\[api\s*\] started/));
+});
+
 test('the filter: f, terms, ⏎ applies them to the log; esc clears it', async () => {
   const pty = await startEveryService(ws());
   expect(logRows(pty).join('\n')).toMatch(/\[worker\s*\] worker listening/);

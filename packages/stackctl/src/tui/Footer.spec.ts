@@ -256,6 +256,20 @@ describe('Design A at 104 columns (S2-R14)', () => {
     expect(ready.find((seg) => seg.text === '●')).toEqual({ text: '●', color: 'green' });
   });
 
+  test('a service failed by its start hook is drawn as a crashed one is: a red ○ that never blinks', () => {
+    const dot = (state: 'failed' | 'crashed') =>
+      footerLayout(
+        running({ services: [service('api', { state, ready: false }), service('web')] }),
+        ui(),
+        104,
+      ).rows[1]!.find((seg) => seg.text === '○' || seg.text === '●');
+    expect(dot('failed')).toEqual({ text: '○', color: 'red' });
+    expect(dot('failed')).toEqual(dot('crashed'));
+    expect(hasBlinkingDot(running({ services: [service('api', { state: 'failed' })] }))).toBe(
+      false,
+    );
+  });
+
   test('the caret steps along with the focus, the entries after it moving over for it', () => {
     const snap = running();
     const texts = entriesOf(snap).map(({ kind, name }) =>

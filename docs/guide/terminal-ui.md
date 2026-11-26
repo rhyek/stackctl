@@ -13,7 +13,7 @@ screen with their combined log. Everything in it works with the keyboard or the 
 
 ## Choosing services
 
-<llm-exclude><TerminalPlayer src="/casts/picker-1794682007.cast" label="The service picker: picking the frontend selects the backend it needs, then the list is filtered" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/picker-1795714260.cast" label="The service picker: picking the frontend selects the backend it needs, then the list is filtered" /></llm-exclude>
 <llm-only>
 
 ```text
@@ -44,13 +44,13 @@ reuse the saved selection.
 
 The log fills the screen, above a footer:
 
-<llm-exclude><TerminalPlayer src="/casts/run-screen-1794688469.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/run-screen-1795714290.cast" label="The run screen: the focus moves across the services in the footer, then the backend restarts" /></llm-exclude>
 <llm-only>
 
 ```text
 ── example ⎇ main ────────────────────────────────────────────────────────
-❯ ● backend 63M  ● frontend 235M  ● worker 26M
-infra: ● db 25M  ● mail 13M
+❯ ● backend 57M  ● frontend 228M  ● worker 25M
+infra: ● db 26M  ● mail 12M
 ← → select  r restart  s stop  m commands
 logs: / filter  c clear  │  ^c quit
 Home page ↗
@@ -71,7 +71,7 @@ Home page ↗
 | blinking yellow `●` | starting, restarting, or running but not healthy yet    |
 | cyan `○`            | waiting for a service it depends on                     |
 | gray `○`            | pending                                                 |
-| red `○`             | stopped or exited                                       |
+| red `○`             | stopped, exited, or [`failed`](../config/lifecycle.md): its `afterStart` or `afterReady` failed |
 
 Startup happens on this screen too, with the service keys dim until the services can take them.
 If it fails (the proxy's port is taken, an infra service never gets healthy), nothing else
@@ -84,7 +84,7 @@ code `1`.
 | ------------------------- | --------------------------------------------------------------------------------------- |
 | `←` `→` `↑` `↓`           | Focus another service.                                                                  |
 | `r`                       | Restart the focused service.                                                            |
-| `s`                       | Stop it, or start it when it isn't running. A waiting service starts on its own.        |
+| `s`                       | Stop it, or start it when it isn't running. A waiting service starts on its own. While its stop hooks run, `s` again cuts them short. |
 | `m`                       | Open the commands menu: the service's scripts, and a custom shell command.              |
 | `R`                       | Reset the focused infra service, **deleting its data**. Asks for a second `R`.          |
 | `/`                       | Filter the log: type terms, `⏎` to apply, `esc` to clear. Matches are highlighted.      |

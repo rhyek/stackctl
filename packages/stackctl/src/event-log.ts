@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SessionServiceStatus } from './control-client';
+import type { SessionServiceStatus, SessionStartHooks } from './control-client';
 import type { InfraStatus } from './infra/control';
 import { isProcessAlive } from './process-info';
 import { readRunning } from './running';
@@ -42,7 +42,10 @@ type Command<T extends string, Asked, Result> =
 export type ServiceCommandEntry = Command<
   'service-command',
   { action: 'start' | 'stop' | 'restart'; service: string },
-  { outcome: 'done' | 'busy' | 'waiting' | 'unknown' | 'unavailable' | 'closing' }
+  {
+    /** `cancelled`: a restart a stop, or the shutdown, came before it had started the service. */
+    outcome: 'done' | 'cancelled' | 'busy' | 'waiting' | 'unknown' | 'unavailable' | 'closing';
+  }
 >;
 export type InfraCommandEntry = Command<
   'infra-command',
@@ -57,6 +60,18 @@ export type InfraCommandEntry = Command<
     /** A `destroy` of the whole project, its disabled services' leftovers included. */
     everything?: boolean;
     results?: Record<string, 'ready' | 'stopped' | 'destroyed' | 'failed'>;
+    /**
+     * The services that reached their state in `results` but whose own lifecycle hook around the
+     * step failed, with the hook's error: a stop hook that threw while the stop went ahead, an
+     * `afterDestroy` that threw once the removal was done.
+     */
+    hookErrors?: Record<string, string>;
+    /**
+     * The services a reset destroyed and then didn't start because another service's (or the
+     * provider's) `afterDestroy` failed, with why: `not started: db failed in afterDestroy`. Their
+     * state in `results` is `destroyed`; no hook of their own failed.
+     */
+    notStarted?: Record<string, string>;
     error?: string;
   }
 >;
@@ -86,6 +101,13 @@ export type StateEntry =
       service: string;
       status: SessionServiceStatus;
       ready: boolean;
+      /**
+       * Why it can't get ready because a start hook failed, as `GET /query/status`'s `errors` has
+       * it: a `failed` service's `afterStart failed: <message>` or `afterReady failed: <message>`,
+       * a `stopped` one's `beforeStart failed: <message>`, or, for a `waiting` one, the failed
+       * service it waits for and its error.
+       */
+      error?: string;
       previousStatus: SessionServiceStatus | null;
       previousReady: boolean | null;
     }
@@ -95,7 +117,20 @@ export type StateEntry =
       status: InfraStatus;
       previousStatus: InfraStatus | null;
     }
-  | { type: 'session-state'; ready: boolean };
+  | {
+      type: 'session-state';
+      ready: boolean;
+      /**
+       * Where the session's own `afterStart` and `afterReady` are, as `GET /query/status`'s
+       * `sessionStartHooks` has it. Absent from an older session's lines: nothing to wait for.
+       */
+      hooks?: SessionStartHooks;
+      /**
+       * Why the session's start failed after its services were started, as `GET /query/status`'s
+       * `sessionError` has it: `session afterReady failed: <message>`, say.
+       */
+      error?: string;
+    };
 
 /** What the session does on its own. */
 export type LifecycleEntry =
@@ -110,7 +145,13 @@ export type LifecycleEntry =
       /** The `sessionId` of the session it took over, or `null`. */
       replaced: string | null;
     }
-  | { type: 'session-end'; cause: 'quit' | 'signal' | 'error'; durationMs: number }
+  | {
+      type: 'session-end';
+      cause: 'quit' | 'signal' | 'error';
+      /** Why the session's start failed, when `cause` is `error` and it said why. */
+      error?: string;
+      durationMs: number;
+    }
   /** A service's process exited, and stackctl hadn't stopped it. */
   | { type: 'service-exit'; service: string; exitCode: number | null; signal: string | null }
   /** A `.env` file in `dir` (relative to the workspace) changed: `services` restart. */
@@ -209,6 +250,42 @@ function relativeTo(root: string, by: SdkBy): SdkBy {
  */
 export function sdkBy(root: string, opts: { agent: boolean; cwd: string }): EventBy {
   return relativeTo(root, sdkCaller(opts));
+}
+
+/** A session's `session-end` line. */
+export type SessionEndLine = Extract<LifecycleEntry, { type: 'session-end' }> & EventEnvelope;
+
+/**
+ * How the session whose event log is `file` ended: its `session-end` line, or `null` when it has
+ * none (it still runs, it was killed, or the file can't be read). A session whose start failed
+ * ends with `cause: 'error'` and, when it said why, `error`.
+ */
+export function sessionEndIn(file: string | null): SessionEndLine | null {
+  let text: string;
+  try {
+    text = fs.readFileSync(file ?? '', 'utf8');
+  } catch {
+    return null;
+  }
+  for (const line of text.split('\n').reverse()) {
+    if (!line.includes('"session-end"')) {
+      continue;
+    }
+    try {
+      const entry = JSON.parse(line) as EventLine;
+      if (entry.type === 'session-end') {
+        return entry;
+      }
+    } catch {
+      /* a cut-off write */
+    }
+  }
+  return null;
+}
+
+/** The event log of the session whose log is `logFile`: they share the session's folder. */
+export function eventsFileBeside(logFile: string): string {
+  return path.join(path.dirname(logFile), 'events.jsonl');
 }
 
 /** A file over this is renamed to `events.1.jsonl` by the next writer, replacing the old one. */

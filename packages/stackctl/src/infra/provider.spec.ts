@@ -1,11 +1,16 @@
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { type BuildAddressOptions, type Config, defineConfig } from '../config';
 import { createControlClient } from '../control-client';
 import type { Envs } from '../env';
 import type { Exec } from '../spawn';
-import { InfraProvider, type ProviderRuntime } from './provider';
+import {
+  InfraProvider,
+  type ProjectCallbacks,
+  type ProjectStartCallback,
+  type ProviderRuntime,
+} from './provider';
 import {
   InfraError,
   type InfraCallbackContext,
@@ -22,9 +27,28 @@ const CONFIG = { profile: 'test' } as Config<string>;
 const READY: Readiness = { state: 'ready', detail: 'running' };
 const WAITING: Readiness = { state: 'pending', detail: 'waiting for healthy' };
 
+/** A service's options as a spec writes them: its callbacks, flat, and whether it runs. */
+type FakeService = InfraServiceCallbacks & { enabled?: boolean };
+
+/** A spec's service options in the shape the provider reads: the callbacks under `lifecycle`. */
+function toServiceConfig(services: Record<string, FakeService>) {
+  return Object.fromEntries(
+    Object.entries(services).map(([name, { enabled, ...lifecycle }]) => [
+      name,
+      { enabled, lifecycle },
+    ]),
+  );
+}
+
 interface FakeOptions {
   services?: string[];
-  callbacks?: Record<string, InfraServiceCallbacks & { enabled?: boolean }>;
+  callbacks?: Record<string, FakeService>;
+  /** Services as a config resolved them, in place of `callbacks`. */
+  resolved?: Record<string, ResolvedInfraService>;
+  /** The provider's own hooks. */
+  project?: ProjectCallbacks;
+  /** What the session aborts at a hard kill: the hooks' commands are killed with it. */
+  signal?: AbortSignal;
   failDestroyAll?: string;
   /** Successive readings per service; the last one repeats. Defaults to ready at once. */
   readiness?: Record<string, Readiness[]>;
@@ -72,8 +96,19 @@ class FakeProvider extends InfraProvider {
       stream: () => ({ stop: () => {}, done: new Promise<number>(() => {}) }),
       pollIntervalMs: 1,
       connectControl: o.connectControl,
+      signal: o.signal,
     };
-    super(runtime, o.callbacks ?? {}, o.readyTimeout ?? 1000);
+    super(
+      runtime,
+      o.resolved ?? toServiceConfig(o.callbacks ?? {}),
+      o.readyTimeout ?? 1000,
+      o.project,
+    );
+  }
+
+  /** Gives services callbacks after construction, once `calls` exists to record into. */
+  setCallbacks(services: Record<string, FakeService>): void {
+    Object.assign(this.serviceConfig, toServiceConfig(services));
   }
 
   async listServices() {
@@ -157,18 +192,53 @@ function recording(calls: string[], service: string): InfraServiceCallbacks {
     beforeDestroy: record('beforeDestroy'),
     afterDestroy: record('afterDestroy'),
     beforeStart: record('beforeStart'),
+    afterStart: record('afterStart'),
     afterReady: record('afterReady'),
+    beforeStop: record('beforeStop'),
+    afterStop: record('afterStop'),
   };
+}
+
+/**
+ * A provider whose own hooks, every one, record `project:<hook>:trigger=<trigger>` into its
+ * `calls`, then run the one `o` gives, if any. `datas` collects the `data` each was handed.
+ */
+function withProjectHooks(o: FakeOptions = {}) {
+  const datas: Record<string, unknown>[] = [];
+  const record =
+    <C extends { trigger: string; data: Record<string, unknown> }>(
+      name: string,
+      then?: (ctx: C) => void | Promise<void>,
+    ) =>
+    async (ctx: C) => {
+      provider.calls.push(`project:${name}:trigger=${ctx.trigger}`);
+      datas.push(ctx.data);
+      await then?.(ctx);
+    };
+  const provider: FakeProvider = new FakeProvider({
+    ...o,
+    project: {
+      beforeStart: record('beforeStart', o.project?.beforeStart),
+      beforeStop: record('beforeStop', o.project?.beforeStop),
+      afterStop: record('afterStop', o.project?.afterStop),
+      afterStart: record('afterStart', o.project?.afterStart),
+      afterReady: record('afterReady', o.project?.afterReady),
+      beforeDestroy: record('beforeDestroy', o.project?.beforeDestroy),
+      afterDestroy: record('afterDestroy', o.project?.afterDestroy),
+    },
+  });
+  return { provider, calls: provider.calls, datas };
 }
 
 describe('InfraProvider.up', () => {
   test('runs beforeStart, starts every service in one call, then afterReady', async () => {
     const provider = new FakeProvider();
-    Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
+    provider.setCallbacks({ db: recording(provider.calls, 'db') });
     const summary = await provider.up({});
     expect(provider.calls).toEqual([
       'beforeStart:db:trigger=start',
       'start:db,redis',
+      'afterStart:db:trigger=start',
       'afterReady:db:trigger=start',
     ]);
     expect(summary).toEqual({
@@ -184,11 +254,12 @@ describe('InfraProvider.up', () => {
     'a %s destroys nothing, and its callbacks see it as their trigger',
     async (trigger) => {
       const provider = new FakeProvider();
-      Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
+      provider.setCallbacks({ db: recording(provider.calls, 'db') });
       await provider.up({ trigger });
       expect(provider.calls).toEqual([
         `beforeStart:db:trigger=${trigger}`,
         'start:db,redis',
+        `afterStart:db:trigger=${trigger}`,
         `afterReady:db:trigger=${trigger}`,
       ]);
     },
@@ -196,7 +267,7 @@ describe('InfraProvider.up', () => {
 
   test('a reset with nothing named destroys the whole project, between beforeDestroy and afterDestroy', async () => {
     const provider = new FakeProvider();
-    Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
+    provider.setCallbacks({ db: recording(provider.calls, 'db') });
     await provider.up({ trigger: 'reset' });
     expect(provider.calls).toEqual([
       'check:reset:db,redis:everything',
@@ -205,13 +276,14 @@ describe('InfraProvider.up', () => {
       'afterDestroy:db:trigger=reset',
       'beforeStart:db:trigger=reset',
       'start:db,redis',
+      'afterStart:db:trigger=reset',
       'afterReady:db:trigger=reset',
     ]);
   });
 
   test('a reset with nothing named runs every hook for every enabled service, trigger reset', async () => {
     const provider = new FakeProvider();
-    Object.assign(provider['serviceConfig'], {
+    provider.setCallbacks({
       db: recording(provider.calls, 'db'),
       redis: recording(provider.calls, 'redis'),
     });
@@ -225,6 +297,8 @@ describe('InfraProvider.up', () => {
         'afterDestroy:redis:trigger=reset',
         'beforeStart:db:trigger=reset',
         'beforeStart:redis:trigger=reset',
+        'afterStart:db:trigger=reset',
+        'afterStart:redis:trigger=reset',
         'afterReady:db:trigger=reset',
         'afterReady:redis:trigger=reset',
       ].sort(),
@@ -233,7 +307,7 @@ describe('InfraProvider.up', () => {
 
   test('a refused reset runs no hook and removes nothing', async () => {
     const provider = new FakeProvider({ refusals: ["can't reset db: volume x is external"] });
-    Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
+    provider.setCallbacks({ db: recording(provider.calls, 'db') });
     await expect(provider.up({ trigger: 'reset' })).rejects.toThrow(
       "can't reset db: volume x is external",
     );
@@ -246,35 +320,48 @@ describe('InfraProvider.up', () => {
     expect(provider.calls).toEqual(['start:db,redis']);
   });
 
-  test("a service's callbacks share one `data` for the run, and the next run starts empty", async () => {
+  test('every callback of a run shares one `data`, and the next run starts empty', async () => {
     const seen: string[] = [];
     const note = (phase: string) => async (ctx: InfraCallbackContext) => {
       seen.push(`${phase}:${ctx.service.name}:${JSON.stringify(ctx.data)}`);
-      ctx.data[phase] = ctx.service.name;
+      ctx.data[`${phase}:${ctx.service.name}`] = true;
     };
-    const callbacks: InfraServiceCallbacks = {
-      beforeDestroy: note('beforeDestroy'),
-      afterDestroy: note('afterDestroy'),
-      beforeStart: note('beforeStart'),
-      afterReady: note('afterReady'),
-    };
-    const provider = new FakeProvider({ callbacks: { db: callbacks, redis: callbacks } });
-    await provider.up({ trigger: 'reset', services: ['db'] });
+    const provider = new FakeProvider({
+      project: {
+        beforeStart: async (ctx) => {
+          seen.push(`project:${JSON.stringify(ctx.data)}`);
+          ctx.data.project = true;
+        },
+      },
+      callbacks: {
+        db: { beforeDestroy: note('beforeDestroy'), afterReady: note('afterReady') },
+        redis: { beforeStart: note('beforeStart') },
+      },
+    });
+    await provider.up({ trigger: 'reset', services: ['db', 'redis'] });
     expect(seen).toEqual([
       'beforeDestroy:db:{}',
-      'afterDestroy:db:{"beforeDestroy":"db"}',
-      'beforeStart:db:{"beforeDestroy":"db","afterDestroy":"db"}',
-      'afterReady:db:{"beforeDestroy":"db","afterDestroy":"db","beforeStart":"db"}',
+      'project:{"beforeDestroy:db":true}',
+      'beforeStart:redis:{"beforeDestroy:db":true,"project":true}',
+      'afterReady:db:{"beforeDestroy:db":true,"project":true,"beforeStart:redis":true}',
     ]);
     seen.length = 0;
     await provider.up({});
-    // A new run, and each service its own object.
-    expect(seen.sort()).toEqual([
-      'afterReady:db:{"beforeStart":"db"}',
-      'afterReady:redis:{"beforeStart":"redis"}',
-      'beforeStart:db:{}',
-      'beforeStart:redis:{}',
+    expect(seen).toEqual([
+      'project:{}',
+      'beforeStart:redis:{"project":true}',
+      'afterReady:db:{"project":true,"beforeStart:redis":true}',
     ]);
+  });
+
+  test('a run handed `data` carries on with it', async () => {
+    const data: Record<string, unknown> = { fromSession: 1 };
+    let seen: unknown;
+    const provider = new FakeProvider({
+      callbacks: { db: { beforeStart: async (ctx) => void (seen = ctx.data) } },
+    });
+    await provider.up({ trigger: 'session', data });
+    expect(seen).toBe(data);
   });
 
   test('a reset with services named destroys only those', async () => {
@@ -324,6 +411,35 @@ describe('InfraProvider.up', () => {
     });
     expect(summary.services[1]).toMatchObject({ service: 'redis', ok: false });
     expect(summary.services[1]!.error).toMatch(/not started.*db.*beforeStart/);
+  });
+
+  test('an afterDestroy failure under a reset starts nothing: every service is left destroyed, the culprit with its error, the rest not started', async () => {
+    const provider = new FakeProvider({
+      callbacks: {
+        db: {
+          afterDestroy: async () => {
+            throw new Error('rm: permission denied');
+          },
+        },
+      },
+    });
+    const events: InfraEvent[] = [];
+    const summary = await provider.up({ trigger: 'reset', onEvent: (e) => events.push(e) });
+    expect(provider.calls).toEqual(['check:reset:db,redis:everything', 'destroyAll']);
+    const culprit = 'afterDestroy failed: rm: permission denied';
+    const notStarted = 'not started: db failed in afterDestroy';
+    expect(summary).toEqual({
+      ok: false,
+      services: [
+        { service: 'db', ok: false, error: culprit, hookFailed: true, reached: 'destroyed' },
+        { service: 'redis', ok: false, error: notStarted, reached: 'destroyed' },
+      ],
+    });
+    expect(events.filter((e) => e.type === 'status' && e.status === 'destroyed')).toEqual([
+      { type: 'status', service: 'db', status: 'destroyed', detail: culprit },
+      { type: 'status', service: 'redis', status: 'destroyed', detail: notStarted },
+    ]);
+    expect(events.some((e) => e.type === 'status' && e.status === 'failed')).toBe(false);
   });
 
   test('a failed start fails every target with the provider message', async () => {
@@ -421,6 +537,514 @@ describe('InfraProvider.up', () => {
   });
 });
 
+describe("the provider's own beforeStart", () => {
+  test.each(['start', 'session', 'restart'] as const)(
+    "runs once on a %s, before every service's beforeStart and the start",
+    async (trigger) => {
+      const { provider, calls } = withProjectHooks();
+      provider.setCallbacks({ db: recording(calls, 'db'), redis: recording(calls, 'redis') });
+      await provider.up({ trigger });
+      expect(calls.slice(0, 1)).toEqual([`project:beforeStart:trigger=${trigger}`]);
+      expect(calls.filter((c) => c.startsWith('project:beforeStart:'))).toHaveLength(1);
+      expect(calls.indexOf('start:db,redis')).toBeGreaterThan(
+        Math.max(calls.indexOf(`beforeStart:db:trigger=${trigger}`), calls.indexOf(`beforeStart:redis:trigger=${trigger}`)), // oxfmt-ignore
+      );
+    },
+  );
+
+  test('runs once when services are named too', async () => {
+    const { provider, calls } = withProjectHooks();
+    await provider.up({ services: ['redis'] });
+    expect(calls).toEqual([
+      'project:beforeStart:trigger=start',
+      'start:redis',
+      'project:afterStart:trigger=start',
+      'project:afterReady:trigger=start',
+    ]);
+  });
+
+  test('a failure starts nothing, runs no service callback, and fails every target', async () => {
+    const { provider, calls } = withProjectHooks({
+      project: {
+        beforeStart: async () => {
+          throw new Error('network in use');
+        },
+      },
+    });
+    provider.setCallbacks({ db: recording(calls, 'db') });
+    const summary = await provider.up({});
+    expect(calls).toEqual(['project:beforeStart:trigger=start']);
+    expect(summary).toEqual({
+      ok: false,
+      services: [
+        { service: 'db', ok: false, error: 'fake beforeStart failed: network in use' },
+        { service: 'redis', ok: false, error: 'fake beforeStart failed: network in use' },
+      ],
+    });
+  });
+
+  test('does not run on a stop or a destroy', async () => {
+    const { provider, calls } = withProjectHooks();
+    await provider.down({});
+    await provider.destroy({});
+    expect(calls.filter((c) => c.startsWith('project:beforeStart:'))).toEqual([]);
+  });
+
+  test("gets the run's context and the provider's tool; its output is the run's own", async () => {
+    const events: InfraEvent[] = [];
+    let ctx: Parameters<ProjectStartCallback>[0] | undefined;
+    const provider = new FakeProvider({
+      project: {
+        beforeStart: async (c) => {
+          ctx = c;
+          c.log('adopting the network');
+          await (c as unknown as { tool: ToolHelper }).tool(['network', 'ls']);
+        },
+      },
+    });
+    await provider.up({ onEvent: (e) => events.push(e) });
+    expect(ctx).toMatchObject({
+      profile: 'test',
+      trigger: 'start',
+      workspaceDir: '/ws',
+      tokens: { domain: 'example.test' },
+      envs: { FROM_ENV: 'yes', TOOL_PROJECT: 'ws-test' },
+      data: {},
+    });
+    expect(ctx).not.toHaveProperty('service');
+    expect(ctx).not.toHaveProperty('control');
+    expect(provider.calls[0]).toBe('tool:network ls@/ws');
+    expect(events).toContainEqual({ type: 'output', line: 'adopting the network', isError: false });
+  });
+});
+
+describe("the provider's hooks around the services' own", () => {
+  const boom = () => {
+    throw new Error('boom');
+  };
+  /** Each service's final status events, in the order they came. */
+  const finals = (events: InfraEvent[]) =>
+    events.filter(
+      (e) => e.type === 'status' && ['ready', 'destroyed', 'failed'].includes(e.status),
+    );
+
+  test("a start: provider beforeStart, services' beforeStart, start, services' afterStart, provider afterStart, each afterReady, provider afterReady last", async () => {
+    const { provider, calls } = withProjectHooks();
+    provider.setCallbacks({ db: recording(calls, 'db'), redis: recording(calls, 'redis') });
+    expect((await provider.up({})).ok).toBe(true);
+    expect(calls).toEqual([
+      'project:beforeStart:trigger=start',
+      'beforeStart:db:trigger=start',
+      'beforeStart:redis:trigger=start',
+      'start:db,redis',
+      'afterStart:db:trigger=start',
+      'afterStart:redis:trigger=start',
+      'project:afterStart:trigger=start',
+      'afterReady:db:trigger=start',
+      'afterReady:redis:trigger=start',
+      'project:afterReady:trigger=start',
+    ]);
+  });
+
+  test("the provider's afterReady runs only when every target is ready, after their own afterReady", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { provider, calls } = withProjectHooks({
+      readiness: { redis: [WAITING, WAITING, READY] },
+    });
+    provider.setCallbacks({
+      db: {
+        afterReady: async () => {
+          await gate;
+          calls.push('afterReady:db:done');
+        },
+      },
+      redis: recording(calls, 'redis'),
+    });
+    const events: InfraEvent[] = [];
+    const running = provider.up({ onEvent: (e) => events.push(e) });
+    await vi.waitFor(() => expect(calls).toContain('afterReady:redis:trigger=start'));
+    // Every reading is ready, but db's own afterReady hasn't finished: no service is final yet,
+    // and redis, its own part done, says what it is waiting for.
+    expect(calls).not.toContain('project:afterReady:trigger=start');
+    expect(finals(events)).toEqual([]);
+    await vi.waitFor(() =>
+      expect(events.at(-1)).toEqual({
+        type: 'status',
+        service: 'redis',
+        status: 'starting',
+        detail: 'ready, waiting for the other services',
+      }),
+    );
+    release();
+    expect((await running).ok).toBe(true);
+    expect(calls.slice(-2)).toEqual(['afterReady:db:done', 'project:afterReady:trigger=start']);
+    // db settled last: nothing was left for it to wait for.
+    expect(
+      events.filter(
+        (e) => e.type === 'status' && e.service === 'db' && e.detail?.includes('waiting'),
+      ),
+    ).toEqual([]);
+    expect(finals(events)).toEqual([
+      { type: 'status', service: 'db', status: 'ready' },
+      { type: 'status', service: 'redis', status: 'ready' },
+    ]);
+  });
+
+  test("the provider's afterReady doesn't run when a service failed; the ones that got ready stay ready", async () => {
+    const { provider, calls } = withProjectHooks({
+      readiness: { db: [{ state: 'failed', detail: 'exited (1)' }] },
+    });
+    const summary = await provider.up({});
+    expect(calls).not.toContain('project:afterReady:trigger=start');
+    expect(summary.services).toEqual([
+      { service: 'db', ok: false, error: 'exited (1)\nlog tail of db' },
+      { service: 'redis', ok: true },
+    ]);
+  });
+
+  test.each([
+    {
+      why: 'its own afterReady throws',
+      o: {},
+      db: { afterReady: () => Promise.reject(new Error('migration 0002 failed')) },
+      error: 'afterReady failed: migration 0002 failed',
+    },
+    {
+      why: 'it times out',
+      o: { readiness: { db: [WAITING] }, readyTimeout: 30 },
+      db: {},
+      error: 'not ready after 0s (waiting for healthy)',
+    },
+  ])(
+    "with the provider's afterReady, a service that failed because $why fails alone: the provider's doesn't run, the other ends ready",
+    async ({ o, db, error }) => {
+      const { provider, calls } = withProjectHooks(o);
+      provider.setCallbacks({ db, redis: recording(calls, 'redis') });
+      const events: InfraEvent[] = [];
+      const summary = await provider.up({ onEvent: (e) => events.push(e) });
+      expect(calls).not.toContain('project:afterReady:trigger=start');
+      expect(summary.services).toEqual([
+        { service: 'db', ok: false, error },
+        { service: 'redis', ok: true },
+      ]);
+      expect(finals(events).filter((e) => e.type === 'status' && e.service === 'db')).toEqual([
+        { type: 'status', service: 'db', status: 'failed', detail: error },
+      ]);
+    },
+  );
+
+  test("once a service has failed, the others aren't held for the provider's afterReady: each is ready as soon as it is", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { provider, calls } = withProjectHooks({
+      services: ['db', 'redis', 'cache'],
+      readiness: { db: [{ state: 'failed', detail: 'exited (1)' }] },
+    });
+    provider.setCallbacks({
+      cache: {
+        afterReady: async () => {
+          calls.push('afterReady:cache:started');
+          await gate;
+        },
+      },
+    });
+    const events: InfraEvent[] = [];
+    const running = provider.up({ onEvent: (e) => events.push(e) });
+    await vi.waitFor(() => expect(calls).toContain('afterReady:cache:started'));
+    // db failed, so the provider's afterReady can't run: redis is ready while cache is still busy.
+    expect(finals(events)).toContainEqual({ type: 'status', service: 'redis', status: 'ready' });
+    release();
+    await running;
+    expect(calls).not.toContain('project:afterReady:trigger=start');
+    expect(
+      events.filter((e) => e.type === 'status' && e.detail?.includes('waiting for the other')),
+    ).toEqual([]);
+  });
+
+  test("while the provider's afterStart runs, each service's step names it; a service's own afterStart failure is reported before it", async () => {
+    let seen: InfraEvent[] = [];
+    const events: InfraEvent[] = [];
+    const { provider } = withProjectHooks({
+      project: { afterStart: () => void (seen = [...events]) },
+    });
+    provider.setCallbacks({ db: { afterStart: boom } });
+    await provider.up({ onEvent: (e) => events.push(e) });
+    expect(seen.filter((e) => e.type === 'status').slice(-2)).toEqual([
+      { type: 'status', service: 'db', status: 'failed', detail: 'afterStart failed: boom' },
+      { type: 'status', service: 'redis', status: 'starting', detail: 'fake afterStart' },
+    ]);
+  });
+
+  test("while a hook runs, the service's step names it: its afterStart, the provider's, its afterReady, then the provider's afterReady", async () => {
+    const { provider } = withProjectHooks({ services: ['db'] });
+    provider.setCallbacks({ db: recording([], 'db') });
+    const events: InfraEvent[] = [];
+    await provider.up({ onEvent: (e) => events.push(e) });
+    expect(events.filter((e) => e.type === 'status')).toEqual([
+      { type: 'status', service: 'db', status: 'pending' },
+      { type: 'status', service: 'db', status: 'starting' },
+      { type: 'status', service: 'db', status: 'starting', detail: 'afterStart' },
+      { type: 'status', service: 'db', status: 'starting', detail: 'fake afterStart' },
+      { type: 'status', service: 'db', status: 'starting', detail: 'afterReady' },
+      { type: 'status', service: 'db', status: 'starting', detail: 'fake afterReady' },
+      { type: 'status', service: 'db', status: 'ready' },
+    ]);
+  });
+
+  test("a destroy: provider beforeDestroy, services' beforeDestroy, the removal, services' afterDestroy, provider afterDestroy", async () => {
+    const { provider, calls } = withProjectHooks();
+    provider.setCallbacks({ db: recording(calls, 'db'), redis: recording(calls, 'redis') });
+    expect((await provider.destroy({})).ok).toBe(true);
+    expect(calls).toEqual([
+      'check:destroy:db,redis:everything',
+      'project:beforeDestroy:trigger=destroy',
+      'beforeDestroy:db:trigger=destroy',
+      'beforeDestroy:redis:trigger=destroy',
+      'destroyAll',
+      'afterDestroy:db:trigger=destroy',
+      'afterDestroy:redis:trigger=destroy',
+      'project:afterDestroy:trigger=destroy',
+    ]);
+  });
+
+  test('a reset runs the destroy order then the start order, sharing one data, and no stop hook', async () => {
+    const { provider, calls, datas } = withProjectHooks({ services: ['db'] });
+    let servicesData: unknown;
+    provider.setCallbacks({
+      db: {
+        ...recording(calls, 'db'),
+        afterStart: async (ctx) => {
+          calls.push(`afterStart:db:trigger=${ctx.trigger}`);
+          servicesData = ctx.data;
+        },
+      },
+    });
+    expect((await provider.up({ trigger: 'reset' })).ok).toBe(true);
+    expect(calls).toEqual([
+      'check:reset:db:everything',
+      'project:beforeDestroy:trigger=reset',
+      'beforeDestroy:db:trigger=reset',
+      'destroyAll',
+      'afterDestroy:db:trigger=reset',
+      'project:afterDestroy:trigger=reset',
+      'project:beforeStart:trigger=reset',
+      'beforeStart:db:trigger=reset',
+      'start:db',
+      'afterStart:db:trigger=reset',
+      'project:afterStart:trigger=reset',
+      'afterReady:db:trigger=reset',
+      'project:afterReady:trigger=reset',
+    ]);
+    expect(datas).toHaveLength(5);
+    expect(new Set([...datas, servicesData]).size).toBe(1);
+  });
+
+  test("a throw in an infra service's afterStart fails that service", async () => {
+    const { provider, calls } = withProjectHooks();
+    provider.setCallbacks({
+      db: { ...recording(calls, 'db'), afterStart: boom },
+      redis: recording(calls, 'redis'),
+    });
+    const events: InfraEvent[] = [];
+    const summary = await provider.up({ onEvent: (e) => events.push(e) });
+    expect(summary.services).toEqual([
+      { service: 'db', ok: false, error: 'afterStart failed: boom' },
+      { service: 'redis', ok: true },
+    ]);
+    // Nothing waits on db, its afterReady doesn't run, and so neither does the provider's.
+    expect(calls.slice(calls.indexOf('start:db,redis'))).toEqual([
+      'start:db,redis',
+      'afterStart:redis:trigger=start',
+      'project:afterStart:trigger=start',
+      'afterReady:redis:trigger=start',
+    ]);
+    expect(finals(events)).toEqual([
+      { type: 'status', service: 'db', status: 'failed', detail: 'afterStart failed: boom' },
+      { type: 'status', service: 'redis', status: 'ready' },
+    ]);
+  });
+
+  test.each(['afterStart', 'afterReady'] as const)(
+    'a throw in the provider\'s %s fails every target with "fake <hook> failed: boom"',
+    async (hook) => {
+      const { provider, calls } = withProjectHooks({ project: { [hook]: boom } });
+      provider.setCallbacks({ db: recording(calls, 'db') });
+      const events: InfraEvent[] = [];
+      const summary = await provider.up({ onEvent: (e) => events.push(e) });
+      const error = `fake ${hook} failed: boom`;
+      expect(summary).toEqual({
+        ok: false,
+        services: [
+          { service: 'db', ok: false, error },
+          { service: 'redis', ok: false, error },
+        ],
+      });
+      // One final status per service: failed.
+      expect(finals(events)).toEqual([
+        { type: 'status', service: 'db', status: 'failed', detail: error },
+        { type: 'status', service: 'redis', status: 'failed', detail: error },
+      ]);
+      // A failed afterStart leaves nothing to wait for: no afterReady runs.
+      expect(calls.filter((c) => c.includes('afterReady'))).toEqual(
+        hook === 'afterStart'
+          ? []
+          : ['afterReady:db:trigger=start', 'project:afterReady:trigger=start'],
+      );
+    },
+  );
+
+  test("a service whose own afterDestroy failed and the provider's too has both in its result and its line, in the order they ran", async () => {
+    const { provider } = withProjectHooks({
+      project: {
+        afterDestroy: () => {
+          throw new Error('project-wide');
+        },
+      },
+    });
+    provider.setCallbacks({ db: { afterDestroy: boom } });
+    const events: InfraEvent[] = [];
+    const summary = await provider.destroy({ onEvent: (e) => events.push(e) });
+    const both = 'afterDestroy failed: boom\nfake afterDestroy failed: project-wide';
+    const project = 'fake afterDestroy failed: project-wide';
+    expect(summary.services).toEqual([
+      { service: 'db', ok: false, error: both, hookFailed: true },
+      { service: 'redis', ok: false, error: project, hookFailed: true },
+    ]);
+    // One final status per service, saying what its result says.
+    expect(finals(events)).toEqual([
+      { type: 'status', service: 'db', status: 'destroyed', detail: both },
+      { type: 'status', service: 'redis', status: 'destroyed', detail: project },
+    ]);
+  });
+
+  test("when a service's own afterStart failed and the provider's afterStart fails too, both are on screen; its line and result say its own", async () => {
+    const { provider } = withProjectHooks({
+      services: ['db'],
+      project: {
+        afterStart: () => {
+          throw new Error('project-wide');
+        },
+      },
+    });
+    provider.setCallbacks({ db: { afterStart: boom } });
+    const events: InfraEvent[] = [];
+    const summary = await provider.up({ onEvent: (e) => events.push(e) });
+    expect(summary.services).toEqual([
+      { service: 'db', ok: false, error: 'afterStart failed: boom' },
+    ]);
+    expect(finals(events)).toEqual([
+      { type: 'status', service: 'db', status: 'failed', detail: 'afterStart failed: boom' },
+    ]);
+    // The provider's failure is the run's own error line, as a provider stop hook's is.
+    expect(events.filter((e) => e.type === 'output')).toEqual([
+      { type: 'output', line: 'fake afterStart failed: project-wide', isError: true },
+    ]);
+  });
+
+  test.each(['destroy', 'reset'] as const)(
+    "a provider beforeDestroy that throws removes nothing and runs no service's callback (%s)",
+    async (trigger) => {
+      const { provider, calls } = withProjectHooks({ project: { beforeDestroy: boom } });
+      provider.setCallbacks({ db: recording(calls, 'db') });
+      const summary =
+        trigger === 'destroy' ? await provider.destroy({}) : await provider.up({ trigger });
+      expect(calls).toEqual([
+        `check:${trigger}:db,redis:everything`,
+        `project:beforeDestroy:trigger=${trigger}`,
+      ]);
+      const error = 'fake beforeDestroy failed: boom';
+      expect(summary.services).toEqual([
+        { service: 'db', ok: false, error },
+        { service: 'redis', ok: false, error },
+      ]);
+    },
+  );
+
+  test.each(['destroy', 'reset'] as const)(
+    'a provider afterDestroy that throws: every target is destroyed with its message, the result failed, and a reset stops before the start (%s)',
+    async (trigger) => {
+      const { provider, calls } = withProjectHooks({ project: { afterDestroy: boom } });
+      provider.setCallbacks({ db: recording(calls, 'db') });
+      const summary =
+        trigger === 'destroy' ? await provider.destroy({}) : await provider.up({ trigger });
+      expect(calls.slice(-3)).toEqual([
+        'destroyAll',
+        `afterDestroy:db:trigger=${trigger}`,
+        `project:afterDestroy:trigger=${trigger}`,
+      ]);
+      const error = 'fake afterDestroy failed: boom';
+      const reached = trigger === 'reset' ? { reached: 'destroyed' } : {};
+      expect(summary.services).toEqual([
+        { service: 'db', ok: false, error, hookFailed: true, ...reached },
+        { service: 'redis', ok: false, error, hookFailed: true, ...reached },
+      ]);
+    },
+  );
+
+  test.each([
+    {
+      run: 'up',
+      calls: [
+        'project:beforeStart:trigger=start',
+        'project:afterStart:trigger=start',
+        'project:afterReady:trigger=start',
+      ],
+    },
+    {
+      run: 'reset',
+      calls: [
+        'project:beforeDestroy:trigger=reset',
+        'project:afterDestroy:trigger=reset',
+        'project:beforeStart:trigger=reset',
+        'project:afterStart:trigger=reset',
+        'project:afterReady:trigger=reset',
+      ],
+    },
+    {
+      run: 'destroy',
+      calls: [
+        'check:destroy::everything',
+        'project:beforeDestroy:trigger=destroy',
+        'destroyAll',
+        'project:afterDestroy:trigger=destroy',
+      ],
+    },
+  ] as const)("the provider's hooks run with no service enabled ($run)", async ({ run, calls }) => {
+    const quiet = withProjectHooks({ services: ['db'], callbacks: { db: { enabled: false } } });
+    const summary =
+      run === 'destroy'
+        ? await quiet.provider.destroy({})
+        : await quiet.provider.up({ trigger: run === 'reset' ? 'reset' : 'start' });
+    expect(summary).toEqual({ ok: true, services: [] });
+    expect(quiet.calls).toEqual(calls);
+  });
+
+  test.each([
+    { hook: 'beforeStart', run: 'up', last: 'project:beforeStart:trigger=start' },
+    { hook: 'afterStart', run: 'up', last: 'project:afterStart:trigger=start' },
+    { hook: 'afterReady', run: 'up', last: 'project:afterReady:trigger=start' },
+    { hook: 'beforeDestroy', run: 'destroy', last: 'project:beforeDestroy:trigger=destroy' },
+    { hook: 'afterDestroy', run: 'destroy', last: 'project:afterDestroy:trigger=destroy' },
+    { hook: 'afterDestroy', run: 'reset', last: 'project:afterDestroy:trigger=reset' },
+  ] as const)(
+    'with no service enabled, a failing provider $hook rejects the $run and runs nothing after it',
+    async ({ hook, run, last }) => {
+      const failing = withProjectHooks({
+        services: ['db'],
+        callbacks: { db: { enabled: false } },
+        project: { [hook]: boom },
+      });
+      const running =
+        run === 'destroy'
+          ? failing.provider.destroy({})
+          : failing.provider.up({ trigger: run === 'reset' ? 'reset' : 'start' });
+      await expect(running).rejects.toThrow(new InfraError(`fake ${hook} failed: boom`));
+      expect(failing.calls.at(-1)).toBe(last);
+    },
+  );
+});
+
 describe('fresh', () => {
   test('afterReady is told whether this run created its service’s data', async () => {
     const seen: Record<string, boolean> = {};
@@ -462,8 +1086,10 @@ describe('InfraProvider callback context: buildAddress', () => {
           services: {
             mail: {
               port: 8025,
-              afterReady: (ctx) => {
-                seen = ctx.buildAddress;
+              lifecycle: {
+                afterReady: (ctx) => {
+                  seen = ctx.buildAddress;
+                },
               },
             },
           },
@@ -473,7 +1099,7 @@ describe('InfraProvider callback context: buildAddress', () => {
     });
     // Compose's callbacks, which this provider-neutral fake runs with the base context alone.
     const services = config.infra!['docker-compose']!.services as Record<string, ResolvedInfraService>; // oxfmt-ignore
-    await new FakeProvider({ config, services: ['mail'], callbacks: services }).up({});
+    await new FakeProvider({ config, services: ['mail'], resolved: services }).up({});
     expect(seen?.()).toBe('https://mail.example.test');
     expect(seen?.({ path: '/inbox' })).toBe('https://mail.example.test/inbox');
     expect(seen?.({ subdomain: null })).toBe('https://example.test');
@@ -671,7 +1297,7 @@ describe('InfraProvider callback context', () => {
 describe('InfraProvider.destroy', () => {
   test('with no services destroys everything; the callbacks around it see the destroy', async () => {
     const provider = new FakeProvider();
-    Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
+    provider.setCallbacks({ db: recording(provider.calls, 'db') });
     const events: InfraEvent[] = [];
     const summary = await provider.destroy({ onEvent: (e) => events.push(e) });
     expect(provider.calls).toEqual([
@@ -698,7 +1324,7 @@ describe('InfraProvider.destroy', () => {
 
   test('a refused destroy runs no hook and removes nothing', async () => {
     const provider = new FakeProvider({ refusals: ["can't destroy db: volume x is in use"] });
-    Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
+    provider.setCallbacks({ db: recording(provider.calls, 'db') });
     await expect(provider.destroy({ services: ['db'] })).rejects.toThrow(
       "can't destroy db: volume x is in use",
     );
@@ -726,7 +1352,8 @@ describe('InfraProvider.destroy', () => {
     });
   });
 
-  test('an afterDestroy that throws fails its service', async () => {
+  test('an afterDestroy that throws: the service is destroyed, its result failed with the message', async () => {
+    const events: InfraEvent[] = [];
     const summary = await new FakeProvider({
       callbacks: {
         db: {
@@ -735,14 +1362,19 @@ describe('InfraProvider.destroy', () => {
           },
         },
       },
-    }).destroy({});
+    }).destroy({ onEvent: (e) => events.push(e) });
+    const error = 'afterDestroy failed: rm: permission denied';
     expect(summary).toEqual({
       ok: false,
       services: [
-        { service: 'db', ok: false, error: 'afterDestroy failed: rm: permission denied' },
+        { service: 'db', ok: false, error, hookFailed: true },
         { service: 'redis', ok: true },
       ],
     });
+    expect(events.filter((e) => e.type === 'status' && e.service === 'db')).toEqual([
+      { type: 'status', service: 'db', status: 'destroying' },
+      { type: 'status', service: 'db', status: 'destroyed', detail: error },
+    ]);
   });
 });
 
@@ -778,10 +1410,12 @@ describe('a disabled service', () => {
     expect(provider.calls).toEqual([]);
   });
 
-  test('is left alone by a stop with nothing named', async () => {
-    const provider = withDisabledRedis();
+  test('is left alone by a stop with nothing named: not stopped, and its stop hooks do not run', async () => {
+    const calls: string[] = [];
+    const provider = withDisabledRedis(calls);
     await provider.down({});
     expect(provider.calls).toEqual(['stop:db']);
+    expect(calls).toEqual([]);
   });
 
   test('can still be destroyed by name, to clean up after a profile where it ran', async () => {
@@ -847,20 +1481,290 @@ describe('InfraProvider.down', () => {
     ]);
   });
 
-  test('a stop that fails fails every target', async () => {
-    const provider = new FakeProvider({ failStop: 'compose down failed' });
+  test('a stop that fails fails every target, and runs no afterStop', async () => {
+    const { provider, calls } = withProjectHooks({ failStop: 'compose down failed' });
+    provider.setCallbacks({ db: recording(calls, 'db') });
     const summary = await provider.down({});
     expect(summary.ok).toBe(false);
     expect(summary.services.map((s) => s.error)).toEqual([
       'compose down failed',
       'compose down failed',
     ]);
+    expect(calls).toEqual([
+      'project:beforeStop:trigger=stop',
+      'beforeStop:db:trigger=stop',
+      'stop:db,redis',
+    ]);
   });
 
-  test('runs no callback', async () => {
-    const provider = new FakeProvider();
-    Object.assign(provider['serviceConfig'], { db: recording(provider.calls, 'db') });
-    await provider.down({ services: ['db'] });
-    expect(provider.calls).toEqual(['stop:db']);
+  test("a stop that fails after a stop hook did: the result names the stop's error and the hook's", async () => {
+    const { provider } = withProjectHooks({
+      failStop: 'compose down failed',
+      project: {
+        beforeStop: () => {
+          throw new Error('webhook endpoint unreachable');
+        },
+      },
+    });
+    provider.setCallbacks({
+      db: {
+        beforeStop: () => {
+          throw new Error('boom');
+        },
+      },
+    });
+    expect(await provider.down({})).toEqual({
+      ok: false,
+      services: [
+        {
+          service: 'db',
+          ok: false,
+          error:
+            'compose down failed\nfake beforeStop failed: webhook endpoint unreachable\nbeforeStop failed: boom',
+        },
+        {
+          service: 'redis',
+          ok: false,
+          error: 'compose down failed\nfake beforeStop failed: webhook endpoint unreachable',
+        },
+      ],
+    });
   });
+
+  test("down runs the provider's beforeStop, each service's beforeStop, the stop, each service's afterStop, the provider's afterStop", async () => {
+    const { provider, calls } = withProjectHooks();
+    provider.setCallbacks({ db: recording(calls, 'db'), redis: recording(calls, 'redis') });
+    expect((await provider.down({})).ok).toBe(true);
+    expect(calls).toEqual([
+      'project:beforeStop:trigger=stop',
+      'beforeStop:db:trigger=stop',
+      'beforeStop:redis:trigger=stop',
+      'stop:db,redis',
+      'afterStop:db:trigger=stop',
+      'afterStop:redis:trigger=stop',
+      'project:afterStop:trigger=stop',
+    ]);
+  });
+
+  test("a restart's stop and start share one data, with trigger restart", async () => {
+    const provider = new FakeProvider({ services: ['db'] });
+    let read: unknown;
+    provider.setCallbacks({
+      db: {
+        beforeStop: ({ data, trigger }) => {
+          data.note = `left by beforeStop on ${trigger}`;
+        },
+        afterReady: ({ data, trigger }) => {
+          read = `${String(data.note)}, read by afterReady on ${trigger}`;
+        },
+      },
+    });
+    const data: Record<string, unknown> = {};
+    await provider.down({ trigger: 'restart', data });
+    await provider.up({ trigger: 'restart', data });
+    expect(read).toBe('left by beforeStop on restart, read by afterReady on restart');
+  });
+
+  test.each(['beforeStop', 'afterStop'] as const)(
+    'a stop hook that throws: the stop goes ahead; the service is stopped, its result failed with the message, and the message is an error line under its label (%s)',
+    async (hook) => {
+      const provider = new FakeProvider();
+      const events: InfraEvent[] = [];
+      provider.setCallbacks({
+        db: {
+          [hook]: () => {
+            throw new Error('boom');
+          },
+        },
+      });
+      const summary = await provider.down({ onEvent: (e) => events.push(e) });
+      expect(provider.calls).toContain('stop:db,redis');
+      expect(summary).toEqual({
+        ok: false,
+        services: [
+          { service: 'db', ok: false, error: `${hook} failed: boom`, hookFailed: true },
+          { service: 'redis', ok: true },
+        ],
+      });
+      // One final status per service: stopped, with what failed.
+      expect(events.filter((e) => e.type === 'status' && e.service === 'db')).toEqual([
+        { type: 'status', service: 'db', status: 'stopping' },
+        { type: 'status', service: 'db', status: 'stopped', detail: `${hook} failed: boom` },
+      ]);
+      expect(events.filter((e) => e.type === 'output')).toEqual([
+        { type: 'output', service: 'db', line: `${hook} failed: boom`, isError: true },
+      ]);
+    },
+  );
+
+  test("a service's afterStop still runs after its own beforeStop threw", async () => {
+    const provider = new FakeProvider({ services: ['db'] });
+    provider.setCallbacks({
+      db: {
+        ...recording(provider.calls, 'db'),
+        beforeStop: () => {
+          throw new Error('boom');
+        },
+      },
+    });
+    await provider.down({});
+    expect(provider.calls).toEqual(['stop:db', 'afterStop:db:trigger=stop']);
+  });
+
+  test("a provider stop hook that throws: the stop goes ahead, every service's result is failed with the message, an untagged error line", async () => {
+    const { provider, calls } = withProjectHooks({
+      project: {
+        beforeStop: () => {
+          throw new Error('webhook endpoint unreachable');
+        },
+      },
+    });
+    provider.setCallbacks({ db: recording(calls, 'db') });
+    const events: InfraEvent[] = [];
+    const summary = await provider.down({ onEvent: (e) => events.push(e) });
+    expect(events.filter((e) => e.type === 'output')).toEqual([
+      {
+        type: 'output',
+        line: 'fake beforeStop failed: webhook endpoint unreachable',
+        isError: true,
+      },
+    ]);
+    expect(calls).toEqual([
+      'project:beforeStop:trigger=stop',
+      'beforeStop:db:trigger=stop',
+      'stop:db,redis',
+      'afterStop:db:trigger=stop',
+      'project:afterStop:trigger=stop',
+    ]);
+    expect(summary).toEqual({
+      ok: false,
+      services: [
+        {
+          service: 'db',
+          ok: false,
+          error: 'fake beforeStop failed: webhook endpoint unreachable',
+          hookFailed: true,
+        },
+        {
+          service: 'redis',
+          ok: false,
+          error: 'fake beforeStop failed: webhook endpoint unreachable',
+          hookFailed: true,
+        },
+      ],
+    });
+  });
+
+  test("every stop hook failure is in a service's result, in the order the hooks ran: the provider's both, and its own", async () => {
+    const { provider } = withProjectHooks({
+      project: {
+        beforeStop: () => {
+          throw new Error('early');
+        },
+        afterStop: () => {
+          throw new Error('later');
+        },
+      },
+    });
+    provider.setCallbacks({
+      db: {
+        beforeStop: () => {
+          throw new Error('boom');
+        },
+      },
+    });
+    const summary = await provider.down({});
+    expect(summary.services).toEqual([
+      {
+        service: 'db',
+        ok: false,
+        error:
+          'fake beforeStop failed: early\nbeforeStop failed: boom\nfake afterStop failed: later',
+        hookFailed: true,
+      },
+      {
+        service: 'redis',
+        ok: false,
+        error: 'fake beforeStop failed: early\nfake afterStop failed: later',
+        hookFailed: true,
+      },
+    ]);
+  });
+
+  test("the provider's stop hooks run with no service enabled; a failure then rejects, having no service to fail", async () => {
+    const quiet = withProjectHooks({ services: ['db'], callbacks: { db: { enabled: false } } });
+    expect(await quiet.provider.down({})).toEqual({ ok: true, services: [] });
+    expect(quiet.calls).toEqual([
+      'project:beforeStop:trigger=stop',
+      'project:afterStop:trigger=stop',
+    ]);
+
+    const failing = withProjectHooks({
+      services: ['db'],
+      callbacks: { db: { enabled: false } },
+      project: {
+        beforeStop: () => {
+          throw new Error('webhook endpoint unreachable');
+        },
+        afterStop: () => {
+          throw new Error('later');
+        },
+      },
+    });
+    await expect(failing.provider.down({})).rejects.toThrow(
+      new InfraError(
+        'fake beforeStop failed: webhook endpoint unreachable\nfake afterStop failed: later',
+      ),
+    );
+    // The stop goes ahead: there is none to do, but its afterStop still runs.
+    expect(failing.calls).toEqual([
+      'project:beforeStop:trigger=stop',
+      'project:afterStop:trigger=stop',
+    ]);
+  });
+});
+
+describe("the runtime's signal", () => {
+  /** An `exec` whose commands run until their signal aborts, recording each signal. */
+  function untilAborted() {
+    const signals: (AbortSignal | undefined)[] = [];
+    const exec: Exec = (_command, _args, opts) => {
+      signals.push(opts.signal);
+      return new Promise((resolve) => {
+        opts.signal?.addEventListener('abort', () =>
+          resolve({ exitCode: 137, stdout: '', stderr: '' }),
+        );
+      });
+    };
+    return { exec, signals };
+  }
+
+  test.each([
+    { hook: 'beforeStart', via: 'exec', run: 'up' },
+    { hook: 'beforeStart', via: "the provider's tool (compose)", run: 'up' },
+    { hook: 'beforeStop', via: 'exec', run: 'down' },
+    { hook: 'afterStop', via: "the provider's tool (compose)", run: 'down' },
+  ] as const)(
+    "kills the command that $hook runs through $via once it aborts: the session's hard kill",
+    async ({ hook, via, run }) => {
+      const hardKill = new AbortController();
+      const { exec, signals } = untilAborted();
+      const provider = new FakeProvider({ services: ['db'], signal: hardKill.signal, exec });
+      const command = async (ctx: InfraCallbackContext) => {
+        await (via === 'exec'
+          ? ctx.exec('pnpm', ['migrate'], { reject: false })
+          : (ctx as unknown as { tool: ToolHelper }).tool(['exec', 'db', 'psql'], {
+              reject: false,
+            }));
+      };
+      provider.setCallbacks({ db: { [hook]: command } });
+      const running = run === 'up' ? provider.up({}) : provider.down({});
+      await vi.waitFor(() => expect(signals).toHaveLength(1));
+      expect(signals[0]).toBeInstanceOf(AbortSignal);
+      expect(signals[0]!.aborted).toBe(false);
+      hardKill.abort();
+      expect(signals[0]!.aborted).toBe(true);
+      expect((await running).ok).toBe(true);
+    },
+  );
 });

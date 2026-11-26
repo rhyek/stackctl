@@ -44,7 +44,7 @@ await stack.stop();
 - **It fails rather than share.** If a `test` session is already running, the call rejects,
   naming its pid. Pass `killOthers: true` to replace it.
 - **On failure it rejects** with the reason and the log's path, after stopping the session:
-  `not healthy after 300s: worker`.
+  `not ready after 300s: worker`.
 
 `stack.origins` has every service's URL, and `stack.control` is a
 [control API](../reference/control-api.md) client for restarting a service mid-suite. See

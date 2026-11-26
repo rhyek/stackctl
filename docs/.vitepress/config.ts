@@ -153,6 +153,7 @@ export default defineConfig({
         items: [
           { text: 'The config file', link: '/config/config-file' },
           { text: 'Services', link: '/config/services' },
+          { text: 'Lifecycle hooks', link: '/config/lifecycle' },
           { text: 'Environment', link: '/config/env' },
           { text: 'Logs', link: '/config/logs' },
           { text: 'Infra', link: '/config/infra' },

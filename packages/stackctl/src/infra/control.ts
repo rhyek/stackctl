@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { EVENT_BY_ENV, type EventBy } from '../event-log';
-import { type Running, runCommand, startFailure } from '../spawn';
+import { type Running, guardGroup, runCommand, startFailure } from '../spawn';
 import { stripTitleSequences } from '../terminal-title';
 import { callEach } from '../util';
 import type { InfraWatch } from './provider';
@@ -210,6 +210,8 @@ export class InfraControl {
     this.procs.add(proc);
     if (proc.pid) {
       this.opts.track?.(proc.pid, this.opts.cwd);
+      // Killed outright, the session ends nothing: the command's group goes with it all the same.
+      void proc.done.then(guardGroup(proc.pid));
     }
 
     const ended = await proc.done;

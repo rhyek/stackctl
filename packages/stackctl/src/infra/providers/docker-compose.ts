@@ -1,8 +1,15 @@
 import { SPAWN_FAILED, type ExecOptions, type ExecResult, type LineStream } from '../../spawn';
 import { composeMemory, socketPath } from '../docker-engine';
-import { InfraProvider, type Emit, type ProviderRuntime } from '../provider';
 import {
-  type DockerComposeCallbackContext,
+  InfraProvider,
+  type Emit,
+  type ProjectStartCallback,
+  type ProjectDestroyCallback,
+  type ProjectStopCallback,
+  type ProviderRuntime,
+} from '../provider';
+import {
+  type DockerComposeTool,
   InfraError,
   type InfraServiceState,
   type Readiness,
@@ -247,6 +254,15 @@ export class DockerComposeProvider extends InfraProvider {
       runtime,
       resolved.services as Record<string, ResolvedInfraService>,
       resolved.readyTimeout,
+      {
+        beforeStart: resolved.lifecycle?.beforeStart as ProjectStartCallback | undefined,
+        afterStart: resolved.lifecycle?.afterStart as ProjectStartCallback | undefined,
+        afterReady: resolved.lifecycle?.afterReady as ProjectStartCallback | undefined,
+        beforeStop: resolved.lifecycle?.beforeStop as ProjectStopCallback | undefined,
+        afterStop: resolved.lifecycle?.afterStop as ProjectStopCallback | undefined,
+        beforeDestroy: resolved.lifecycle?.beforeDestroy as ProjectDestroyCallback | undefined,
+        afterDestroy: resolved.lifecycle?.afterDestroy as ProjectDestroyCallback | undefined,
+      },
     );
   }
 
@@ -254,9 +270,7 @@ export class DockerComposeProvider extends InfraProvider {
     return 'docker compose';
   }
 
-  protected toolContext(
-    run: DockerComposeCallbackContext['compose'],
-  ): Pick<DockerComposeCallbackContext, 'compose'> {
+  protected toolContext(run: DockerComposeTool['compose']): DockerComposeTool {
     return { compose: run };
   }
 

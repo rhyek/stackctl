@@ -7,6 +7,7 @@ import { beforeAll, afterAll } from 'vitest';
 import { processStartTime } from '../process-info';
 import { type Running, runCommand } from '../spawn';
 import { buildForTests } from './build';
+import { cliEnv } from './env';
 
 /**
  * What the `cli-spec` files share. End-to-end: the real CLI, as a child process, against a
@@ -28,15 +29,15 @@ export let buildDir: string;
 export let cli: string;
 
 /**
- * Starts `command` as these specs run one: this process's environment under `env`, and its output
- * without the newline it printed last, to compare whole.
+ * Starts `command` as these specs run one: a person's environment ({@link cliEnv}) under `env`,
+ * and its output without the newline it printed last, to compare whole.
  */
 export function start(
   command: string,
   args: string[],
   opts: { cwd?: string; env?: Record<string, string>; timeout?: number } = {},
 ): Running {
-  const child = runCommand(command, args, { ...opts, env: { ...process.env, ...opts.env } });
+  const child = runCommand(command, args, { ...opts, env: cliEnv(opts.env) });
   const trim = (text: string) => text.replace(/\r?\n$/, '');
   const done = child.done.then((end) => ({ ...end, stdout: trim(end.stdout), stderr: trim(end.stderr) })); // oxfmt-ignore
   return Object.assign(child, { done });
@@ -222,7 +223,9 @@ export function setUpCliWorkspace(name: string): void {
         '    lib: {},',
         '    wide: {},',
         '    app: {},',
-        '    broken: {},',
+        // Its dev script exits at once. Never healthy, so it is never taken for ready before
+        // its exit is seen, however long that takes on a busy machine.
+        "    broken: { healthcheck: 'http://127.0.0.1:9/' },",
         "    idle: { tags: ['quiet', 'mixed'] },",
         // No dev command: a tag that matches it starts the others.
         "    assets: { command: null, tags: ['mixed'] },",

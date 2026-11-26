@@ -1,5 +1,5 @@
 ---
-description: stackctl.config.ts - where it lives, every top-level defineConfig option, callbacks, typed tokens, splitting the config across files, typed service names and the type check before start and run.
+description: stackctl.config.ts - where it lives, every top-level defineConfig option, callbacks, the session's lifecycle hooks, typed tokens, splitting the config across files with the types of every part and hook context, typed service names and the type check before start and run.
 ---
 
 # The config file
@@ -32,6 +32,7 @@ repo.
 | `env`            | Variables of the config's own, and how `.env` files load. See [Environment](./env.md).              |
 | `logs`           | On-screen timestamps. See [Logs](./logs.md).                                                        |
 | `infra`          | Databases, caches and other Docker Compose services. See [Infra](./infra.md).                       |
+| `session`        | `lifecycle`: the session's own [lifecycle hooks](./lifecycle.md). See [The session's hooks](#the-sessions-hooks). |
 | `reverseProxy`   | A dev reverse proxy with a hostname per service. See [Reverse proxy](./reverse-proxy.md).           |
 | `urls`           | Workspace-wide footer links, not tied to a service. See [URLs and origins](./urls.md#links-in-the-footer). |
 | `tokens`         | Values of your own, handed to every callback. See [Tokens](#tokens).                                |
@@ -76,8 +77,40 @@ service and get `{ envs, tokens }`.
   up a changed value.
 - **Reading `port` in a callback of a service with no `port`** is an error at load, naming the
   service.
-- **Infra callbacks are the exception**: `beforeStart`, `afterReady` and the others are async
-  and run on every `infra start`. See [Infra callbacks](./infra.md#callbacks).
+- **Callbacks under `lifecycle` are the exception**: they are async, and run around stackctl's
+  own steps (a start, a stop), not at load. See [Lifecycle hooks](./lifecycle.md).
+
+## The session's hooks
+
+`session.lifecycle` takes the session's own [lifecycle hooks](./lifecycle.md): `beforeStart`,
+`afterStart`, `afterReady`, `beforeStop` and `afterStop`. `beforeStart` runs once as a session
+starts, before its infra and its services. For steps that keep a checkout in shape, such as
+removing a directory the repo no longer has, which git leaves behind full of ignored files:
+
+```ts
+import fs from 'node:fs';
+import path from 'node:path';
+import { defineConfig } from 'stackctl';
+
+export default defineConfig({
+  serviceRootDir: 'apps',
+  services: { api: {}, web: {} },
+  session: {
+    lifecycle: {
+      beforeStart: async ({ workspaceDir, log }) => {
+        const old = path.join(workspaceDir, 'apps/legacy');
+        if (fs.existsSync(old)) {
+          fs.rmSync(old, { recursive: true });
+          log('removed apps/legacy');
+        }
+      },
+    },
+  },
+});
+```
+
+- **When each runs, what it receives (`mode` among it) and what a failure does** are on the
+  [lifecycle page](./lifecycle.md#the-session).
 
 ## Tokens
 
@@ -138,8 +171,10 @@ A part of the config can live in its own file and still be checked where it is w
 import type { DockerComposeServiceInput } from 'stackctl';
 
 export const queue = {
-  afterReady: async ({ envs, log }) => {
-    log(`queue admin on ${envs.QUEUE_ADMIN_PORT}`);
+  lifecycle: {
+    afterReady: async ({ envs, log }) => {
+      log(`queue admin on ${envs.QUEUE_ADMIN_PORT}`);
+    },
   },
 } satisfies DockerComposeServiceInput;
 ```
@@ -163,15 +198,15 @@ Node loads the config directly, so its files import each other by their real `.t
 `satisfies`, not a type annotation: an annotation widens the part's names to `string`, and
 `defineConfig` can no longer check them.
 
-An infra callback written as a function of its own takes its phase's context type:
+A `lifecycle` hook written as a function of its own takes its context type, such as
+`ServiceStartContext`: each hook's is on the
+[lifecycle page](./lifecycle.md#when-each-hook-runs).
 
-| Callback                        | Context                       |
-| ------------------------------- | ----------------------------- |
-| `beforeDestroy`, `afterDestroy` | `DockerComposeDestroyContext` |
-| `beforeStart`                   | `DockerComposeStartContext`   |
-| `afterReady`                    | `DockerComposeReadyContext`   |
+"The project" is `infra['docker-compose'].lifecycle`. Each takes the config's `tokens` type as
+an argument: `ServiceStartContext<{ domain: string }>`. A function any hook can take, at any
+level, takes `LifecycleContext`, what every hook gets.
 
-A function shared by several phases takes `DockerComposeCallbackContext`.
+A function shared by several of an infra service's phases takes `DockerComposeCallbackContext`.
 
 ```ts
 import type { DockerComposeReadyContext } from 'stackctl';

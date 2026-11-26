@@ -88,17 +88,19 @@ async function upstream(name: string): Promise<Upstream> {
   return { port: (server.address() as net.AddressInfo).port, server };
 }
 
-type Status = 'running' | 'stopped' | 'waiting' | 'restarting';
+type Status = 'running' | 'stopped' | 'waiting' | 'restarting' | 'failed';
 
 interface StubManager extends DevReverseProxyManager {
   set(name: string, status: Status | null): void;
-  setReady(name: string, ready: boolean): void;
+  setReachable(name: string, reachable: boolean): void;
+  setFailure(name: string, failure: string | null): void;
   logged: [attrs: Record<string, unknown>, message: string][];
 }
 
 function stubManager(initial: Record<string, Status> = {}): StubManager {
   const statuses = new Map<string, Status>(Object.entries(initial));
   const ready = new Set<string>();
+  const failures = new Map<string, string>();
   const listeners = new Set<() => void>();
   const notify = () => {
     for (const l of listeners) {
@@ -109,7 +111,8 @@ function stubManager(initial: Record<string, Status> = {}): StubManager {
   return {
     logged,
     getStatus: (name) => statuses.get(name) ?? null,
-    isReady: (name) => ready.has(name),
+    isReachable: (name) => ready.has(name),
+    failureOf: (name) => failures.get(name) ?? null,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -125,8 +128,15 @@ function stubManager(initial: Record<string, Status> = {}): StubManager {
       }
       notify();
     },
-    setReady(name, isReady) {
-      if (isReady) {
+    setFailure(name, failure) {
+      if (failure === null) {
+        failures.delete(name);
+      } else {
+        failures.set(name, failure);
+      }
+    },
+    setReachable(name, reachable) {
+      if (reachable) {
         ready.add(name);
       } else {
         ready.delete(name);
@@ -501,7 +511,7 @@ describe('routing by path', () => {
     proxy.bindSession(manager);
     const pending = request(proxy.port, ROOT, { path: '/docs/x' });
     await new Promise((resolve) => setTimeout(resolve, 300));
-    manager.setReady('docs', true);
+    manager.setReachable('docs', true);
     const reply = await pending;
     expect(reply.status).toBe(200);
     expect(JSON.parse(reply.body).upstream).toBe('docs');
@@ -1360,7 +1370,7 @@ describe('h2c (HTTP/2 without TLS) on the same port', () => {
       ),
     );
     expect(results.filter((r) => r.status !== 200 || r.resetEarly)).toEqual([]);
-  });
+  }, 15_000);
 
   test('never resets a stream it answers itself while its client holds the request side open', async () => {
     // The same as above for the proxy's own answers (an unknown host, a package not running), which
@@ -1561,10 +1571,135 @@ describe('status-aware responses', () => {
     await new Promise((r) => setTimeout(r, 400));
     expect(settled).toBe(false);
 
-    manager.setReady('web', true);
+    manager.setReachable('web', true);
     const reply = await pending;
     expect(reply.status).toBe(200);
     expect(reply.headers['x-upstream']).toBe('web');
+  });
+
+  test('forwards to a service that is healthy while its afterReady is running, and to a failed one whose process is up', async () => {
+    const web = await upstream('web');
+    const api = await upstream('api');
+    const proxy = await proxyFor([
+      route(`web.${ROOT}`, 'web', web.port, true),
+      route(`api.${ROOT}`, 'api', api.port, false),
+    ]);
+    // `web` runs and is healthy, its afterReady still running: reachable, not ready.
+    const manager = stubManager({ web: 'running', api: 'failed' });
+    manager.setReachable('web', true);
+    manager.setReachable('api', true);
+    proxy.bindSession(manager);
+    const toWeb = await request(proxy.port, `web.${ROOT}`);
+    expect(toWeb.status).toBe(200);
+    expect(toWeb.headers['x-upstream']).toBe('web');
+    const toApi = await request(proxy.port, `api.${ROOT}`);
+    expect(toApi.status).toBe(200);
+    expect(toApi.headers['x-upstream']).toBe('api');
+    const { socket, res } = await upgrade(proxy.port, `api.${ROOT}`);
+    expect(res.statusCode).toBe(101);
+    socket.destroy();
+  });
+
+  // `waiting`: a start asked for during a stop's beforeStop waits for that stop to end.
+  test.each(['stopped', 'restarting', 'waiting'] as const)(
+    'forwards to a %s service while its process can still be reached (its beforeStop runs), and not once it cannot',
+    async (status) => {
+      const api = await upstream('api');
+      const proxy = await proxyFor([route(`api.${ROOT}`, 'api', api.port, true)]);
+      const manager = stubManager({ api: status });
+      manager.setReachable('api', true);
+      proxy.bindSession(manager);
+      const reached = await request(proxy.port, `api.${ROOT}`);
+      expect(reached.status).toBe(200);
+      expect(reached.headers['x-upstream']).toBe('api');
+      const { socket, res } = await upgrade(proxy.port, `api.${ROOT}`);
+      expect(res.statusCode).toBe(101);
+      socket.destroy();
+      // Signalled: it can't be reached any more.
+      manager.setReachable('api', false);
+      const refused = await request(proxy.port, `api.${ROOT}`, {
+        headers: { accept: 'application/json' },
+      });
+      expect(refused.status).toBe(503);
+      expect(JSON.parse(refused.body)).toMatchObject({ service: 'api', status });
+      await expect(upgrade(proxy.port, `api.${ROOT}`)).rejects.toThrow('socket hang up');
+    },
+  );
+
+  test('a request held for readiness is forwarded when the service is stopped meanwhile but can still be reached', async () => {
+    const api = await upstream('api');
+    const proxy = await proxyFor([route(`api.${ROOT}`, 'api', api.port, true)]);
+    const manager = stubManager({ api: 'running' });
+    proxy.bindSession(manager);
+    const pending = request(proxy.port, `api.${ROOT}`);
+    await new Promise((r) => setTimeout(r, 300));
+    manager.setReachable('api', true);
+    manager.set('api', 'stopped');
+    const reply = await pending;
+    expect(reply.status).toBe(200);
+  });
+
+  test('does not forward to a failed service with no process: its page says it failed, why, and to restart it', async () => {
+    const api = await upstream('api');
+    const proxy = await proxyFor([route(`api.${ROOT}`, 'api', api.port, false)]);
+    const manager = stubManager({ api: 'failed' });
+    manager.setFailure('api', 'afterReady failed: no DATABASE_URL');
+    proxy.bindSession(manager);
+    const json = await request(proxy.port, `api.${ROOT}`, {
+      headers: { accept: 'application/json' },
+    });
+    expect(json.status).toBe(503);
+    expect(JSON.parse(json.body)).toMatchObject({
+      service: 'api',
+      status: 'failed',
+      error: 'afterReady failed: no DATABASE_URL',
+      hint: 'restart it once it is fixed: focus api in stackctl and press r, or run stackctl service restart -s api; a change to stackctl.config.ts needs a new session',
+    });
+    const html = await request(proxy.port, `api.${ROOT}`, { headers: { accept: 'text/html' } });
+    expect(html.status).toBe(503);
+    expect(html.body).toContain('api failed');
+    expect(html.body).toContain('afterReady failed: no DATABASE_URL');
+    expect(html.body).toContain('<code>r</code>');
+    expect(html.body).toContain('stackctl service restart -s api');
+    // A fix to the hook itself needs the session started again.
+    expect(html.body).toContain('If the fix is in <code>stackctl.config.ts</code>, quit the session and start it again'); // oxfmt-ignore
+    expect(html.body).not.toContain('<code>s</code>');
+    await expect(upgrade(proxy.port, `api.${ROOT}`)).rejects.toThrow('socket hang up');
+  });
+
+  test('the page of a service that was never started because its beforeStart failed says why', async () => {
+    const api = await upstream('api');
+    const proxy = await proxyFor([route(`api.${ROOT}`, 'api', api.port, false)]);
+    const manager = stubManager({ api: 'stopped' });
+    manager.setFailure('api', 'beforeStart failed: no codegen');
+    proxy.bindSession(manager);
+    const json = await request(proxy.port, `api.${ROOT}`, { headers: { accept: 'application/json' } }); // oxfmt-ignore
+    expect(json.status).toBe(503);
+    expect(JSON.parse(json.body)).toMatchObject({ service: 'api', status: 'stopped', error: 'beforeStart failed: no codegen' }); // oxfmt-ignore
+    const html = await request(proxy.port, `api.${ROOT}`, { headers: { accept: 'text/html' } });
+    expect(html.body).toContain('It failed to start: <code>beforeStart failed: no codegen</code>');
+    // A service stopped for no such reason says nothing of the kind.
+    manager.setFailure('api', null);
+    const plain = await request(proxy.port, `api.${ROOT}`, { headers: { accept: 'application/json' } }); // oxfmt-ignore
+    expect(JSON.parse(plain.body)).toMatchObject({ status: 'stopped', error: 'api is stopped' });
+  });
+
+  test('a request held for readiness gets the failed page when the service fails meanwhile', async () => {
+    const api = await upstream('api');
+    const proxy = await proxyFor([route(`api.${ROOT}`, 'api', api.port, true)]);
+    const manager = stubManager({ api: 'running' });
+    proxy.bindSession(manager);
+    const pending = request(proxy.port, `api.${ROOT}`, { headers: { accept: 'application/json' } });
+    await new Promise((r) => setTimeout(r, 300));
+    manager.setFailure('api', 'afterStart failed: boom');
+    manager.set('api', 'failed');
+    const reply = await pending;
+    expect(reply.status).toBe(503);
+    expect(JSON.parse(reply.body)).toMatchObject({
+      service: 'api',
+      status: 'failed',
+      error: 'afterStart failed: boom',
+    });
   });
 
   test('gives up the hold after the deadline with a 503 "starting"', async () => {

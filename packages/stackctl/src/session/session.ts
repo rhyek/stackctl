@@ -13,10 +13,12 @@ import {
   infraServicesOf,
   normalizeUrlEntry,
 } from '../config';
+import type { SessionStartHooks } from '../control-client';
 import {
   type ControlManager,
   type ServiceAction,
   type ServiceRunOutcome,
+  everythingReady,
   startControlServer,
 } from '../control-server';
 import type { DevReverseProxyManager, DevReverseProxyServer } from '../dev-reverse-proxy';
@@ -38,17 +40,33 @@ import {
   type InfraRunOutcome,
   type InfraStatus,
 } from '../infra/control';
+import type { InfraManagerDeps } from '../infra/manager';
 import { InfraFailedError, runSessionInfra } from '../infra/session';
 import type { InfraEvent, InfraRunSummary } from '../infra/types';
 import type { InternalLoggers } from '../internal-logger';
+import {
+  type HookOutcome,
+  abandonedLine,
+  failedLine,
+  raceAbort,
+  skippedLine,
+} from '../lifecycle/hooks';
+import { createServiceHooks } from '../lifecycle/service-hooks';
+import type { ServiceCallbacks } from '../lifecycle/service-types';
 import { isProcessAlive } from '../process-info';
 import { pickRandomPort, readRunning, sessionId, updateRunning } from '../running';
 import { definesDevScript } from '../scripts';
 import { planSelection } from '../selection-plan';
 import { UsageSampler, type UsageReader, createUsageReader } from '../service-usage';
 import { sessionEventsPath } from '../session-files';
+import {
+  type SessionHook,
+  type SessionMode,
+  hasSessionHook,
+  runSessionHook,
+} from '../session-lifecycle';
 import { acquireSession } from '../session-takeover';
-import { SHUTDOWN_GRACE_MS, SHUTDOWN_TIMEOUT_MS } from '../shutdown-timing';
+import { SHUTDOWN_GRACE_MS, STOP_HOOK_BUDGET_MS, STOP_SWEEP_MARGIN_MS } from '../shutdown-timing';
 import { installShutdownSignals } from '../signals';
 import { readOwnVersion } from '../skill';
 import type { StackMessage } from '../stack';
@@ -93,6 +111,11 @@ export interface SessionSnapshot {
     /** The services it is held until ready. */
     waitsFor: string[];
     /**
+     * Present while a stop's `beforeStop` or `afterStop` still runs: a stop asked for now abandons
+     * the hook.
+     */
+    stopping?: true;
+    /**
      * Bytes in use by its processes, as shown: sampled only in an interactive session, and absent
      * before the first reading and while nothing of it runs.
      */
@@ -127,7 +150,35 @@ export interface SessionSeams {
   /** `controlPort` reads the control API's port, the one it ends up bound to once it is. */
   startProxy?: (controlPort: () => number) => Promise<DevReverseProxyServer | null>;
   startControlServer?: (opts: Parameters<typeof startControlServer>[0]) => Promise<ControlServer>;
-  runInfra?: (onEvent: (event: InfraEvent) => void) => Promise<SessionInfra | undefined>;
+  /**
+   * What the real infra step runs Docker with (and finds the session for `control` with), when
+   * {@link runInfra} isn't given; the real ones unless given.
+   */
+  infraDeps?: Omit<InfraManagerDeps, 'signal'>;
+  /**
+   * The infra step; its hooks' commands are killed once `signal` aborts (the hard kill), and
+   * asked to end once `abandon` does (a shutdown began).
+   */
+  runInfra?: (
+    onEvent: (event: InfraEvent) => void,
+    data: Record<string, unknown>,
+    signal: AbortSignal,
+    abandon: AbortSignal,
+  ) => Promise<SessionInfra | undefined>;
+  /**
+   * Runs the config's `session.lifecycle[hook]`, its lines to `write`, abandoned once `budget`
+   * aborts (its commands asked to end), its commands killed once `signal` does, each command it
+   * starts handed to `onCommand`; the real one unless given.
+   */
+  runSessionHook?: (
+    hook: SessionHook,
+    mode: SessionMode,
+    write: (line: string, isError: boolean) => void,
+    data: Record<string, unknown>,
+    budget?: AbortSignal,
+    signal?: AbortSignal,
+    onCommand?: (ended: Promise<void>) => void,
+  ) => Promise<HookOutcome>;
   /** The command an infra action runs the CLI with; this stackctl's own `[node, cli.js]` unless given. */
   infraCli?: string[];
   createProcess?: (opts: ServiceProcessOptions) => SupervisedProcess;
@@ -196,6 +247,17 @@ function memoryOf(bytes: number | undefined): { memory?: number } {
   return bytes === undefined ? {} : { memory: bytes };
 }
 
+/** `env` without the variables it leaves unset. */
+function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const defined: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined) {
+      defined[key] = value;
+    }
+  }
+  return defined;
+}
+
 function defaultSignalGroup(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pid, signal);
@@ -239,9 +301,32 @@ export class Session implements ControlManager, DevReverseProxyManager {
   private resolveClosed!: (code: number) => void;
   private phase: SessionSnapshot['phase'] = 'starting';
   private failure: { message: string } | undefined;
+  /** How this session runs, for the session's `beforeStart`. */
+  private readonly mode: SessionMode;
   private started = false;
+  /**
+   * The start got past its `beforeStart` step (the hook finished, or there is none): only then
+   * does a shutdown run the session's `beforeStop` and `afterStop`.
+   */
+  private pastBeforeStart = false;
+  /** Where the session's `afterStart` and `afterReady` are: see {@link sessionStartHooks}. */
+  private startHooks: SessionStartHooks;
   private closing = false;
   private killed = false;
+  /**
+   * Aborted by the hard kill, and once the shutdown is done: every command a `lifecycle` hook of
+   * the session's or a service's still runs is killed with it.
+   */
+  private readonly hooksSignal = new AbortController();
+  /**
+   * Aborted as a shutdown begins: the session's own start hook still running is abandoned, and
+   * the commands its infra startup's hooks run are asked to end.
+   */
+  private readonly startAbandon = new AbortController();
+  /** The session's own start hook running now. */
+  private runningStartHook: SessionHook | null = null;
+  /** The commands the session's own hooks run now. */
+  private readonly hookCommands = new Set<Promise<void>>();
   private sampler: UsageSampler | null = null;
   /** The shutdown has finished. */
   private done = false;
@@ -278,6 +363,8 @@ export class Session implements ControlManager, DevReverseProxyManager {
     logFile: string;
     /** Started by `startStack()`: tells its parent over the IPC channel once the control API is up. */
     forked: boolean;
+    /** The session `start --detach` started: what the session's `beforeStart` gets as `mode`. */
+    detached?: boolean;
     /**
      * Shown on a screen (the TUI): memory is sampled for the snapshot, and an acquisition that
      * fails falls back to a random control port instead of failing startup. Off for headless.
@@ -289,6 +376,12 @@ export class Session implements ControlManager, DevReverseProxyManager {
     this.configPath = opts.configPath;
     this.forked = opts.forked;
     this.interactive = opts.interactive ?? false;
+    this.mode = this.interactive ? 'ui' : opts.detached ? 'detached' : 'headless';
+    this.startHooks = hasSessionHook('afterStart')
+      ? 'afterStart'
+      : hasSessionHook('afterReady')
+        ? 'afterReady'
+        : 'none';
     this.seams = opts.seams ?? {};
     this.signalGroup = this.seams.signalGroup ?? defaultSignalGroup;
     this.closed = new Promise((resolve) => {
@@ -304,11 +397,22 @@ export class Session implements ControlManager, DevReverseProxyManager {
           return healthcheck ? probeHealthcheck(healthcheck) : Promise.resolve(false);
         }),
     });
+    const loaded = getLoadedConfig();
     this.supervisor = new Supervisor({
       plan: this.plan,
       logs: this.logs,
       readiness: this.readiness,
       createProcess: this.seams.createProcess,
+      interactive: this.interactive,
+      // The services' hooks get the environment their dev process gets, and log under its label.
+      hooks: loaded
+        ? createServiceHooks({
+            config: loaded,
+            envFor: (service) => definedEnv(this.supervisor.processEnv(service)),
+            write: (service, line, isError) => this.supervisor.hookLine(service, line, isError),
+            signal: this.hooksSignal.signal,
+          })
+        : undefined,
     });
     this.supervisor.on('change', () => this.changed());
     this.events =
@@ -321,8 +425,11 @@ export class Session implements ControlManager, DevReverseProxyManager {
     this.supervisor.on('exit', (service, exitCode, signal) => {
       this.events.write({ type: 'service-exit', service, exitCode, signal });
     });
-    this.supervisor.on('env-change', (dir, services) => {
-      this.events.write({ type: 'env-change', dir, services });
+    this.supervisor.on('env-change', (dir, services, byHook) => {
+      // What a service's own `beforeStart` wrote is no change anyone made: it leaves no line.
+      if (!byHook) {
+        this.events.write({ type: 'env-change', dir, services });
+      }
     });
     // Infra's labels count in the width from the start, so a service's text and an infra
     // service's start in one column; a service the provider reports beyond the config's joins
@@ -464,7 +571,17 @@ export class Session implements ControlManager, DevReverseProxyManager {
         tellParent(this.seams.parentChannel ?? process, message);
       }
 
-      const infra = await this.bringUpInfra();
+      // The session's own step, once any session it replaced has quit, and before its infra. Like
+      // infra, not a step a shutdown waits for: it has no deadline, and leaves nothing to close.
+      // One `data` for both: what the hook writes, the infra's callbacks read.
+      const data: Record<string, unknown> = {};
+      await this.runBeforeStart(data);
+      this.pastBeforeStart = true;
+      if (this.closing) {
+        return;
+      }
+
+      const infra = await this.bringUpInfra(data);
       if (this.closing) {
         return;
       }
@@ -477,12 +594,17 @@ export class Session implements ControlManager, DevReverseProxyManager {
       server.bindSession(this);
       proxy?.bindSession(this);
       this.infraControl?.start();
-      this.supervisor.launchAll();
+      this.supervisor.launchAll(data);
       this.phase = 'running';
       this.changed();
-      if (readUsage) {
-        this.startSampler(await readUsage, infra);
-      }
+      // Like `beforeStart`, neither afterStart nor afterReady is a step a shutdown waits for, and
+      // neither waits for the memory reader, which is read alongside.
+      const hooks = this.runStartHook('afterStart', data).then((ok) => {
+        if (ok) {
+          this.runAfterReadyOnceReady(data);
+        }
+      });
+      await Promise.all([hooks, readUsage?.then((reader) => this.startSampler(reader, infra))]);
     } catch (err) {
       if (!this.closing) {
         this.fail(errorMessage(err));
@@ -491,13 +613,17 @@ export class Session implements ControlManager, DevReverseProxyManager {
   }
 
   /**
-   * The one shutdown path. The first call stops every process (SIGTERM, then SIGKILL after the
-   * grace period), closes the proxy, answers a held `/command/quit`, closes the control server and
-   * the logfile. A call while that runs kills every process group at once and settles
+   * The one shutdown path. The first call runs the `beforeStop` hooks (the session's, then every
+   * running service's, in 5 s), stops every process (SIGTERM, then SIGKILL after the grace period),
+   * runs the `afterStop` hooks (the services', then the session's, in 5 s), closes the proxy,
+   * answers a held `/command/quit`, closes the control server and the logfile. The session's own
+   * hooks run only when its start got past its `beforeStart`. A call while that runs kills every
+   * process group at once, and every command a hook runs, skips the hooks left and settles
    * {@link closed} with 1; a `startup-failed` call never escalates, since its caller only follows
    * up on a failure, and a call once the shutdown is done does nothing. A startup step under way
-   * (takeover, the proxy, the control server, not infra) is let settle first, and what it produced
-   * is closed with the rest. Resolves once this call's part is done.
+   * (takeover, the proxy, the control server; not the session's `beforeStart`, nor infra) is let
+   * settle first, and what it produced is closed with the rest. Resolves once this call's part is
+   * done.
    */
   async shutdown(reason: ShutdownReason): Promise<void> {
     if (this.done) {
@@ -506,18 +632,31 @@ export class Session implements ControlManager, DevReverseProxyManager {
     if (this.closing) {
       if (!this.killed && reason !== 'startup-failed') {
         this.killed = true;
+        this.supervisor.log.system.warn('asked to quit again: killing every process now'); // oxfmt-ignore
         this.killEverything();
         this.resolveClosed(1);
       }
       return;
     }
     this.closing = true;
+    // The session's start hook still running is abandoned, and what its infra startup's hooks
+    // run is asked to end.
+    if (this.runningStartHook) {
+      this.say(chalk.yellow(abandonedLine(this.runningStartHook, 'quit')));
+      this.runningStartHook = null;
+    }
+    this.startAbandon.abort();
     const failed = this.phase === 'failed';
+    // Read once: a `beforeStart` that finishes from here on doesn't bring the session's stop hooks.
+    const sessionHooks = this.pastBeforeStart;
     this.phase = 'stopping';
     this.changed();
     this.branch?.stop();
     this.sampler?.dispose();
     this.sampler = null;
+    // Nothing starts from here on; what runs stays up, and reachable, through the `beforeStop`s.
+    this.supervisor.beginShutdown();
+    const services = this.supervisor.running();
 
     const groups = this.supervisor.groups();
     const infra = this.infraControl;
@@ -532,15 +671,20 @@ export class Session implements ControlManager, DevReverseProxyManager {
     if (groups.size > 0 || living.length > 0) {
       this.supervisor.log.system.warn('shutting down...');
     }
+    const data: Record<string, unknown> = {};
+
+    await this.stopHooks('beforeStop', sessionHooks, services, data);
+
     for (const pid of livingPids) {
       this.signalGroup(pid, 'SIGTERM');
     }
+    // Bounded on its own, so the hooks before it take none of the grace.
     await bounded(
       Promise.all([
         this.supervisor.stopAll(),
         bounded(Promise.all(living.map((p) => p.done)), SHUTDOWN_GRACE_MS),
       ]),
-      SHUTDOWN_TIMEOUT_MS,
+      SHUTDOWN_GRACE_MS + STOP_SWEEP_MARGIN_MS,
     );
     // A quick leader can leave members of its group behind.
     for (const pids of groups.values()) {
@@ -551,6 +695,11 @@ export class Session implements ControlManager, DevReverseProxyManager {
     for (const pid of livingPids) {
       this.signalGroup(pid, 'SIGKILL');
     }
+
+    await this.stopHooks('afterStop', sessionHooks, services, data);
+    // What a hook left behind (a start hook the shutdown didn't wait for, one abandoned) has its
+    // commands killed now.
+    this.hooksSignal.abort();
 
     // What a startup step under way produces is closed below; its own deadlines bound the wait.
     await this.pendingStep;
@@ -564,6 +713,8 @@ export class Session implements ControlManager, DevReverseProxyManager {
       this.events.write({
         type: 'session-end',
         cause: reason === 'signal' ? 'signal' : failed || reason === 'startup-failed' ? 'error' : 'quit', // oxfmt-ignore
+        // Why its start failed, where `stackctl status` and a wait find it once it is gone.
+        ...(failed && this.failure ? { error: this.failure.message } : {}),
         durationMs: Date.now() - this.startedAt,
       });
     }
@@ -579,6 +730,126 @@ export class Session implements ControlManager, DevReverseProxyManager {
     await bounded(this.logs.close(), CLOSE_STEP_MS);
     this.done = true;
     this.resolveClosed(this.killed || failed || reason === 'startup-failed' ? 1 : 0);
+  }
+
+  /**
+   * One of the shutdown's two hook steps, bounded by {@link STOP_HOOK_BUDGET_MS}: for
+   * `beforeStop` the session's hook then the services', for `afterStop` the services' then the
+   * session's. The session's runs only when `sessionHooks`. Nothing at all, and no timer, when no
+   * hook of the step exists; nothing after a hard kill.
+   */
+  private async stopHooks(
+    hook: 'beforeStop' | 'afterStop',
+    sessionHooks: boolean,
+    services: string[],
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const session = sessionHooks && hasSessionHook(hook);
+    const ofServices = this.supervisor.hasStopHook(services, hook);
+    if (this.killed || (!session && !ofServices)) {
+      return;
+    }
+    const timeUp = new AbortController();
+    const timer = setTimeout(() => timeUp.abort(), STOP_HOOK_BUDGET_MS);
+    const budget = AbortSignal.any([timeUp.signal, this.hooksSignal.signal]);
+    try {
+      if (session && hook === 'beforeStop') {
+        // After the commands of a start hook the shutdown abandoned have ended, within the step.
+        if (this.hookCommands.size > 0) {
+          await raceAbort(Promise.all(this.hookCommands), budget);
+        }
+        await this.runSessionStopHook(hook, data, budget);
+      }
+      if (ofServices && !this.killed) {
+        await this.supervisor.runStopHooks(hook, services, data, budget);
+      }
+      if (session && hook === 'afterStop' && !this.killed) {
+        await this.runSessionStopHook(hook, data, budget);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Runs the session's `beforeStop` or `afterStop` within `budget`, its lines under `[session]`
+   * until it has ended: a failure is an error line, a hook abandoned at the end of its time a line
+   * saying so (none after a hard kill), and one with no time left to begin is skipped.
+   */
+  private async runSessionStopHook(
+    hook: 'beforeStop' | 'afterStop',
+    data: Record<string, unknown>,
+    budget: AbortSignal,
+  ): Promise<void> {
+    const say = (text: string, isError = false) => this.say(text, isError);
+    if (budget.aborted) {
+      if (!this.killed) {
+        say(chalk.yellow(skippedLine(hook)));
+      }
+      return;
+    }
+    let open = true;
+    const write = (line: string, isError: boolean) => {
+      if (open) {
+        say(line, isError);
+      }
+    };
+    const outcome = await this.sessionHook(hook, write, data, budget);
+    open = false;
+    if (this.killed) {
+      return;
+    }
+    if (typeof outcome === 'object') {
+      say(failedLine(hook, outcome.error), true);
+    } else if (outcome === 'abandoned') {
+      say(chalk.yellow(abandonedLine(hook, 'budget')));
+    }
+  }
+
+  /** One of the session's own lines, under `[session]`. */
+  private say(text: string, isError = false): void {
+    this.appendLabelled('session', 'session', text, isError);
+  }
+
+  /** Runs the session's `hook` (the seam, or the config's), its commands on the hooks' signal. */
+  private sessionHook(
+    hook: SessionHook,
+    write: (line: string, isError: boolean) => void,
+    data: Record<string, unknown>,
+    budget?: AbortSignal,
+  ): Promise<HookOutcome> {
+    const signal = this.hooksSignal.signal;
+    const onCommand = (ended: Promise<void>) => {
+      this.hookCommands.add(ended);
+      void ended.then(() => this.hookCommands.delete(ended));
+    };
+    return this.seams.runSessionHook
+      ? this.seams.runSessionHook(hook, this.mode, write, data, budget, signal, onCommand)
+      : runSessionHook(hook, this.mode, { write, data, budget, signal, onCommand });
+  }
+
+  /**
+   * Runs one of the session's start hooks, its lines under `[session]` until a shutdown begins,
+   * which abandons it. A failure is an error line there.
+   */
+  private async sessionStartHook(
+    hook: 'beforeStart' | 'afterStart' | 'afterReady',
+    data: Record<string, unknown>,
+  ): Promise<HookOutcome> {
+    const write = (line: string, isError: boolean) => {
+      if (!this.closing) {
+        this.say(line, isError);
+      }
+    };
+    this.runningStartHook = hook;
+    const outcome = await this.sessionHook(hook, write, data, this.startAbandon.signal);
+    if (this.runningStartHook === hook) {
+      this.runningStartHook = null;
+    }
+    if (typeof outcome === 'object' && !this.closing) {
+      this.say(failedLine(hook, outcome.error), true);
+    }
+    return outcome;
   }
 
   getSnapshot(): SessionSnapshot {
@@ -612,6 +883,39 @@ export class Session implements ControlManager, DevReverseProxyManager {
     return statuses;
   }
 
+  serviceHooks(): Record<string, keyof ServiceCallbacks> {
+    const hooks: Record<string, keyof ServiceCallbacks> = {};
+    for (const [name, status] of this.supervisor.states()) {
+      if (status.hook) {
+        hooks[name] = status.hook;
+      }
+    }
+    return hooks;
+  }
+
+  serviceErrors(): Record<string, string> {
+    const errors: Record<string, string> = {};
+    for (const name of this.supervisor.states().keys()) {
+      const error = this.supervisor.failure(name) ?? this.supervisor.blockedBy(name);
+      if (error !== null) {
+        errors[name] = error;
+      }
+    }
+    return errors;
+  }
+
+  /**
+   * Where the session's own `afterStart` and `afterReady` are: `none` configured, the one still
+   * to finish (running, or `afterReady` waiting for the session to be ready), `done`, or `failed`.
+   */
+  sessionStartHooks(): SessionStartHooks {
+    return this.startHooks;
+  }
+
+  sessionError(): string | null {
+    return this.failure?.message ?? null;
+  }
+
   getAllReadiness(): Record<string, boolean> {
     const ready: Record<string, boolean> = {};
     for (const [name, status] of this.supervisor.states()) {
@@ -633,8 +937,9 @@ export class Session implements ControlManager, DevReverseProxyManager {
     const command = this.events.begin<ServiceCommandEntry>({ type: 'service-command', action, service: name }, by); // oxfmt-ignore
     const outcome = await this.runPackageNow(name, action);
     if (outcome === 'accepted') {
-      // A restart runs on: its end is once the service has been started again.
-      void this.supervisor.restart(name).then(() => command.end({ ok: true, outcome: 'done' }));
+      // A restart runs on: its end is once the service has been started again, or a stop (or the
+      // shutdown) cancelled it.
+      void this.supervisor.restart(name).then((ended) => command.end({ ok: ended === 'done', outcome: ended })); // oxfmt-ignore
     } else {
       command.end({ ok: outcome === 'done', outcome });
     }
@@ -658,12 +963,13 @@ export class Session implements ControlManager, DevReverseProxyManager {
       void this.supervisor.restart(name);
       return 'accepted';
     }
-    if (status.state === 'restarting') {
-      return 'busy';
-    }
+    // A stop always goes through, a restart under way included: the latest request wins.
     if (action === 'stop') {
       await this.supervisor.stop(name);
       return 'done';
+    }
+    if (status.state === 'restarting') {
+      return 'busy';
     }
     const config = this.plan.sortedPackages.find((p) => p.name === name);
     if (config && !definesDevScript(config)) {
@@ -740,8 +1046,13 @@ export class Session implements ControlManager, DevReverseProxyManager {
     return status ? publicStatus(status.state) : null;
   }
 
-  isReady(name: string): boolean {
-    return this.readiness.isReady(name);
+  /** Healthy, and a process of its own runs: one a stop has let go of included, until signalled. */
+  isReachable(name: string): boolean {
+    return this.readiness.isHealthy(name) && this.supervisor.hasProcess(name);
+  }
+
+  failureOf(name: string): string | null {
+    return this.supervisor.failure(name);
   }
 
   // Internals
@@ -763,13 +1074,23 @@ export class Session implements ControlManager, DevReverseProxyManager {
 
   /** The infra step: its output into the log as it arrives, the rest to {@link subscribeInfra}. */
   /** The infra step, written as an `infra-command` `start` by the session itself. */
-  private async bringUpInfra(): Promise<SessionInfra | undefined> {
-    const run = this.seams.runInfra ?? ((onEvent) => runSessionInfra(onEvent));
+  private async bringUpInfra(data: Record<string, unknown>): Promise<SessionInfra | undefined> {
+    const run =
+      this.seams.runInfra ??
+      ((onEvent, shared, signal, abandon) =>
+        runSessionInfra(onEvent, { ...this.seams.infraDeps, signal, abandon }, shared));
     const command = getLoadedConfig()?.infra
       ? this.events.begin<InfraCommandEntry>({ type: 'infra-command', action: 'start', requested: [] }, { kind: 'session' }) // oxfmt-ignore
       : null;
     try {
-      const infra = await run((event) => this.infraEvent(event));
+      // Its hooks run in this process: their commands are asked to end as a shutdown begins, and
+      // die with the session's hard kill.
+      const infra = await run(
+        (event) => this.infraEvent(event),
+        data,
+        this.hooksSignal.signal,
+        this.startAbandon.signal,
+      );
       if (infra && !this.closing) {
         this.emitInfra({ type: 'finished', summary: { ok: true, services: [] } });
       }
@@ -833,9 +1154,77 @@ export class Session implements ControlManager, DevReverseProxyManager {
     }
   }
 
+  /**
+   * Runs the config's `session.lifecycle.beforeStart`, its output under `[session]`: a label never
+   * wider than `[stackctl]`'s, so it never widens the column.
+   */
+  private async runBeforeStart(data: Record<string, unknown>): Promise<void> {
+    const outcome = await this.sessionStartHook('beforeStart', data);
+    if (typeof outcome === 'object') {
+      throw new Error(`session beforeStart failed: ${outcome.error}`);
+    }
+  }
+
+  /**
+   * Runs the session's `afterStart` or `afterReady`, if the config has it, its lines under
+   * `[session]` until a shutdown begins. A failure fails the session's start. Resolves with
+   * whether the session may go on to its next hook: the hook finished, or there is none.
+   */
+  private async runStartHook(
+    hook: 'afterStart' | 'afterReady',
+    data: Record<string, unknown>,
+  ): Promise<boolean> {
+    if (!hasSessionHook(hook)) {
+      return true;
+    }
+    const outcome = await this.sessionStartHook(hook, data);
+    if (this.closing || outcome === 'abandoned') {
+      return false;
+    }
+    if (typeof outcome === 'object') {
+      this.startHooks = 'failed';
+      this.fail(`session ${hook} failed: ${outcome.error}`);
+      return false;
+    }
+    this.startHooks = hook === 'afterStart' && hasSessionHook('afterReady') ? 'afterReady' : 'done';
+    this.changed();
+    return true;
+  }
+
+  /**
+   * Runs the session's `afterReady`, if it has one, the first time the session is ready, as the
+   * control API's `sessionReady` reads it before the hook counts.
+   */
+  private runAfterReadyOnceReady(data: Record<string, unknown>): void {
+    if (!hasSessionHook('afterReady')) {
+      return;
+    }
+    let unsubscribe = () => {};
+    const check = () => {
+      if (this.closing) {
+        unsubscribe();
+        return;
+      }
+      if (
+        !everythingReady(this.serviceStatuses(), this.getAllReadiness(), this.getInfraStatuses())
+      ) {
+        return;
+      }
+      unsubscribe();
+      void this.runStartHook('afterReady', data);
+    };
+    unsubscribe = this.subscribe(check);
+    check();
+  }
+
   /** An infra line under `[infra]` (the provider's own) or `[infra:<service>]`. */
   private appendInfra(service: string | undefined, text: string, isError: boolean): void {
     const name = service === undefined ? 'infra' : `infra:${service}`;
+    this.appendLabelled(name, 'infra', text, isError);
+  }
+
+  /** One of the session's own lines, under its gold `[label]`, filtered as `filterKey`. */
+  private appendLabelled(name: string, filterKey: string, text: string, isError: boolean): void {
     this.logs.append({
       service: null,
       text: isError ? chalk.red(text) : text,
@@ -844,7 +1233,7 @@ export class Session implements ControlManager, DevReverseProxyManager {
       ts: logTimestamp(),
       showTs: this.plan.logTimestamps ?? true,
       label: { name, paint: gold },
-      filterKey: 'infra',
+      filterKey,
     });
   }
 
@@ -899,13 +1288,17 @@ export class Session implements ControlManager, DevReverseProxyManager {
     }
   }
 
-  /** SIGKILL to every process group the session has, those in a grace period included. */
+  /**
+   * SIGKILL to every process group the session has, those in a grace period included, and to
+   * every command a `lifecycle` hook runs; every stop hook still running is abandoned.
+   */
   private killEverything(): void {
     const pids = new Set(this.waitedGroups);
     for (const group of this.supervisor.groups().values()) {
       group.forEach((pid) => pids.add(pid));
     }
     this.supervisor.killEverything();
+    this.hooksSignal.abort();
     this.infraControl?.kill('SIGKILL');
     for (const pid of pids) {
       this.signalGroup(pid, 'SIGKILL');
@@ -977,6 +1370,9 @@ export class Session implements ControlManager, DevReverseProxyManager {
         ready: status.ready,
         hasHealthcheck: name in this.plan.healthchecks,
         waitsFor: this.plan.waitsOn[name] ?? [],
+        ...(status.hook === 'beforeStop' || status.hook === 'afterStop'
+          ? { stopping: true as const }
+          : {}),
         ...memoryOf(this.sampler?.memoryBytes(name)),
         links: links(configs.get(name)?.urls),
       })),

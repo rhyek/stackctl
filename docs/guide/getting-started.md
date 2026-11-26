@@ -119,21 +119,21 @@ pnpm stackctl   # or its short alias: pnpm sctl
 Pick the services to run, press `⏎`, and the [terminal UI](./terminal-ui.md) takes over: one
 combined log, with every service's state in the footer.
 
-<llm-exclude><TerminalPlayer src="/casts/getting-started-1794688487.cast" label="The run screen: the services' combined log, and the footer with each service's state, the keys and the links." still /></llm-exclude>
+<llm-exclude><TerminalPlayer src="/casts/getting-started-1795714308.cast" label="The run screen: the services' combined log, and the footer with each service's state, the keys and the links." still /></llm-exclude>
 <llm-only>
 
 ```text
-             ↑ 15 older lines — press Home to jump to oldest
-14:34:33 [backend   ] todo api listening on http://localhost:3001
-14:34:33 [frontend  ] backend ready, starting...
-14:34:33 [frontend  ] started
-14:34:33 [frontend  ]   VITE v8.3.5  ready in 367 ms
-14:34:33 [frontend  ]   ➜  Local:   http://localhost:21060/
-14:34:33 [frontend  ]   ➜  Network: use --host to expose
-14:34:33 [frontend  ] 2:34:33 PM [vite] (ssr) connected.
+             ↑ 16 older lines — press Home to jump to oldest
+11:31:34 [backend   ] todos API at http://api.localhost:21050/todos
+11:31:34 [frontend  ] backend ready, starting...
+11:31:34 [frontend  ] started
+11:31:35 [frontend  ]   VITE v8.3.5  ready in 653 ms
+11:31:35 [frontend  ]   ➜  Local:   http://localhost:21060/
+11:31:35 [frontend  ]   ➜  Network: use --host to expose
+11:31:35 [frontend  ] 11:31:35 AM [vite] (ssr) connected.
 ── example ⎇ main ────────────────────────────────────────────────────────
-❯ ● backend 63M  ● frontend 230M
-infra: ● db 23M  ● mail 14M
+❯ ● backend 53M  ● frontend 228M
+infra: ● db 25M  ● mail 13M
 ← → select  r restart  s stop  m commands
 logs: / filter  c clear  │  ^c quit
 Home page ↗

@@ -90,8 +90,12 @@ service runs.
   "logFile": "/repo/node_modules/.stackctl/profiles/development/sessions/1794164978752/logs.txt",
   "services": { "web": "running", "api": "waiting" },
   "ready": { "web": true, "api": false },
+  "errors": {},
+  "serviceHooks": {},
   "infra": { "db": "running", "mail": "starting" },
   "sessionReady": false,
+  "sessionError": null,
+  "sessionStartHooks": "afterReady",
   "config": {/* the resolved config */},
   "reverseProxy": {
     "port": 4000,
@@ -111,14 +115,19 @@ service runs.
 | `profileSource`  | string            | Where the profile came from: `flag`, `env`, `ci` or `default`.               |
 | `startedByAgent` | boolean           | Whether a coding agent started it.                                           |
 | `logFile`        | string            | The log file being written.                                                  |
-| `services`       | object \| null    | Each service's status: `running`, `stopped`, `waiting` or `restarting`.      |
-| `ready`          | object \| null    | Per service: `true` when running and passing its healthcheck, or running with none. |
+| `services`       | object \| null    | Each service's status: `running`, `stopped`, `waiting`, `restarting` or `failed` (its process runs, but its [`afterStart` or `afterReady` failed](../config/lifecycle.md)). |
+| `ready`          | object \| null    | Per service: `true` when running and passing its healthcheck, or running with none, and its `afterStart` and `afterReady` have finished. |
+| `errors`         | object \| null    | Per service a start hook keeps from getting ready: a `failed` one's error (`afterReady failed: <message>`), a `stopped` one's whose `beforeStart` failed (`beforeStart failed: <message>`), or why a `waiting` one waits on such a service (`waiting for api, which failed: …`). Only those services are keys. |
+| `serviceHooks`   | object \| null    | Per service running a [lifecycle hook](../config/lifecycle.md) of its own now: which one, `beforeStart`, `afterStart`, `afterReady`, `beforeStop` or `afterStop`. A stop of the service [abandons](../config/lifecycle.md) it. Only those services are keys. |
 | `infra`          | object \| null    | Each infra service's state: `running`, `starting`, `stopped`, `stopping`, `restarting` or `resetting`. `null` without infra. |
-| `sessionReady`   | boolean           | `true` once every infra service is running and every service that isn't stopped is ready. |
+| `sessionReady`   | boolean           | `true` once every infra service is running, every service that isn't stopped is ready, and the session's own `afterStart` and `afterReady` have finished. |
+| `sessionError`   | string \| null    | Why the session's start failed after its services were started: its `afterStart` or `afterReady` threw (`session afterReady failed: <message>`), or another step of its start failed after that. |
+| `sessionStartHooks` | string        | Where the session's own `afterStart` and `afterReady` are: `none` (the config has neither), `afterStart` or `afterReady` (the one still to finish), `done` or `failed`. |
 | `config`         | object \| null    | The resolved config, as [`stackctl show-config`](./cli.md#stackctl-show-config) prints it. |
 | `reverseProxy`   | object \| null    | The proxy's port, domains and routes. `null` without one.                    |
 
-`services`, `ready` and `config` are `null` while the session is still bringing its infra up:
+`services`, `ready`, `errors`, `serviceHooks` and `config` are `null` while the session is still
+bringing its infra up:
 poll again, or follow [`/events`](#get-events). A configured service that isn't a key of
 `services` is not part of this session. It can be [started](#post-commandservice) into it.
 
@@ -150,11 +159,13 @@ curl -sN "http://127.0.0.1:$port/events"
 A client that switches on `type` ignores the ones it doesn't know. `snapshot` and `heartbeat` are
 the stream's own, never in the file.
 
-To wait until a stack is healthy, read until the session is ready or a service has stopped:
+To wait until a stack is healthy, read until the session is ready, a service has stopped or
+failed, or the session's start failed, whether that happened before the stream opened (the
+snapshot has it) or after:
 
 ```bash
 curl -sN "http://127.0.0.1:$port/events" \
-  | grep -m1 -E '"sessionReady":true|"type":"session-state","ready":true|"status":"stopped"'
+  | grep -m1 -E '"sessionReady":true|"type":"session-state","ready":true|"status":"(stopped|failed)"|"services":\{[^}]*"failed"|"sessionStartHooks":"failed"|"type":"session-state".*"error"|"type":"session-end"'
 ```
 
 The stream ends when the session shuts down. If no line arrives for 15 seconds (three
@@ -171,7 +182,7 @@ POST /command/service/<action>/<name>
 | Action    | What it does                                                                     | Answers                        |
 | --------- | -------------------------------------------------------------------------------- | ------------------------------ |
 | `start`   | Starts the service. One that isn't in the session is added, with the deps the session lacks. | `200` once started   |
-| `stop`    | Stops it, and waits for its process to exit.                                     | `200` once stopped             |
+| `stop`    | Stops it, and waits for its `beforeStop`, for its process to exit and for its `afterStop`. A stop of a service still running a hook of its own [abandons](../config/lifecycle.md) that hook. | `200` once stopped |
 | `restart` | Re-runs its dev command. Starts a stopped service.                               | `202` at once                  |
 
 `start` and `stop` succeed for a service already in that state. A `restart` runs on in the
@@ -188,7 +199,7 @@ curl -s -X POST http://127.0.0.1:$port/command/service/restart/api
 | `202`  | `{ "ok": true }`                                                                         | A `restart` was accepted.                   |
 | `404`  | `{ "ok": false, "error": "no service \"x\" in this session" }`                           | The name isn't in the config.               |
 | `404`  | `{ "ok": false, "error": "unknown service action \"x\"" }`                               | The action isn't one of the three.          |
-| `409`  | `{ "ok": false, "error": "service \"x\" is restarting" }`                                | A `start` or `stop` during a restart.       |
+| `409`  | `{ "ok": false, "error": "service \"x\" is restarting" }`                                | A `start` during a restart.                 |
 | `409`  | `{ "ok": false, "error": "service \"x\" has no dev command" }`                          | A `start` of a service with no dev script.  |
 | `409`  | `{ "ok": false, "error": "service \"x\" is waiting for its dependencies" }`             | A `start` or `restart` of a waiting service. |
 | `503`  | `{ "ok": false, "error": "service \"x\" could not be added: the session is shutting down" }` | A `start` during shutdown.              |
@@ -220,7 +231,7 @@ Every action answers at once and runs in the background. The service's `infra` s
 
 Shuts the session down gracefully, as Ctrl+C does. The request **blocks** until every service
 has stopped and its port is free, then answers `200` with `{ "ok": true }`. That can take up
-to about 15 seconds if a service is slow to exit.
+to about 20 seconds when the services are slow to exit and their stop hooks are slow.
 
 ```bash
 curl -s -X POST http://127.0.0.1:$port/command/quit
@@ -233,11 +244,15 @@ Infra keeps running.
 Ctrl+C, `POST /command/quit`, `stackctl stop` and the signals `SIGINT`, `SIGTERM` and
 `SIGHUP` all take the same path:
 
-1. `SIGTERM` to each service's process group: the service and everything it spawned.
-2. Up to 10 seconds for each to exit on its own.
-3. `SIGKILL` to whatever is left.
+1. The `beforeStop` [lifecycle hooks](../config/lifecycle.md), the session's and
+   every running service's: up to 5 seconds.
+2. `SIGTERM` to each service's process group: the service and everything it spawned.
+3. Up to 10 seconds for each to exit on its own.
+4. `SIGKILL` to whatever is left.
+5. The `afterStop` hooks: up to 5 seconds.
 
-A second Ctrl+C, or a second quit, during a shutdown skips the wait and kills at once.
+A step with no hooks takes no time. A second Ctrl+C, or a second quit, during a shutdown skips
+the wait and the hooks left, and kills at once.
 
 > [!WARNING]
 > Stop a session through the API, `stackctl stop` or Ctrl+C, never by killing its process. A
@@ -254,11 +269,13 @@ one as `control`.
 | ----------------------------------------- | --------------------------------------- | ------------------------------------------ |
 | `control.query.status()`                  | `GET /query/status`                     | The snapshot, or `null` if it didn't answer. |
 | `control.events({ signal })`              | `GET /events`                           | An async iterator of the event objects: `SessionEvent`, the snapshot, the [event log's](./events.md) lines and the heartbeats. |
-| `control.command.service.start(name)`     | `POST /command/service/start/<name>`    | `true` once started.                       |
-| `control.command.service.stop(name)`      | `POST /command/service/stop/<name>`     | `true` once stopped.                       |
+| `control.command.service.start(name, { signal })` | `POST /command/service/start/<name>` | `true` once started.                  |
+| `control.command.service.stop(name, { signal })` | `POST /command/service/stop/<name>` | `true` once stopped, its stop hooks run. |
 | `control.command.service.restart(name)`   | `POST /command/service/restart/<name>`  | `true` once accepted.                      |
 | `control.command.infra.<action>(name)`    | `POST /command/infra/<action>/<name>`   | `true` once accepted.                      |
 | `control.command.quit()`                  | `POST /command/quit`                    | Once the session has shut down.            |
 
-A command resolves `false` when the session refused it. `events()` throws when the session
-can't be reached or goes silent.
+A command resolves `false` when the session refused it, or gave no answer in time: a `stop`
+waits 12 seconds, which a slow stop hook outlasts while the stop goes on. Pass `signal` to
+`start` or `stop` to wait until it aborts instead. `events()` throws when the session can't be
+reached or goes silent.

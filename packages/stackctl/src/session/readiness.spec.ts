@@ -383,6 +383,117 @@ describe('Readiness', () => {
     expect(calls.length).toBeGreaterThan(1);
     expect(readiness.isReady('api')).toBe(true);
   });
+
+  test("a start is unhealthy until its own probe passes, whatever a waiter's probes saw before", async () => {
+    const { clock, readiness, answers } = setup();
+    readiness.track('api', HC);
+    // Held, as a service with start hooks is between starts: its waiter keeps probing it.
+    readiness.holdReady('api');
+    void readiness.whenReady(['api'], new AbortController().signal);
+    // Something answers while api isn't running: an old process in its grace period, say.
+    answers.set('api', true);
+    await clock.advance(100);
+    expect(readiness.isHealthy('api')).toBe(true);
+    answers.set('api', false);
+    readiness.processStarted('api');
+    expect(readiness.isHealthy('api')).toBe(false);
+    await clock.advance(100);
+    expect(readiness.isHealthy('api')).toBe(false);
+  });
+
+  describe('the hold a start hook puts on ready', () => {
+    test('a held service is healthy but not ready until released', async () => {
+      const { clock, readiness, answers, events } = setup();
+      const healthy: string[] = [];
+      readiness.on('healthy', (name, ok) => healthy.push(`${name} ${String(ok)}`));
+      readiness.track('api', HC);
+      readiness.holdReady('api');
+      readiness.processStarted('api');
+      answers.set('api', true);
+      await clock.advance(100);
+      expect(readiness.isHealthy('api')).toBe(true);
+      expect(readiness.isReady('api')).toBe(false);
+      expect(healthy).toEqual(['api true']);
+      expect(events).toEqual([]);
+
+      readiness.releaseReady('api', true);
+      expect(readiness.isReady('api')).toBe(true);
+      expect(events).toEqual(['ready api']);
+    });
+
+    test('a held service without a healthcheck is healthy once it starts, ready once released', () => {
+      const { readiness, events } = setup();
+      readiness.track('worker', undefined);
+      readiness.holdReady('worker');
+      readiness.processStarted('worker');
+      expect(readiness.isHealthy('worker')).toBe(true);
+      expect(readiness.isReady('worker')).toBe(false);
+      readiness.releaseReady('worker', true);
+      expect(readiness.isReady('worker')).toBe(true);
+      expect(events).toEqual(['ready worker']);
+    });
+
+    test('released with ok false it stays unready, and whenReady keeps waiting', async () => {
+      const { clock, readiness, answers, events } = setup();
+      readiness.track('api', HC);
+      readiness.holdReady('api');
+      readiness.processStarted('api');
+      answers.set('api', true);
+      let resolved = false;
+      void readiness.whenReady(['api'], new AbortController().signal).then(() => (resolved = true));
+      await clock.advance(100);
+      readiness.releaseReady('api', false);
+      await clock.advance(5000);
+      expect(readiness.isHealthy('api')).toBe(true);
+      expect(readiness.isReady('api')).toBe(false);
+      expect(resolved).toBe(false);
+      expect(events).toEqual([]);
+    });
+
+    test('processExited clears the hold', async () => {
+      const { clock, readiness, answers, events } = setup();
+      readiness.track('api', HC);
+      readiness.holdReady('api');
+      readiness.processStarted('api');
+      readiness.processExited('api');
+      readiness.processStarted('api');
+      answers.set('api', true);
+      await clock.advance(100);
+      expect(readiness.isReady('api')).toBe(true);
+      expect(events).toEqual(['ready api']);
+    });
+
+    test('processExited clears a release with ok false: the next start is ready on its health', async () => {
+      const { clock, readiness, answers } = setup();
+      answers.set('api', true);
+      readiness.track('api', HC);
+      readiness.holdReady('api');
+      readiness.processStarted('api');
+      await clock.advance(100);
+      readiness.releaseReady('api', false);
+      readiness.processExited('api');
+      readiness.processStarted('api');
+      await clock.advance(100);
+      expect(readiness.isReady('api')).toBe(true);
+    });
+
+    test('released, it follows its health: lost and regained', async () => {
+      const { clock, readiness, answers, events } = setup();
+      answers.set('api', true);
+      readiness.track('api', HC);
+      readiness.holdReady('api');
+      readiness.processStarted('api');
+      await clock.advance(100);
+      readiness.releaseReady('api', true);
+      answers.set('api', false);
+      await clock.advance(200);
+      expect(readiness.isReady('api')).toBe(false);
+      answers.set('api', true);
+      await clock.advance(400);
+      expect(readiness.isReady('api')).toBe(true);
+      expect(events).toEqual(['ready api', 'unready api', 'ready api']);
+    });
+  });
 });
 
 describe('probeHealthcheck', () => {

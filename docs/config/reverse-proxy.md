@@ -173,9 +173,12 @@ Before forwarding, the proxy checks the service's state:
 
 | The service is…                         | The response                                                              |
 | --------------------------------------- | ------------------------------------------------------------------------- |
-| running and ready                       | Forwarded. A refused connection is a **502** naming the service and port. |
-| running, healthcheck not passing yet    | Held up to 15 s until it is ready, then forwarded. After that, a **503**. |
-| stopped, waiting or restarting          | A **503** at once, saying so and how to start it.                         |
+| running, and passing its healthcheck if it has one | Forwarded, whether its [lifecycle hooks](./lifecycle.md) have finished or not. A refused connection is a **502** naming the service and port. |
+| running, healthcheck not passing yet    | Held up to 15 s until it passes, then forwarded. After that, a **503**.   |
+| stopped or restarting, its `beforeStop` still running, and passing its healthcheck (or up, with none) | Forwarded, until its process is signalled. |
+| `failed`, passing its healthcheck (or up, with none) | Forwarded.                                   |
+| `failed`, and not                       | A **503** at once, with the hook's error and how to restart it.           |
+| stopped, waiting or restarting          | A **503** at once, saying so and how to start it. One stopped because its `beforeStart` failed says why. |
 | not part of the session                 | Forwarded to its port anyway, so an app you run yourself is reachable.    |
 | an infra service still coming up        | A **503**, `starting`.                                                    |
 | an infra service disabled in this profile | A **503**, `disabled`.                                                  |

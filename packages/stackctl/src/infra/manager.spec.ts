@@ -7,6 +7,11 @@ import { type Exec, execLines } from '../spawn';
 import { InfraManager } from './manager';
 import { type InfraInput, InfraError } from './types';
 
+// Its spies are put back after each test, whatever config the suite runs under.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 let ws: string;
 beforeEach(() => {
   ws = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-infra-manager-'));
@@ -66,6 +71,52 @@ describe('InfraManager', () => {
     });
   });
 
+  describe('a variable set both in the shell and in an .env file', () => {
+    /**
+     * `COMPOSE_PROJECT_NAME` as the config resolves the project to, and it and another variable
+     * as Compose runs with them and an infra hook's `envs` has them.
+     */
+    async function resolved(env?: { override: string[] }) {
+      vi.stubEnv('COMPOSE_PROJECT_NAME', 'from-shell');
+      vi.stubEnv('STACKCTL_TEST_DB_PORT', 'from-shell');
+      fs.writeFileSync(path.join(ws, '.env.development'), 'COMPOSE_PROJECT_NAME=from-file\nSTACKCTL_TEST_DB_PORT=from-file\n'); // oxfmt-ignore
+      let hook: Record<string, string | undefined> = {};
+      const config = defineConfig({
+        workspaceDir: ws,
+        serviceRootDir: 'packages',
+        ...(env ? { env } : {}),
+        infra: {
+          'docker-compose': {
+            lifecycle: {
+              beforeStart: ({ envs }) => void (hook = { project: envs.COMPOSE_PROJECT_NAME, port: envs.STACKCTL_TEST_DB_PORT }), // oxfmt-ignore
+            },
+          },
+        },
+        services: { web: {} },
+      });
+      const { exec, calls } = scriptedDocker();
+      const manager = (await InfraManager.fromConfig(config, { exec }))!;
+      expect((await manager.up()).ok).toBe(true);
+      return {
+        config: (config.infra as { 'docker-compose': { projectName: string } })['docker-compose'].projectName, // oxfmt-ignore
+        compose: { project: calls[0]!.env.COMPOSE_PROJECT_NAME, port: calls[0]!.env.STACKCTL_TEST_DB_PORT }, // oxfmt-ignore
+        hook,
+      };
+    }
+
+    afterEach(() => vi.unstubAllEnvs());
+
+    test("the shell's wins everywhere: the config's project name, Compose's environment, an infra hook's envs", async () => {
+      const shell = { project: 'from-shell', port: 'from-shell' };
+      expect(await resolved()).toEqual({ config: 'from-shell', compose: shell, hook: shell });
+    });
+
+    test("with env.override naming it, the file's wins in the same three places", async () => {
+      const file = { project: 'from-file', port: 'from-file' };
+      expect(await resolved({ override: ['COMPOSE_PROJECT_NAME', 'STACKCTL_TEST_DB_PORT'] })).toEqual({ config: 'from-file', compose: file, hook: file }); // oxfmt-ignore
+    });
+  });
+
   // The TUI builds its manager with signal handlers already installed: a read that doesn't
   // return, on the event loop's thread, would leave it unable to stop until it did.
   test("reads the workspace's .env files without blocking its own thread", async () => {
@@ -120,8 +171,10 @@ describe('InfraManager', () => {
         'docker-compose': {
           services: {
             db: {
-              afterReady: ({ envs }) => {
-                seen = envs.DB_URL;
+              lifecycle: {
+                afterReady: ({ envs }) => {
+                  seen = envs.DB_URL;
+                },
               },
             },
           },
@@ -149,10 +202,12 @@ describe('InfraManager', () => {
       'docker-compose': {
         services: {
           db: {
-            afterReady: async ({ exec }) => {
-              printed.push((await exec(process.execPath, ['-e', print])).stdout.trim());
-              const there = { cwd: 'libs/db', env: { SHARED: 'from-call' } };
-              printed.push((await exec(process.execPath, ['-e', print], there)).stdout.trim());
+            lifecycle: {
+              afterReady: async ({ exec }) => {
+                printed.push((await exec(process.execPath, ['-e', print])).stdout.trim());
+                const there = { cwd: 'libs/db', env: { SHARED: 'from-call' } };
+                printed.push((await exec(process.execPath, ['-e', print], there)).stdout.trim());
+              },
             },
           },
         },
@@ -176,8 +231,10 @@ describe('InfraManager', () => {
         'docker-compose': {
           services: {
             db: {
-              afterReady: ({ tokens, profile }) => {
-                seen = { tokens, profile };
+              lifecycle: {
+                afterReady: ({ tokens, profile }) => {
+                  seen = { tokens, profile };
+                },
               },
             },
           },
@@ -203,11 +260,13 @@ describe('InfraManager', () => {
         'docker-compose': {
           services: {
             db: {
-              beforeStart: ({ profile, config }) => {
-                seen.beforeStart = { profile, config };
-              },
-              afterReady: ({ profile, config }) => {
-                seen.afterReady = { profile, config };
+              lifecycle: {
+                beforeStart: ({ profile, config }) => {
+                  seen.beforeStart = { profile, config };
+                },
+                afterReady: ({ profile, config }) => {
+                  seen.afterReady = { profile, config };
+                },
               },
             },
           },
@@ -253,6 +312,36 @@ describe('InfraManager', () => {
       ['down', 'db'],
       ['down', 'db', 'redis'],
     ]);
+  });
+
+  test("down hands the provider the stop's trigger and data, which its stop hooks get", async () => {
+    const { exec } = scriptedDocker();
+    const seen: string[] = [];
+    const manager = (await InfraManager.fromConfig(
+      configWith({
+        'docker-compose': {
+          lifecycle: {
+            afterStop: ({ trigger, data }) => {
+              seen.push(`project ${trigger} ${String(data.note)}`);
+            },
+          },
+          services: {
+            db: {
+              lifecycle: {
+                beforeStop: ({ trigger, data }) => {
+                  data.note = `noted on ${trigger}`;
+                },
+              },
+            },
+          },
+        },
+      }),
+      { exec },
+    ))!;
+    const data: Record<string, unknown> = {};
+    expect((await manager.down({ services: ['db'], trigger: 'restart', data })).ok).toBe(true);
+    expect(data.note).toBe('noted on restart');
+    expect(seen).toEqual(['project restart noted on restart']);
   });
 
   test('down refuses a disabled service named before stopping anything, so a restart of it does too', async () => {

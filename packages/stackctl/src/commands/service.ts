@@ -1,9 +1,10 @@
 import { type AnyServiceConfig, getLoadedConfig, getRegisteredPackages } from '../config';
 import type { ControlClient, SessionStatus } from '../control-client';
 import { type FoundSession, findSession, unresponsiveMessage } from '../find-session';
+import { retryAdvice } from '../retry-advice';
 import { definesDevScript } from '../scripts';
 import { writeSdkResult } from '../sdk-result';
-import { waitUntilHealthy } from '../stack';
+import { pendingNames, waitUntilHealthy } from '../stack';
 import { UnknownTagError } from '../tags';
 import { TargetNotFoundError, resolveServiceSelection } from '../target';
 import { findConfigPath } from '../workspace-root';
@@ -42,6 +43,8 @@ export interface ServiceCommandContext {
   /** Seams for tests. */
   find?: (opts: Parameters<typeof findSession>[0]) => Promise<FoundSession>;
   wait?: typeof waitUntilHealthy;
+  /** How often a stop that is taking a while asks the session what it still runs; 1 s unless given. */
+  pollMs?: number;
   log?: (line: string) => void;
   error?: (line: string) => void;
   /** Called with what happened to each service, once the command acted on the session. */
@@ -145,18 +148,81 @@ function actedLine(
   action: ServiceCommand,
   name: string,
   before: SessionStatus['services'],
+  hooks: SessionStatus['serviceHooks'],
 ): string {
   const was = before?.[name];
   switch (action) {
-    case 'stop':
+    case 'stop': {
+      // A hook of its own still ran (a start's, or an earlier stop's): this stop abandoned it.
+      const hook = hooks?.[name];
+      if (hook) {
+        return `stopped ${name}: its ${hook} was still running, and was abandoned`;
+      }
       return was === undefined || was === 'stopped'
         ? `${name} is already stopped`
         : `stopped ${name}`;
+    }
     case 'start':
       return was === 'running' ? `${name} is already running` : `started ${name}`;
     case 'restart':
       return `restarting ${name}`;
   }
+}
+
+/** How often a stop that is taking a while asks the session which hook it still runs. */
+const STOP_POLL_MS = 1_000;
+
+/** How many of those questions in a row may go unanswered before the stop is given up on. */
+const STOP_UNANSWERED = 5;
+
+/**
+ * Stops `name` and waits for it, however long its stop hooks take: they have no time limit.
+ * While one still runs, one line names it and says how to abandon it. Resolves with whether the
+ * session said the stop is done; `false` when it stopped answering.
+ */
+async function stopAndWait(
+  client: ControlClient,
+  name: string,
+  log: (line: string) => void,
+  pollMs: number,
+): Promise<boolean> {
+  const giveUp = new AbortController();
+  const stop = { done: false };
+  const stopped = client.command.service.stop(name, { signal: giveUp.signal }).finally(() => {
+    stop.done = true;
+  });
+  const watch = async () => {
+    let told = false;
+    let unanswered = 0;
+    while (!stop.done) {
+      await new Promise<void>((resolve) => setTimeout(resolve, pollMs));
+      if (stop.done) {
+        return;
+      }
+      const now = await client.query.status().catch(() => null);
+      if (stop.done) {
+        return;
+      }
+      if (!now) {
+        if (++unanswered >= STOP_UNANSWERED) {
+          giveUp.abort();
+          return;
+        }
+        continue;
+      }
+      unanswered = 0;
+      const hook = now.serviceHooks?.[name];
+      if (!told && (hook === 'beforeStop' || hook === 'afterStop')) {
+        told = true;
+        log(
+          `${name}'s ${hook} is still running: the stop goes on once it has finished. ` +
+            `To abandon the hook, stop the service again: stackctl service stop -s ${name}`,
+        );
+      }
+    }
+  };
+  void watch();
+  return stopped;
 }
 
 /** Runs `service <action>` against the profile's session; resolves with the exit code. */
@@ -200,33 +266,92 @@ export async function runServiceCommand(
 
   const client: ControlClient = found.client;
   const before = found.status.services;
+  const errors = found.status.errors ?? {};
+  const hooks = found.status.serviceHooks ?? {};
   const acted: string[] = [];
   const results = new Map<string, ServiceResult>();
   const done = action === 'stop' ? 'stopped' : 'running';
+  // One deadline for the whole of a start or restart: the requests and the wait for ready.
+  const timeoutMs = (opts.waitTimeout ?? DEFAULT_SERVICE_WAIT_TIMEOUT_S) * 1000;
+  const deadline = Date.now() + timeoutMs;
   let failed = false;
+  const fail = (name: string, why: string) => {
+    failed = true;
+    results.set(name, { service: name, status: 'failed', error: why });
+    error(why);
+  };
   for (const name of names) {
-    if (await client.command.service[action](name)) {
+    if (action === 'start' && before?.[name] === 'failed') {
+      // Its process runs, but a start hook failed: a start would do nothing, and it never gets
+      // ready until it is restarted.
+      fail(name, `${name} is running, but failed: ${errors[name] ?? 'its afterStart or afterReady failed'}. ${retryAdvice(name)}.`); // oxfmt-ignore
+      continue;
+    }
+    let sent: boolean;
+    // A start's request is given what is left of the deadline: aborted means its time was up.
+    let timeUp: AbortSignal | undefined;
+    if (action === 'stop') {
+      sent = await stopAndWait(client, name, log, ctx.pollMs ?? STOP_POLL_MS);
+    } else if (action === 'start') {
+      const hook = hooks[name];
+      if (hook === 'beforeStop' || hook === 'afterStop') {
+        // A stop of it still runs that hook: the start waits its turn.
+        log(`waiting for ${name}'s ${hook} to finish`);
+      }
+      const left = Math.max(1, deadline - Date.now());
+      timeUp = AbortSignal.timeout(left);
+      sent = await client.command.service.start(name, { signal: timeUp });
+    } else {
+      sent = await client.command.service.restart(name);
+    }
+    if (sent) {
+      if (action === 'start') {
+        // A start whose `beforeStart` failed started nothing: the session says why.
+        const now = await client.query.status().catch(() => null);
+        const why = now?.services?.[name] === 'stopped' ? now.errors?.[name] : undefined;
+        if (why !== undefined) {
+          fail(name, `${name} failed to start: ${why}. ${retryAdvice(name)}.`);
+          continue;
+        }
+      }
       acted.push(name);
       results.set(name, { service: name, status: done });
-      log(actedLine(action, name, before));
-    } else {
-      failed = true;
-      const why =
-        before?.[name] === 'waiting'
-          ? `couldn't ${action} ${name}: it is waiting for its dependencies, and starts once they're ready`
-          : `couldn't ${action} ${name}: it is restarting, or the session is shutting down`;
-      results.set(name, { service: name, status: 'failed', error: why });
-      error(why);
+      log(actedLine(action, name, before, hooks));
+      continue;
     }
+    if (timeUp?.aborted) {
+      // No answer in the time it was given: what it still waits for, as the session has it now.
+      const now = await client.query.status().catch(() => null);
+      const waiting = pendingNames({ infra: [], services: [name], session: null }, now?.services ?? {}, now?.serviceHooks ?? {}); // oxfmt-ignore
+      const why = `not ready after ${String(timeoutMs / 1000)}s: ${waiting.join(', ')}`;
+      failed = true;
+      results.set(name, { service: name, status: 'failed', error: why });
+      error(`stackctl: ${why}`);
+      continue;
+    }
+    const blocked = before?.[name] === 'waiting' ? errors[name] : undefined;
+    fail(
+      name,
+      blocked !== undefined
+        ? `couldn't ${action} ${name}: it is ${blocked}`
+        : before?.[name] === 'waiting'
+          ? `couldn't ${action} ${name}: it is waiting for its dependencies, and starts once they're ready`
+          : action === 'start'
+            ? `couldn't start ${name}: it is restarting, or the session is shutting down`
+            : action === 'stop'
+              ? `couldn't stop ${name}: the session stopped answering; it may be shutting down`
+              : `couldn't restart ${name}: the session is shutting down, or didn't answer in time`,
+    );
   }
 
   if (action !== 'stop' && acted.length > 0) {
-    const timeoutMs = (opts.waitTimeout ?? DEFAULT_SERVICE_WAIT_TIMEOUT_S) * 1000;
     const verdict = await (ctx.wait ?? waitUntilHealthy)(client, acted, {
-      deadline: Date.now() + timeoutMs,
+      deadline,
       timeoutMs,
       logFile: found.status.logFile ?? 'the session log',
       infra: false,
+      // The services named, not the session's own afterReady.
+      session: false,
     });
     if (verdict !== undefined) {
       // The verdict is the set's; a service that did get ready is still `running`.
