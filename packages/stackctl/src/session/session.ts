@@ -9,6 +9,7 @@ import {
   findService,
   getLoadedConfig,
   getRegisteredPackages,
+  getWorkspaceDir,
   infraServicesOf,
   normalizeUrlEntry,
 } from '../config';
@@ -41,7 +42,7 @@ import { InfraFailedError, runSessionInfra } from '../infra/session';
 import type { InfraEvent, InfraRunSummary } from '../infra/types';
 import type { InternalLoggers } from '../internal-logger';
 import { isProcessAlive } from '../process-info';
-import { pickRandomPort, readRunning, sessionId } from '../running';
+import { pickRandomPort, readRunning, sessionId, updateRunning } from '../running';
 import { definesDevScript } from '../scripts';
 import { planSelection } from '../selection-plan';
 import { UsageSampler, type UsageReader, createUsageReader } from '../service-usage';
@@ -123,7 +124,8 @@ type ControlServer = Awaited<ReturnType<typeof startControlServer>>;
 export interface SessionSeams {
   /** Takeover: decides and records the control port, sweeps orphans. Resolves with the port. */
   acquire?: (onStatus: (message: string) => void) => Promise<number>;
-  startProxy?: (controlPort: number) => Promise<DevReverseProxyServer | null>;
+  /** `controlPort` reads the control API's port, the one it ends up bound to once it is. */
+  startProxy?: (controlPort: () => number) => Promise<DevReverseProxyServer | null>;
   startControlServer?: (opts: Parameters<typeof startControlServer>[0]) => Promise<ControlServer>;
   runInfra?: (onEvent: (event: InfraEvent) => void) => Promise<SessionInfra | undefined>;
   /** The command an infra action runs the CLI with; this stackctl's own `[node, cli.js]` unless given. */
@@ -140,8 +142,11 @@ export interface SessionSeams {
   installSignals?: (onSignal: () => void) => () => void;
   /** The memory reader of an interactive session; the machine's (`createUsageReader`) unless given. */
   usageReader?: () => Promise<UsageReader | null>;
-  /** A control port when acquisition fails in an interactive session; `pickRandomPort` unless given. */
-  randomPort?: () => number;
+  /**
+   * A control port, avoiding `exclude`: when acquisition fails in an interactive session, or when
+   * the one it chose is taken at the bind. `pickRandomPort` unless given.
+   */
+  randomPort?: (exclude?: number[]) => number;
   /** A forked session's IPC channel to its parent; `process` unless given. */
   parentChannel?: ParentChannel;
   /**
@@ -417,7 +422,10 @@ export class Session implements ControlManager, DevReverseProxyManager {
       const startProxy =
         this.seams.startProxy ??
         ((controlApiPort) => startSessionDevReverseProxy({ controlApiPort }));
-      const proxy = await this.step(startProxy(port).then((started) => (this.proxy = started)));
+      const controlPort = () => this.server?.port ?? port;
+      const proxy = await this.step(
+        startProxy(controlPort).then((started) => (this.proxy = started)),
+      );
       if (this.closing) {
         return;
       }
@@ -427,6 +435,10 @@ export class Session implements ControlManager, DevReverseProxyManager {
         startServer({
           quitHandler: (by) => void this.requestQuit(by, 'quit'),
           port,
+          // A port of the config's `apiPort` is never traded for another.
+          ...(port === getLoadedConfig()?.apiPort
+            ? {}
+            : { nextPort: (tried: number[]) => (this.seams.randomPort ?? pickRandomPort)(tried) }),
           events: this.events,
           configPath: this.configPath,
           logFile: this.logs.getLogFile(),
@@ -435,6 +447,10 @@ export class Session implements ControlManager, DevReverseProxyManager {
       );
       if (this.closing) {
         return;
+      }
+      if (server.port !== port) {
+        // Its port was taken before the bind: clients find the session by the one it bound.
+        updateRunning(getWorkspaceDir(), { port: server.port });
       }
       if (this.forked) {
         const message: StackMessage = {

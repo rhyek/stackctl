@@ -24,6 +24,20 @@ export const SERVICE_ACTIONS: readonly ServiceAction[] = ['start', 'stop', 'rest
 /** How often an open `/events` stream reads the event log for lines other processes wrote. */
 const EVENTS_POLL_MS = 250;
 
+/** How many ports a start tries when each one it binds turns out taken. */
+const BIND_ATTEMPTS = 10;
+
+/** Binds `server` to `127.0.0.1:port`; rejects with the bind's error, `EADDRINUSE` when taken. */
+function listenOn(server: http.Server, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+}
+
 /** What a request's path is parsed against: any fixed origin will do, only the path is read. */
 const REQUEST_URL_BASE = 'http://localhost';
 
@@ -79,6 +93,11 @@ export async function startControlServer(opts: {
   /** Called for `POST /command/quit`, with who asked. */
   quitHandler: (by: EventBy) => void;
   port: number;
+  /**
+   * Picks another port when `port` turns out taken at the bind, given every port tried so far.
+   * Omitted (a pinned port), a taken port fails the start.
+   */
+  nextPort?: (tried: number[]) => number;
   /**
    * The session's event log: the server writes the session's state changes to it, and `/events`
    * streams its lines, whoever wrote them.
@@ -353,10 +372,21 @@ export async function startControlServer(opts: {
   };
   const server = http.createServer(handleRequest);
 
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(opts.port, '127.0.0.1', resolve);
-  });
+  // The port was free when the session chose it, but another process can take it before this
+  // bind: only the bind itself tells. A port picked at random is traded for another.
+  const tried: number[] = [];
+  for (let port = opts.port; ; port = opts.nextPort!(tried)) {
+    tried.push(port);
+    try {
+      await listenOn(server, port);
+      break;
+    } catch (err) {
+      const taken = (err as NodeJS.ErrnoException).code === 'EADDRINUSE';
+      if (!taken || !opts.nextPort || tried.length >= BIND_ATTEMPTS) {
+        throw err;
+      }
+    }
+  }
   const actualPort = (server.address() as { port: number }).port;
 
   return {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.2
+
+### Fixes
+
+- **A session no longer fails to start when another one takes its control API port at the same
+  moment.**
+
 ## 0.11.1
 
 ### Features

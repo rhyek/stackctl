@@ -16,7 +16,7 @@ import { isPortListening, readOtherProfilesRunning } from '../running';
  * is for the "service stopped" page's restart URL.
  */
 export async function startSessionDevReverseProxy(opts: {
-  controlApiPort: number;
+  controlApiPort: () => number;
 }): Promise<DevReverseProxyServer | null> {
   const config = getLoadedConfig();
   const proxy = config?.reverseProxy;
