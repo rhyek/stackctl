@@ -26,7 +26,10 @@ export function formatConfigLoadFailure(
   err: unknown,
   nodeVersion: string = process.version,
 ): string {
-  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  // A config that fails validation says which key and why: the stack under it is `defineConfig`'s
+  // own frames, which point at nothing in the config.
+  const invalid = err instanceof Error && err.message.startsWith('invalid stackctl config:');
+  const detail = err instanceof Error ? (invalid ? err.message : (err.stack ?? err.message)) : String(err); // oxfmt-ignore
   const lines = [`Failed to load ${configPath}:`, detail];
   if ((err as { code?: unknown } | null | undefined)?.code === 'ERR_UNKNOWN_FILE_EXTENSION') {
     lines.push(

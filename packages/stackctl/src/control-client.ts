@@ -3,6 +3,7 @@ import type { ServiceAction } from './control-server';
 import { DEFAULT_PROFILE, type ProfileSource, isProfileSource } from './env-base';
 import type { EventEnvelope, EventLine } from './event-log';
 import type { InfraAction, InfraStatus } from './infra/control';
+import type { ServiceCallbacks } from './lifecycle/service-types';
 import type { ServiceName } from './register';
 import type { InstanceInfo } from './running';
 import {
@@ -13,7 +14,14 @@ import {
 import { readOwnVersion } from './skill';
 
 /** An application service's status on `GET /query/status`. */
-export type SessionServiceStatus = 'running' | 'stopped' | 'waiting' | 'restarting';
+export type SessionServiceStatus = 'running' | 'stopped' | 'waiting' | 'restarting' | 'failed';
+
+/**
+ * Where the session's own `afterStart` and `afterReady` are: `none` when the config has neither;
+ * `afterStart` or `afterReady`, the one still to finish (running, or `afterReady` waiting for the
+ * session to be ready first); `done` once both have finished; `failed` once one threw.
+ */
+export type SessionStartHooks = 'none' | 'afterStart' | 'afterReady' | 'done' | 'failed';
 
 /**
  * A snapshot of a live stackctl session, as returned by `GET /query/status`. `logFile`,
@@ -48,20 +56,49 @@ export interface SessionStatus<P extends string = ServiceName> {
   /** Each application service's status, or null before the manager attaches. */
   services: Partial<Record<P, SessionServiceStatus>> | null;
   /**
-   * Whether each service is ready: running, and passing its healthcheck when it has one. Same
-   * keys as `services`, and null when it is.
+   * Whether each service is ready: running, passing its healthcheck when it has one, and its
+   * `afterStart` and `afterReady` hooks finished without failing. Same keys as `services`, and
+   * null when it is.
    */
   ready: Partial<Record<P, boolean>> | null;
+  /**
+   * Why a service can't get ready because a start hook failed. For a `failed` service, the hook's
+   * error: `afterStart failed: <message>` or `afterReady failed: <message>`. For a `stopped` one
+   * that was never started because its `beforeStart` failed: `beforeStart failed: <message>`. For
+   * a `waiting` one held by such a service it waits for, directly or through others that wait:
+   * `waiting for api, which failed: <its error>. Run stackctl service restart -s api once it is
+   * fixed; a change to stackctl.config.ts needs a new session` (`which failed to start: …` after
+   * a `beforeStart`). Only those services are keys; null when `services` is.
+   */
+  errors: Partial<Record<P, string>> | null;
+  /**
+   * The `lifecycle` hook each service runs now: `beforeStart`, `afterStart` or `afterReady` of a
+   * start, or the `beforeStop` or `afterStop` a stop still runs. A stop of the service abandons
+   * whichever it is. Only those services are keys; null when `services` is.
+   */
+  serviceHooks: Partial<Record<P, keyof ServiceCallbacks>> | null;
   /**
    * Each infra service's live state, or the action under way on it; null for a config without
    * infra, and before the manager attaches.
    */
   infra: Record<string, InfraStatus> | null;
   /**
-   * Whether the session is ready as a whole: every infra service running, and every service that
-   * isn't stopped running and ready. False before the manager attaches.
+   * Whether the session is ready as a whole: every infra service running, every service that
+   * isn't stopped running and ready (so none `failed`), and the session's own `afterStart` and
+   * `afterReady` finished. False before the manager attaches.
    */
   sessionReady: boolean;
+  /**
+   * Why the session's start failed after its services were started: its `afterStart` or
+   * `afterReady` threw (`session afterReady failed: <message>`), or another step of its start
+   * failed after that. Null otherwise, and before the manager attaches.
+   */
+  sessionError: string | null;
+  /**
+   * Where the session's own `afterStart` and `afterReady` are (see {@link SessionStartHooks}).
+   * `none` before the manager attaches, and from an older session, which reports none.
+   */
+  sessionStartHooks: SessionStartHooks;
   /** The resolved config, or null before the manager attaches. */
   config: unknown;
   /**
@@ -133,10 +170,20 @@ export interface ControlClient<P extends string = ServiceName> {
      * a restart of it is under way.
      */
     readonly service: {
-      /** Starts a stopped service. True when it already runs; false while it waits for its deps. */
-      start(name: P): Promise<boolean>;
-      /** Stops a service, resolving once its process has exited. True when it is already stopped. */
-      stop(name: P): Promise<boolean>;
+      /**
+       * Starts a stopped service, resolving once it has started (a start asked for while a stop
+       * of it still runs its hooks waits for them). True when it already runs; false while it
+       * waits for its deps, and when no answer came in time. With `signal`, the wait for the
+       * answer ends when it aborts, not after the default 5 minutes.
+       */
+      start(name: P, opts?: ServiceRequestOptions): Promise<boolean>;
+      /**
+       * Stops a service, resolving once its process has exited and its `beforeStop` and
+       * `afterStop` have finished. True when it is already stopped; false when no answer came in
+       * time, though the stop goes on: by default 12 seconds, which a slow stop hook outlasts.
+       * With `signal`, the wait for the answer ends only when it aborts.
+       */
+      stop(name: P, opts?: ServiceRequestOptions): Promise<boolean>;
       /** Restarts a service (and starts a stopped one). Runs on in the background. */
       restart(name: P): Promise<boolean>;
     };
@@ -165,18 +212,24 @@ export interface ControlClient<P extends string = ServiceName> {
   };
 }
 
+/** How long a `command.service` request waits for the session's answer. */
+export interface ServiceRequestOptions {
+  /** Ends the wait for the answer when it aborts, in place of the request's default timeout. */
+  signal?: AbortSignal;
+}
+
 /** Builds a control client bound to `port`, with no liveness check (fits probing arbitrary candidates). */
 export function createControlClient<P extends string = string>(
   port: number,
   timeoutMs = 500,
 ): ControlClient<P> {
   const base = `http://127.0.0.1:${port}`;
-  const post = async (path: string, timeout = timeoutMs): Promise<boolean> => {
+  const post = async (path: string, until: number | AbortSignal = timeoutMs): Promise<boolean> => {
     try {
       const res = await fetch(`${base}${path}`, {
         method: 'POST',
         headers: CLIENT_HEADERS,
-        signal: AbortSignal.timeout(timeout),
+        signal: typeof until === 'number' ? AbortSignal.timeout(until) : until,
       });
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean };
       return res.ok && body.ok === true;
@@ -184,8 +237,8 @@ export function createControlClient<P extends string = string>(
       return false;
     }
   };
-  const serviceAction = (action: ServiceAction, name: string, timeout?: number) =>
-    post(`/command/service/${action}/${encodeURIComponent(name)}`, timeout);
+  const serviceAction = (action: ServiceAction, name: string, until?: number | AbortSignal) =>
+    post(`/command/service/${action}/${encodeURIComponent(name)}`, until);
   const infraAction = (action: InfraAction) => (service: string) =>
     post(`/command/infra/${action}/${encodeURIComponent(service)}`);
   return {
@@ -195,9 +248,12 @@ export function createControlClient<P extends string = string>(
     command: {
       service: {
         // Adding a service to the session can take a while.
-        start: (name) => serviceAction('start', name, SERVICE_START_REQUEST_TIMEOUT_MS),
-        // The target answers once the process has exited, which can take its whole grace period.
-        stop: (name) => serviceAction('stop', name, SERVICE_STOP_REQUEST_TIMEOUT_MS),
+        start: (name, opts) =>
+          serviceAction('start', name, opts?.signal ?? SERVICE_START_REQUEST_TIMEOUT_MS),
+        // The target answers once the process has exited, which can take its whole grace period,
+        // and its stop hooks have finished.
+        stop: (name, opts) =>
+          serviceAction('stop', name, opts?.signal ?? SERVICE_STOP_REQUEST_TIMEOUT_MS),
         restart: (name) => serviceAction('restart', name),
       },
       infra: {
@@ -233,8 +289,13 @@ export function createControlClient<P extends string = string>(
         logFile: typeof body.logFile === 'string' ? body.logFile : null,
         services: (body.services ?? null) as SessionStatus<P>['services'],
         ready: (body.ready ?? null) as SessionStatus<P>['ready'],
+        // An older instance reports none: `{}` once it has services.
+        errors: (body.errors ?? (body.services ? {} : null)) as SessionStatus<P>['errors'],
+        serviceHooks: (body.serviceHooks ?? (body.services ? {} : null)) as SessionStatus<P>['serviceHooks'], // oxfmt-ignore
         infra: (body.infra ?? null) as SessionStatus<P>['infra'],
         sessionReady: body.sessionReady === true,
+        sessionError: typeof body.sessionError === 'string' ? body.sessionError : null,
+        sessionStartHooks: isSessionStartHooks(body.sessionStartHooks) ? body.sessionStartHooks : 'none', // oxfmt-ignore
         config: body.config ?? null,
         reverseProxy: (body.reverseProxy ?? null) as SessionStatus<P>['reverseProxy'],
       };
@@ -329,4 +390,17 @@ export async function probeInstance(port: number, timeoutMs = 500): Promise<Inst
   return status
     ? { pid: status.pid, configPath: status.configPath, profile: status.profile }
     : null;
+}
+
+const SESSION_START_HOOKS: readonly string[] = [
+  'none',
+  'afterStart',
+  'afterReady',
+  'done',
+  'failed',
+];
+
+/** Whether `value` is a {@link SessionStartHooks}. */
+export function isSessionStartHooks(value: unknown): value is SessionStartHooks {
+  return typeof value === 'string' && SESSION_START_HOOKS.includes(value);
 }

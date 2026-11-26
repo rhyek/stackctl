@@ -41,6 +41,10 @@ describe('the always-on text', () => {
     const scope = 'its dev services, their Docker Compose infrastructure (database, cache, mail catcher), `.env` loading, logs and test sessions'; // oxfmt-ignore
     expect(description).toContain(scope);
     expect(rules).toContain(scope);
+    // and the same words for a lifecycle hook, the task neither would otherwise name
+    const hook = 'add a step that runs when a service or the stack starts or stops';
+    expect(description).toContain(hook);
+    expect(rules).toContain(hook);
   });
 });
 

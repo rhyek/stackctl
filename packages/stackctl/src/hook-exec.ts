@@ -3,7 +3,10 @@ import type { Exec } from './spawn';
 
 /** Options for the `exec` a config callback gets, and its provider's tool helper (`compose`). */
 export interface HookExecOptions {
-  /** Working directory; a relative path resolves against `workspaceDir`, which is the default. */
+  /**
+   * Working directory: a relative path resolves against the hook's own directory, which is the
+   * default (an application service's directory for its hooks, the workspace root for the rest).
+   */
   cwd?: string;
   /** Extra variables for this one command, merged over the callback's `envs`. */
   env?: Record<string, string>;
@@ -28,7 +31,17 @@ export interface HookExecBase {
   onLine: (line: string, isError: boolean) => void;
   /** Runs the command: {@link execLines}, or a stand-in in specs. */
   run: Exec;
+  /** Aborting it kills the command that is running, at once. */
+  signal?: AbortSignal;
+  /**
+   * Aborting it asks the command that is running to end: SIGTERM, then a kill if it still runs a
+   * moment later. For a hook that was abandoned.
+   */
+  abandon?: AbortSignal;
 }
+
+/** A signal nothing aborts, for a hook run where nothing ends its commands early. */
+const NEVER_ABORTED = new AbortController().signal;
 
 /**
  * The `exec` a config callback gets: runs `command` in `base.dir` (or `opts.cwd` against it) with
@@ -47,6 +60,10 @@ export function hookExec(base: HookExecBase) {
       cwd: path.resolve(base.dir, opts.cwd ?? '.'),
       env: { ...base.env, ...opts.env },
       onLine: base.onLine,
+      // Always one: a command that can be ended leads a group of its own, which ends with the
+      // process that runs the hook, however that process goes.
+      signal: base.signal ?? NEVER_ABORTED,
+      abandon: base.abandon,
     });
     if (result.exitCode !== 0 && opts.reject !== false) {
       throw new Error(`\`${label}\` exited with code ${String(result.exitCode)}`);

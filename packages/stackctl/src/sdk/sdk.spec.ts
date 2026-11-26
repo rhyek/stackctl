@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
 import { buildForTests } from '../cli-spec/build';
+import { withCliEnv } from '../cli-spec/env';
 
 /**
  * The SDK functions that run a CLI command in a child, against a workspace on disk. They run the
@@ -35,6 +36,9 @@ async function inDir<T>(dir: string, fn: () => Promise<T>): Promise<T> {
     process.chdir(before);
   }
 }
+
+// The SDK's functions start the CLI with this process's environment.
+withCliEnv();
 
 beforeAll(async () => {
   fs.rmSync(copyDir, { recursive: true, force: true });
@@ -80,7 +84,7 @@ beforeAll(async () => {
   fs.writeFileSync(path.join(infraWs, 'package.json'), JSON.stringify({ name: 'inf', type: 'module' })); // oxfmt-ignore
   fs.writeFileSync(
     path.join(infraWs, 'stackctl.config.ts'),
-    "import { defineConfig } from 'stackctl';\nexport default defineConfig({ infra: { 'docker-compose': { services: { db: { tags: ['data'] }, cache: { enabled: false } } } }, services: {} });\n", // oxfmt-ignore
+    "import { defineConfig } from 'stackctl';\nexport default defineConfig({ infra: { 'docker-compose': { lifecycle: { beforeStart: async ({ exec, workspaceDir }) => { if (process.env.LONG_HOOK) { await exec('sh', ['-c', 'sleep 300 & echo \"$$ $!\" > \"$PIDS\"; wait'], { env: { PIDS: workspaceDir + '/hook.pids' } }); } } }, services: { db: { tags: ['data'], lifecycle: { beforeStop: () => { if (process.env.FAIL_STOP_HOOK) { throw new Error('webhook not removed'); } } } }, cache: { enabled: false } } } }, services: {} });\n", // oxfmt-ignore
   );
   fs.writeFileSync(path.join(infraWs, 'docker-compose.yaml'), 'services:\n  db:\n    image: postgres\n  cache:\n    image: redis\n'); // oxfmt-ignore
   const infraStandIn = path.join(infraWs, 'node_modules', 'stackctl');
@@ -314,6 +318,64 @@ describe('infra', () => {
   ])('a malformed selection is refused: %j', async (selection, message) => {
     await expect(sdk.infra.start(selection as never)).rejects.toThrow(message);
   });
+});
+
+describe('an infra stop hook that throws, from the command line', () => {
+  test("infra stop reports the service stopped, but with the hook's error, and exits 1", () => {
+    fs.rmSync(dockerCalls, { force: true });
+    const run = cliRun(['infra', 'stop', '-s', 'db'], {
+      cwd: infraWs,
+      env: { ...process.env, PATH: dockerPath, FAIL_STOP_HOOK: '1' },
+      channel: false,
+    });
+    expect(run.status).toBe(1);
+    expect(run.stdout).toMatch(/db +stopped, but beforeStop failed: webhook not removed/);
+    expect(run.stdout).toContain('✖ infra stopped, but a hook failed: db');
+    // The stop went ahead all the same.
+    expect(dockerCallLines().some((line) => / stop /.test(line) || / down /.test(line))).toBe(true); // oxfmt-ignore
+  });
+});
+
+describe('a standalone `stackctl infra` command that is ended', () => {
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // SIGKILL runs no code of the command; SIGINT is a Ctrl+C that reaches only the command, as its
+  // hook's commands are not in the terminal's group.
+  test.each(['SIGTERM', 'SIGINT', 'SIGKILL'] as const)(
+    'a %s takes the command its hook runs with it, and what that command started',
+    { timeout: 60_000 },
+    async (signal) => {
+      const pidsFile = path.join(infraWs, 'hook.pids');
+      fs.rmSync(pidsFile, { force: true });
+      const command = spawn(process.execPath, [path.join(buildDir, 'cli.js'), 'infra', 'start'], {
+        cwd: infraWs,
+        env: { ...process.env, PATH: dockerPath, LONG_HOOK: '1' },
+        stdio: 'ignore',
+      });
+      const pids = () => (fs.existsSync(pidsFile) ? fs.readFileSync(pidsFile, 'utf8').trim().split(' ').map(Number) : []); // oxfmt-ignore
+      try {
+        await vi.waitFor(() => expect(pids()).toHaveLength(2), { timeout: 20_000, interval: 50 });
+        expect(pids().map(alive)).toEqual([true, true]);
+        command.kill(signal);
+        await vi.waitFor(() => expect(pids().map(alive)).toEqual([false, false]), { timeout: 10_000, interval: 50 }); // oxfmt-ignore
+      } finally {
+        command.kill('SIGKILL');
+        // The hook's own command and its child, by the pids it wrote for this test.
+        for (const pid of pids()) {
+          if (alive(pid)) {
+            process.kill(pid, 'SIGKILL');
+          }
+        }
+      }
+    },
+  );
 });
 
 describe('service', () => {
@@ -551,7 +613,7 @@ describe('attach() and wait()', () => {
     try {
       await untilRecorded();
       await expect(inDir(ws, () => sdk.attach({ waitTimeout: 3 }))).rejects.toThrow(
-        /not healthy after 3s/,
+        /not ready after 3s/,
       );
     } finally {
       await inDir(ws, () => sdk.stop());

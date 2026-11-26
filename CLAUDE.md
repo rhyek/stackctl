@@ -56,7 +56,7 @@ The documentation is one set of Markdown pages in `docs/`, read three ways:
 | Section           | Pages                                                                              |
 | ----------------- | ---------------------------------------------------------------------------------- |
 | `docs/guide/`     | Getting started, why, services, the terminal UI, environment and profiles, one-off commands, logs, tests and CI. How to do things. |
-| `docs/config/`    | One page per part of `stackctl.config.ts`: the file itself, services, environment, logs, infra, reverse proxy, URLs and origins. |
+| `docs/config/`    | One page per part of `stackctl.config.ts`: the file itself, services, lifecycle hooks, environment, logs, infra, reverse proxy, URLs and origins. |
 | `docs/reference/` | The CLI, the control API (endpoints and payloads), the SDK.                        |
 | `docs/ai/`        | `overview.md`: how stackctl serves coding agents. `playbook.md`: recipes written for the agent, the page `llms.txt` sends one to first. |
 
@@ -103,7 +103,9 @@ reconcile every hit.
   on `reference/cli.md`, an endpoint on `reference/control-api.md`. Guide pages and the
   playbook show the flow and link there; they don't repeat the details.
 - **Agents read the same pages.** There is no separate agent guide. Whatever an agent needs to
-  get a call right goes in the page that owns the topic.
+  get a call right goes in the page that owns the topic. Detail only an agent needs goes in
+  that page inside `<llm-only>`, which keeps it off the site and in the Markdown copies: see
+  [`.claude/rules/docs-concise.md`](.claude/rules/docs-concise.md).
 - **Short and familiar.** Lead with an example, then a table of options, then one-line bullets
   for the rules. Internals (how a feature is built) belong in `maintenance/docs/architecture/`.
 - **Links between pages are relative and end in `.md`** (`../config/infra.md#callbacks`), so
@@ -120,6 +122,9 @@ reconcile every hit.
 - **Only the current surface, no history:** see
   [`.claude/rules/docs-no-history.md`](.claude/rules/docs-no-history.md), which loads whenever
   one of these files is read or edited.
+- **Only what a developer needs, where they will look for it:** no fact they'd assume, get from
+  an error or never run into, and no "the table above". See
+  [`.claude/rules/docs-concise.md`](.claude/rules/docs-concise.md).
 - **Written for the people who use stackctl**, any developer on any stack and their agent, never
   for its maintainers; the changelog too: see
   [`.claude/rules/public-docs-audience.md`](.claude/rules/public-docs-audience.md).

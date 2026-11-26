@@ -37,7 +37,10 @@ export interface FormatterFields {
    * `[UNKNOWN LOGLVL: …]`.
    */
   level?: string;
-  /** Source JSON property holding the message. Defaults to `'msg'`. (winston uses `message`.) */
+  /**
+   * Source JSON property holding the message. Defaults to `'msg'`, or `'message'` on a log that
+   * has no `msg` (NestJS, winston).
+   */
   message?: string;
   /**
    * Rename or hide additional properties, keyed by the **display** name:
@@ -278,7 +281,7 @@ function levelToken(
  */
 function resolveConfig(config: FormatterConfig): {
   levelKey: string;
-  messageKey: string;
+  messageKey: string | undefined;
   levels: Record<string, string> | undefined;
   bySource: Map<string, CustomEntry>;
 } {
@@ -290,7 +293,7 @@ function resolveConfig(config: FormatterConfig): {
   }
   return {
     levelKey: config.fields?.level ?? 'level',
-    messageKey: config.fields?.message ?? 'msg',
+    messageKey: config.fields?.message,
     levels: config.levels,
     bySource,
   };
@@ -329,7 +332,9 @@ export function createFormatter(config: FormatterConfigInput = {}): (line: strin
     // A callback config decides *which* keys hold the level and message, so it has to run before
     // the check below can be applied — it therefore sees every JSON-object line, including ones
     // that then pass through as unrecognized.
-    const { levelKey, messageKey, levels, bySource } = staticResolved ?? resolveConfig(configFn!(obj)); // oxfmt-ignore
+    const { levelKey, messageKey: configuredMessageKey, levels, bySource } = staticResolved ?? resolveConfig(configFn!(obj)); // oxfmt-ignore
+    // Unconfigured, the message is `msg` (slog, pino), or `message` on a log with no `msg`.
+    const messageKey = configuredMessageKey ?? (obj.msg === undefined ? 'message' : 'msg');
 
     const rawLevel = obj[levelKey];
     const message = obj[messageKey];
@@ -391,8 +396,9 @@ export const logging = {
   /**
    * **For structured (JSON) logs only.** The base factory, and the exact formatter stackctl already
    * applies to every service — so you only need it to *change* something (hide a field, rename one,
-   * map non-standard levels). Suits any JSON logger whose level/message keys are `level`/`msg`
-   * (Go `log/slog`, pino); see {@link logging.nodejs} for ecosystem presets.
+   * map non-standard levels). Suits any JSON logger that writes its level under `level` and its
+   * message under `msg` or `message` (Go `log/slog`, pino, NestJS); see {@link logging.nodejs} for
+   * ecosystem presets.
    *
    * Configuring this for a process that logs plain text does nothing — unrecognized lines pass
    * through unchanged. Use `logs.formatter` directly to transform arbitrary text output.

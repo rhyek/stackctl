@@ -3,7 +3,9 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, test, vi } from 'vitest';
 import {
+  createGroupGuard,
   execLines,
+  execLinesWith,
   runCommand,
   type Spawned,
   spawnCommand,
@@ -118,6 +120,49 @@ describe('runCommand', () => {
       }
     },
   );
+
+  test('with endCommandsOnSignals, a SIGINT still ends this process when something else listens for one too', async () => {
+    // The other listener would swallow a SIGINT raised again: the exit must not depend on it.
+    const parent = script(`
+      const { endCommandsOnSignals, execLines } = await import(RUNNERS);
+      endCommandsOnSignals();
+      process.on('SIGINT', () => {});
+      void execLines(process.execPath, ['-e', 'console.log(process.pid); setInterval(() => {}, 1e9)'], {
+        cwd: process.cwd(), env: { PATH: process.env.PATH }, signal: new AbortController().signal,
+        onLine: (line) => { console.log('child ' + line); setTimeout(() => process.kill(process.pid, 'SIGINT'), 50); },
+      });`);
+    try {
+      const { out, ended } = await readAll(parent);
+      const pid = Number(/child (\d+)/.exec(out)![1]);
+      expect(ended).toEqual({ exitCode: 130, signal: null });
+      await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 3000 });
+    } finally {
+      parent.kill('SIGKILL');
+    }
+  });
+
+  test('on Windows, which has no process groups, a command that can be ended is ended itself', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const abort = new AbortController();
+    const lines: string[] = [];
+    try {
+      const running = execLines(nodePath, ['-e', 'console.log(process.pid); setInterval(() => {}, 1e9)'], { ...plain, signal: abort.signal, onLine: (line) => lines.push(line) }); // oxfmt-ignore
+      await vi.waitFor(() => expect(lines).toHaveLength(1), { timeout: 5000 });
+      const pid = Number(lines[0]);
+      // In this process's group, as a group of its own could not be signalled there.
+      const pgid = Number(
+        (await execLines('ps', ['-o', 'pgid=', '-p', String(pid)], plain)).stdout,
+      );
+      expect(pgid).not.toBe(pid);
+      abort.abort();
+      await running;
+      expect(alive(pid)).toBe(false);
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+      abort.abort();
+    }
+  });
 
   test('a detached command outlives this process: it is the caller to end', async () => {
     const parent = script(`
@@ -265,6 +310,197 @@ describe('execLines', () => {
       });`);
     const { out } = await readAll(parent);
     const pid = Number(/child (\d+)/.exec(out)![1]);
+    try {
+      await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 3000 });
+    } finally {
+      if (alive(pid)) {
+        process.kill(pid, 'SIGKILL');
+      }
+    }
+  });
+
+  test('an abort kills the command and every process it started, and it ends as a failure', async () => {
+    const controller = new AbortController();
+    let grandchild = 0;
+    const running = execLines('sh', ['-c', 'sleep 30 & echo $!; wait'], {
+      ...plain,
+      onLine: (line) => {
+        grandchild = Number(line);
+        controller.abort();
+      },
+      signal: controller.signal,
+    });
+    try {
+      // Raced, so a kill that leaves the grandchild holding the pipes fails here, and is cleaned up.
+      const result = await Promise.race([
+        running,
+        new Promise<null>((resolve) => setTimeout(resolve, 3000, null)),
+      ]);
+      expect(result?.exitCode).toBe(1);
+      expect(grandchild).toBeGreaterThan(0);
+      await vi.waitFor(() => expect(alive(grandchild)).toBe(false), { timeout: 3000 });
+    } finally {
+      if (grandchild > 0 && alive(grandchild)) {
+        process.kill(grandchild, 'SIGKILL');
+      }
+    }
+  });
+
+  test('a command that can be ended runs in a session of its own, so it has no controlling terminal to prompt or draw on', async () => {
+    // A session leader is its own session's first process: `getsid(0)` is its pid.
+    const leadsSession = ['-c', 'import os; print(os.getsid(0) == os.getpid())'];
+    const hook = await execLines('python3', leadsSession, { ...plain, abandon: new AbortController().signal }); // oxfmt-ignore
+    expect(hook.stdout.trim()).toBe('True');
+    const other = await execLines('python3', leadsSession, plain);
+    expect(other.stdout.trim()).toBe('False');
+  });
+
+  test('a signal aborted already ends the command at once', async () => {
+    const result = await execLines(nodePath, ['-e', 'setInterval(() => {}, 1e9)'], {
+      ...plain,
+      signal: AbortSignal.abort(),
+    });
+    expect(result.exitCode).toBe(1);
+  });
+
+  describe('a command that leads its own group ends with the process that started it', () => {
+    /** A shell in a group of its own, with a child: `[shell, child]`, once both run. */
+    async function group(): Promise<[number, number]> {
+      const child = spawnCommand('sh', ['-c', 'sleep 30 & echo $!; wait'], { env: process.env, stdio: ['ignore', 'pipe', 'ignore'], detached: true }); // oxfmt-ignore
+      const out = reading(child);
+      await vi.waitFor(() => expect(out.out).toMatch(/\d+\n/), { timeout: 5000 });
+      return [child.pid!, Number(out.out)];
+    }
+    const gone = (pids: number[]) =>
+      vi.waitFor(() => expect(pids.map(alive)).toEqual(pids.map(() => false)), { timeout: 5000 });
+    const kill = (pids: number[]) => pids.forEach((pid) => alive(pid) && process.kill(pid, 'SIGKILL')); // oxfmt-ignore
+
+    test('the guard kills every group it still holds once its owner lets go, and none it was told has ended', async () => {
+      const held = await group();
+      const ended = await group();
+      try {
+        const guard = createGroupGuard();
+        guard.add(held[0]);
+        const release = guard.add(ended[0]);
+        release();
+        guard.close();
+        await gone(held);
+        expect(ended.map(alive)).toEqual([true, true]);
+      } finally {
+        kill([...held, ...ended]);
+      }
+    });
+
+    test('a SIGKILL of the process that runs it ends the command, with everything it started', async () => {
+      // The owner runs a command as a hook's `exec` does, then waits to be killed.
+      const owner = script(`
+        const { execLines } = await import(RUNNERS);
+        void execLines('sh', ['-c', 'sleep 30 & echo $$ $!; wait'], { cwd: process.cwd(), env: { PATH: process.env.PATH }, onLine: (line) => console.log(line), signal: new AbortController().signal });
+        setInterval(() => {}, 1e9);`);
+      const out = reading(owner);
+      await vi.waitFor(() => expect(out.out).toMatch(/\d+ \d+\n/), { timeout: 5000 });
+      const pids = out.out.trim().split(' ').map(Number);
+      try {
+        expect(pids.map(alive)).toEqual([true, true]);
+        owner.kill('SIGKILL');
+        await gone(pids);
+      } finally {
+        owner.kill('SIGKILL');
+        kill(pids);
+      }
+    });
+  });
+
+  describe("abandoned (the polite end a hook's command gets)", () => {
+    /** Prints `term` at a SIGTERM, which it otherwise ignores; `up` once it listens for one. */
+    const deaf = `process.on('SIGTERM', () => console.log('term')); console.log('up'); setInterval(() => {}, 1e9)`;
+
+    test('gets SIGTERM first, so it can clean up before it ends', async () => {
+      const abandon = new AbortController();
+      const lines: string[] = [];
+      const tidy = `process.on('SIGTERM', () => { console.log('cleaned up'); process.exit(0); }); console.log('up'); setInterval(() => {}, 1e9)`;
+      await execLinesWith(60_000)(nodePath, ['-e', tidy], {
+        ...plain,
+        onLine: (line) => {
+          lines.push(line);
+          abandon.abort();
+        },
+        abandon: abandon.signal,
+      });
+      expect(lines).toEqual(['up', 'cleaned up']);
+    });
+
+    test('one that outlives its grace is killed, with every process it started', async () => {
+      const abandon = new AbortController();
+      const lines: string[] = [];
+      // Ignores SIGTERM but for saying so, and has a child of its own; prints the child's pid
+      // once it listens.
+      const parent = `
+        const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e9)'], { stdio: 'ignore' });
+        process.on('SIGTERM', () => console.log('term'));
+        console.log(child.pid);
+        setInterval(() => {}, 1e9);`;
+      const running = execLinesWith(150)(nodePath, ['-e', parent], {
+        ...plain,
+        onLine: (line) => {
+          lines.push(line);
+          abandon.abort();
+        },
+        abandon: abandon.signal,
+      });
+      const grandchild = () => Number(lines[0] ?? 0);
+      try {
+        const result = await Promise.race([
+          running,
+          new Promise<null>((resolve) => setTimeout(resolve, 4000, null)),
+        ]);
+        // SIGTERM came first, which it survived; then the kill.
+        expect(lines).toEqual([String(grandchild()), 'term']);
+        expect(result?.exitCode).toBe(1);
+        await vi.waitFor(() => expect(alive(grandchild())).toBe(false), { timeout: 3000 });
+      } finally {
+        if (grandchild() > 0 && alive(grandchild())) {
+          process.kill(grandchild(), 'SIGKILL');
+        }
+      }
+    });
+
+    test('one abandoned before it starts is ended at once, with no grace of its own', async () => {
+      const result = await execLinesWith(60_000)(nodePath, ['-e', deaf], {
+        ...plain,
+        abandon: AbortSignal.abort(),
+      });
+      expect(result.exitCode).toBe(1);
+    });
+
+    test('a hard kill during its grace kills it at once', async () => {
+      const abandon = new AbortController();
+      const kill = new AbortController();
+      const lines: string[] = [];
+      const result = await execLinesWith(60_000)(nodePath, ['-e', deaf], {
+        ...plain,
+        onLine: (line) => {
+          lines.push(line);
+          (line === 'up' ? abandon : kill).abort();
+        },
+        abandon: abandon.signal,
+        signal: kill.signal,
+      });
+      expect(lines).toEqual(['up', 'term']);
+      expect(result.exitCode).toBe(1);
+    });
+  });
+
+  test('a command that can be aborted, still running when this process exits, is ended with what it started', async () => {
+    const parent = script(`
+      const { execLines } = await import(RUNNERS);
+      void execLines('sh', ['-c', 'sleep 30 & echo $!; wait'], {
+        cwd: process.cwd(), env: { PATH: process.env.PATH },
+        signal: new AbortController().signal,
+        onLine: (line) => { console.log('grandchild ' + line); setTimeout(() => process.exit(0), 50); },
+      });`);
+    const { out } = await readAll(parent);
+    const pid = Number(/grandchild (\d+)/.exec(out)![1]);
     try {
       await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 3000 });
     } finally {

@@ -70,10 +70,14 @@ import {
 import type {
   DockerComposeCallbackContext,
   DockerComposeDestroyContext,
+  DockerComposeProjectDestroyContext,
+  DockerComposeProjectStartContext,
+  DockerComposeProjectStopContext,
   DockerComposeReadyContext,
   DockerComposeServiceInput,
   DockerComposeServicesInput,
   DockerComposeStartContext,
+  DockerComposeStopContext,
   InfraCallbackContext,
   InfraDestroyContext,
   InfraDestroyTrigger,
@@ -81,6 +85,8 @@ import type {
   InfraReadyContext,
   InfraStartContext,
   InfraStartTrigger,
+  InfraStopContext,
+  InfraStopTrigger,
   InfraTrigger,
   InfraRunOptions,
   InfraRunResult,
@@ -89,7 +95,9 @@ import type {
   ResolvedInfra,
   ResolvedInfraService,
 } from './infra/types';
+import type { ServiceStartTrigger, ServiceStopTrigger } from './lifecycle/service-types';
 import type { InfraServiceName, InfraServiceNameIn, ServiceName, ServiceNameIn } from './register';
+import type { SessionMode, SessionStartContext, SessionStopContext } from './session-lifecycle';
 
 describe('per-package tokens', () => {
   test('gives each package the config tokens plus its own, and nothing from a sibling', () => {
@@ -364,7 +372,7 @@ describe('reverseProxy.routes', () => {
         'docker-compose': {
           services: {
             mailpit: { port: (ctx) => Number(ctx.envs.MAIL_UI_PORT), urls: [({ port }) => `/${String(port)}`] }, // oxfmt-ignore
-            store: { port: 9000, afterReady: async (ctx) => void ctx.service.route },
+            store: { port: 9000, lifecycle: { afterReady: async (ctx) => void ctx.service.route } },
           },
         },
       },
@@ -847,13 +855,15 @@ describe('the callbacks’ buildAddress', () => {
                   return ctx.buildAddress({ subdomain: 'mail' });
                 },
               ],
-              afterReady: (ctx) => {
-                expectTypeOf(ctx.buildAddress).toEqualTypeOf<BuildAddress>();
-                expectTypeOf(ctx).not.toHaveProperty('reverseProxy');
-              },
-              beforeStart: (ctx) => {
-                expectTypeOf(ctx.buildAddress).toEqualTypeOf<BuildAddress>();
-                expectTypeOf(ctx).not.toHaveProperty('reverseProxy');
+              lifecycle: {
+                afterReady: (ctx) => {
+                  expectTypeOf(ctx.buildAddress).toEqualTypeOf<BuildAddress>();
+                  expectTypeOf(ctx).not.toHaveProperty('reverseProxy');
+                },
+                beforeStart: (ctx) => {
+                  expectTypeOf(ctx.buildAddress).toEqualTypeOf<BuildAddress>();
+                  expectTypeOf(ctx).not.toHaveProperty('reverseProxy');
+                },
               },
             },
           },
@@ -898,8 +908,10 @@ describe('the callbacks’ buildAddress', () => {
           services: {
             db: {
               urls: [(ctx) => (expectTypeOf(ctx.buildAddress).toEqualTypeOf<BuildAddress>(), '/')],
-              afterReady: (ctx) => {
-                expectTypeOf(ctx.buildAddress).toEqualTypeOf<BuildAddress>();
+              lifecycle: {
+                afterReady: (ctx) => {
+                  expectTypeOf(ctx.buildAddress).toEqualTypeOf<BuildAddress>();
+                },
               },
             },
           },
@@ -1121,24 +1133,26 @@ describe('infra callbacks', () => {
         'docker-compose': {
           services: {
             db: {
-              afterReady: async (ctx) => {
-                expectTypeOf(ctx.envs).toEqualTypeOf<Envs>();
-                expectTypeOf(ctx.tokens.domain).toEqualTypeOf<'example.test'>();
-                expectTypeOf(ctx.tokens).not.toHaveProperty('region');
-                expectTypeOf(ctx.trigger).toEqualTypeOf<InfraStartTrigger>();
-                expectTypeOf(ctx.fresh).toEqualTypeOf<boolean>();
-                expectTypeOf(ctx.service).toEqualTypeOf<ServiceDetails>();
-                expectTypeOf(ctx.workspaceDir).toEqualTypeOf<string>();
-                expectTypeOf(ctx.compose).returns.toEqualTypeOf<Promise<InfraRunResult>>();
-                expectTypeOf(ctx.exec).returns.toEqualTypeOf<Promise<InfraRunResult>>();
-                expectTypeOf(ctx).not.toHaveProperty('run');
-                expectTypeOf(ctx.log).parameters.toEqualTypeOf<[message: string]>();
-              },
-              // a synchronous callback is fine too
-              beforeStart: (ctx) => {
-                expectTypeOf(ctx.profile).toEqualTypeOf<Profile>();
-                // only afterReady knows: before the start there is nothing to be fresh yet
-                expectTypeOf(ctx).not.toHaveProperty('fresh');
+              lifecycle: {
+                afterReady: async (ctx) => {
+                  expectTypeOf(ctx.envs).toEqualTypeOf<Envs>();
+                  expectTypeOf(ctx.tokens.domain).toEqualTypeOf<'example.test'>();
+                  expectTypeOf(ctx.tokens).not.toHaveProperty('region');
+                  expectTypeOf(ctx.trigger).toEqualTypeOf<InfraStartTrigger>();
+                  expectTypeOf(ctx.fresh).toEqualTypeOf<boolean>();
+                  expectTypeOf(ctx.service).toEqualTypeOf<ServiceDetails>();
+                  expectTypeOf(ctx.workspaceDir).toEqualTypeOf<string>();
+                  expectTypeOf(ctx.compose).returns.toEqualTypeOf<Promise<InfraRunResult>>();
+                  expectTypeOf(ctx.exec).returns.toEqualTypeOf<Promise<InfraRunResult>>();
+                  expectTypeOf(ctx).not.toHaveProperty('run');
+                  expectTypeOf(ctx.log).parameters.toEqualTypeOf<[message: string]>();
+                },
+                // a synchronous callback is fine too
+                beforeStart: (ctx) => {
+                  expectTypeOf(ctx.profile).toEqualTypeOf<Profile>();
+                  // only afterReady knows: before the start there is nothing to be fresh yet
+                  expectTypeOf(ctx).not.toHaveProperty('fresh');
+                },
               },
               enabled: (ctx) => {
                 expectTypeOf(ctx.profile).toEqualTypeOf<Profile>();
@@ -1348,6 +1362,185 @@ describe('the input types and the schemas', () => {
   });
 });
 
+describe('the provider and session lifecycle hooks', () => {
+  test("the docker-compose provider's beforeStart gets the run's context and compose", () => {
+    defineConfig({
+      serviceRootDir: 'packages',
+      tokens: { domain: 'example.test' },
+      services: { web: {} },
+      infra: {
+        'docker-compose': {
+          lifecycle: {
+            beforeStart: (ctx) => {
+              expectTypeOf(ctx.trigger).toEqualTypeOf<InfraStartTrigger>();
+              expectTypeOf(ctx.tokens.domain).toEqualTypeOf<'example.test'>();
+              expectTypeOf(ctx.compose).returns.toEqualTypeOf<Promise<InfraRunResult>>();
+              expectTypeOf(ctx.data).toEqualTypeOf<Record<string, unknown>>();
+              expectTypeOf(ctx.config.workspaceDir).toEqualTypeOf<string>();
+              expectTypeOf(ctx).not.toHaveProperty('service');
+              expectTypeOf(ctx).not.toHaveProperty('control');
+              expectTypeOf(ctx).not.toHaveProperty('fresh');
+            },
+            beforeStop: (ctx) => {
+              expectTypeOf(ctx).toEqualTypeOf<
+                DockerComposeProjectStopContext<{ readonly domain: 'example.test' }>
+              >();
+              expectTypeOf(ctx.trigger).toEqualTypeOf<InfraStopTrigger>();
+              expectTypeOf(ctx.compose).returns.toEqualTypeOf<Promise<InfraRunResult>>();
+              expectTypeOf(ctx).not.toHaveProperty('service');
+              expectTypeOf(ctx).not.toHaveProperty('control');
+            },
+            afterStop: (ctx) => {
+              expectTypeOf(ctx.trigger).toEqualTypeOf<InfraStopTrigger>();
+              expectTypeOf(ctx.data).toEqualTypeOf<Record<string, unknown>>();
+            },
+          },
+        },
+      },
+    });
+  });
+
+  test("the docker-compose provider's afterStart and afterReady get the start context; its destroy hooks the destroy one", () => {
+    type Tokens = { readonly domain: 'example.test' };
+    defineConfig({
+      serviceRootDir: 'packages',
+      tokens: { domain: 'example.test' },
+      services: { web: {} },
+      infra: {
+        'docker-compose': {
+          lifecycle: {
+            afterStart: (ctx) => {
+              expectTypeOf(ctx).toEqualTypeOf<DockerComposeProjectStartContext<Tokens>>();
+            },
+            afterReady: (ctx) => {
+              expectTypeOf(ctx).toEqualTypeOf<DockerComposeProjectStartContext<Tokens>>();
+              expectTypeOf(ctx).not.toHaveProperty('fresh');
+            },
+            beforeDestroy: (ctx) => {
+              expectTypeOf(ctx).toEqualTypeOf<DockerComposeProjectDestroyContext<Tokens>>();
+              expectTypeOf(ctx.trigger).toEqualTypeOf<InfraDestroyTrigger>();
+              expectTypeOf(ctx.compose).returns.toEqualTypeOf<Promise<InfraRunResult>>();
+              expectTypeOf(ctx).not.toHaveProperty('service');
+              expectTypeOf(ctx).not.toHaveProperty('control');
+            },
+            afterDestroy: (ctx) => {
+              expectTypeOf(ctx).toEqualTypeOf<DockerComposeProjectDestroyContext<Tokens>>();
+            },
+          },
+        },
+      },
+    });
+  });
+
+  test("the session's beforeStart gets the session's context, and no infra", () => {
+    defineConfig({
+      serviceRootDir: 'packages',
+      tokens: { domain: 'example.test' },
+      services: { web: {} },
+      session: {
+        lifecycle: {
+          beforeStart: async (ctx) => {
+            expectTypeOf(ctx.mode).toEqualTypeOf<SessionMode>();
+            expectTypeOf(ctx.profile).toEqualTypeOf<Profile>();
+            expectTypeOf(ctx.envs).toEqualTypeOf<Envs>();
+            expectTypeOf(ctx.tokens.domain).toEqualTypeOf<'example.test'>();
+            expectTypeOf(ctx.exec).returns.toEqualTypeOf<Promise<InfraRunResult>>();
+            expectTypeOf(ctx.data).toEqualTypeOf<Record<string, unknown>>();
+            expectTypeOf(ctx).not.toHaveProperty('compose');
+            expectTypeOf(ctx).not.toHaveProperty('trigger');
+          },
+        },
+      },
+    });
+  });
+
+  test("the session's afterStart and afterReady get the session's start context, as its beforeStart does", () => {
+    defineConfig({
+      serviceRootDir: 'packages',
+      tokens: { domain: 'example.test' },
+      services: { web: {} },
+      session: {
+        lifecycle: {
+          afterStart: (ctx) => {
+            expectTypeOf(ctx).toEqualTypeOf<
+              SessionStartContext<{ readonly domain: 'example.test' }>
+            >();
+          },
+          afterReady: async (ctx) => {
+            expectTypeOf(ctx).toEqualTypeOf<
+              SessionStartContext<{ readonly domain: 'example.test' }>
+            >();
+            expectTypeOf(ctx).not.toHaveProperty('trigger');
+          },
+        },
+      },
+    });
+  });
+
+  test("the session's beforeStop and afterStop get the session's context, as its beforeStart does", () => {
+    expectTypeOf<SessionStopContext>().toEqualTypeOf<SessionStartContext>();
+    defineConfig({
+      serviceRootDir: 'packages',
+      tokens: { domain: 'example.test' },
+      services: { web: {} },
+      session: {
+        lifecycle: {
+          beforeStop: (ctx) => {
+            expectTypeOf(ctx).toEqualTypeOf<
+              SessionStopContext<{ readonly domain: 'example.test' }>
+            >();
+            expectTypeOf(ctx.mode).toEqualTypeOf<SessionMode>();
+            expectTypeOf(ctx.tokens.domain).toEqualTypeOf<'example.test'>();
+            expectTypeOf(ctx.data).toEqualTypeOf<Record<string, unknown>>();
+            expectTypeOf(ctx).not.toHaveProperty('trigger');
+          },
+          afterStop: async (ctx) => {
+            expectTypeOf(ctx.exec).returns.toEqualTypeOf<Promise<InfraRunResult>>();
+            expectTypeOf(ctx).not.toHaveProperty('compose');
+          },
+        },
+      },
+    });
+  });
+
+  test("an application service's hooks get its merged tokens, a trigger and its details", () => {
+    defineConfig({
+      serviceRootDir: 'packages',
+      tokens: { domain: 'example.test' },
+      services: {
+        api: {
+          tokens: { region: 'eu' } as const,
+          lifecycle: {
+            beforeStart: (ctx) => {
+              expectTypeOf(ctx.trigger).toEqualTypeOf<ServiceStartTrigger>();
+              expectTypeOf(ctx.tokens.region).toEqualTypeOf<'eu'>();
+              expectTypeOf(ctx.tokens.domain).toEqualTypeOf<'example.test'>();
+              expectTypeOf(ctx.service).toEqualTypeOf<ServiceDetails>();
+              expectTypeOf(ctx.buildAddress).returns.toEqualTypeOf<string>();
+              expectTypeOf(ctx.data).toEqualTypeOf<Record<string, unknown>>();
+              expectTypeOf(ctx).not.toHaveProperty('compose');
+              expectTypeOf(ctx).not.toHaveProperty('control');
+              expectTypeOf(ctx).not.toHaveProperty('fresh');
+            },
+            beforeStop: (ctx) => {
+              expectTypeOf(ctx.trigger).toEqualTypeOf<ServiceStopTrigger>();
+              expectTypeOf(ctx.tokens.region).toEqualTypeOf<'eu'>();
+            },
+          },
+        },
+      },
+    });
+  });
+
+  test("a service's callbacks live under `lifecycle` only", () => {
+    expectTypeOf<DockerComposeServiceInput>().not.toHaveProperty('afterReady');
+    expectTypeOf<DockerComposeServiceInput>().not.toHaveProperty('beforeStart');
+    expectTypeOf<NonNullable<DockerComposeServiceInput['lifecycle']>>().toHaveProperty(
+      'afterReady',
+    );
+  });
+});
+
 describe('infra hook context', () => {
   test('compose is on the Docker Compose contexts only', () => {
     expectTypeOf<InfraCallbackContext>().not.toHaveProperty('compose');
@@ -1371,15 +1564,17 @@ describe('infra hook context', () => {
         'docker-compose': {
           services: {
             db: {
-              beforeStart: (ctx) => {
-                expectTypeOf(ctx).toExtend<DockerComposeStartContext>();
-                expectTypeOf(ctx).not.toHaveProperty('fresh');
-              },
-              beforeDestroy: (ctx) => {
-                expectTypeOf(ctx).toExtend<DockerComposeDestroyContext>();
-              },
-              afterReady: (ctx) => {
-                expectTypeOf(ctx).toExtend<DockerComposeReadyContext>();
+              lifecycle: {
+                beforeStart: (ctx) => {
+                  expectTypeOf(ctx).toExtend<DockerComposeStartContext>();
+                  expectTypeOf(ctx).not.toHaveProperty('fresh');
+                },
+                beforeDestroy: (ctx) => {
+                  expectTypeOf(ctx).toExtend<DockerComposeDestroyContext>();
+                },
+                afterReady: (ctx) => {
+                  expectTypeOf(ctx).toExtend<DockerComposeReadyContext>();
+                },
               },
             },
           },
@@ -1399,12 +1594,14 @@ describe('infra hook context', () => {
     expectTypeOf<InfraReadyContext['profile']>().toEqualTypeOf<Profile>();
     expectTypeOf<InfraReadyContext['config']>().toEqualTypeOf<Config<string>>();
     void ({
-      beforeStart: ({ config, profile }) => {
-        expectTypeOf(config.profile).toEqualTypeOf<Profile>();
-        expectTypeOf(profile).toEqualTypeOf<Profile>();
-      },
-      afterReady: ({ config }) => {
-        expectTypeOf(config.services).toHaveProperty('anything');
+      lifecycle: {
+        beforeStart: ({ config, profile }) => {
+          expectTypeOf(config.profile).toEqualTypeOf<Profile>();
+          expectTypeOf(profile).toEqualTypeOf<Profile>();
+        },
+        afterReady: ({ config }) => {
+          expectTypeOf(config.services).toHaveProperty('anything');
+        },
       },
     } satisfies InfraServiceInput);
   });
@@ -1418,10 +1615,11 @@ describe('infra hook context', () => {
 describe('the infra callbacks’ trigger', () => {
   test('names what started the run', () => {
     expectTypeOf<InfraTrigger>().toEqualTypeOf<
-      'session' | 'start' | 'restart' | 'reset' | 'destroy'
+      'session' | 'start' | 'stop' | 'restart' | 'reset' | 'destroy'
     >();
     expectTypeOf<InfraStartTrigger>().toEqualTypeOf<'session' | 'start' | 'restart' | 'reset'>();
     expectTypeOf<InfraDestroyTrigger>().toEqualTypeOf<'destroy' | 'reset'>();
+    expectTypeOf<InfraStopTrigger>().toEqualTypeOf<'stop' | 'restart'>();
     expectTypeOf<InfraCallbackContext['trigger']>().toEqualTypeOf<InfraTrigger>();
     expectTypeOf<InfraCallbackContext>().not.toHaveProperty('reset');
   });
@@ -1433,6 +1631,13 @@ describe('the infra callbacks’ trigger', () => {
     expectTypeOf<DockerComposeDestroyContext['trigger']>().toEqualTypeOf<InfraDestroyTrigger>();
     expectTypeOf<DockerComposeStartContext['trigger']>().toEqualTypeOf<InfraStartTrigger>();
     expectTypeOf<DockerComposeReadyContext['trigger']>().toEqualTypeOf<InfraStartTrigger>();
+    expectTypeOf<InfraStopContext['trigger']>().toEqualTypeOf<InfraStopTrigger>();
+    expectTypeOf<DockerComposeStopContext['trigger']>().toEqualTypeOf<InfraStopTrigger>();
+    expectTypeOf<DockerComposeStopContext>().toExtend<InfraStopContext>();
+    expectTypeOf<DockerComposeProjectStopContext['trigger']>().toEqualTypeOf<InfraStopTrigger>();
+    expectTypeOf<
+      DockerComposeProjectDestroyContext['trigger']
+    >().toEqualTypeOf<InfraDestroyTrigger>();
     expectTypeOf<DockerComposeDestroyContext>().toExtend<InfraDestroyContext>();
     expectTypeOf<DockerComposeStartContext>().toExtend<InfraStartContext>();
     expectTypeOf<DockerComposeDestroyContext['compose']>().toEqualTypeOf<
@@ -1451,17 +1656,29 @@ describe('the infra callbacks’ trigger', () => {
         'docker-compose': {
           services: {
             db: {
-              beforeDestroy: ({ trigger }) => {
-                expectTypeOf(trigger).toEqualTypeOf<InfraDestroyTrigger>();
-              },
-              afterDestroy: ({ trigger }) => {
-                expectTypeOf(trigger).toEqualTypeOf<InfraDestroyTrigger>();
-              },
-              beforeStart: ({ trigger }) => {
-                expectTypeOf(trigger).toEqualTypeOf<InfraStartTrigger>();
-              },
-              afterReady: ({ trigger }) => {
-                expectTypeOf(trigger).toEqualTypeOf<InfraStartTrigger>();
+              lifecycle: {
+                beforeDestroy: ({ trigger }) => {
+                  expectTypeOf(trigger).toEqualTypeOf<InfraDestroyTrigger>();
+                },
+                afterDestroy: ({ trigger }) => {
+                  expectTypeOf(trigger).toEqualTypeOf<InfraDestroyTrigger>();
+                },
+                beforeStart: ({ trigger }) => {
+                  expectTypeOf(trigger).toEqualTypeOf<InfraStartTrigger>();
+                },
+                afterStart: (ctx) => {
+                  expectTypeOf(ctx).toEqualTypeOf<DockerComposeStartContext>();
+                },
+                afterReady: ({ trigger }) => {
+                  expectTypeOf(trigger).toEqualTypeOf<InfraStartTrigger>();
+                },
+                beforeStop: ({ trigger, compose }) => {
+                  expectTypeOf(trigger).toEqualTypeOf<InfraStopTrigger>();
+                  expectTypeOf(compose).returns.toEqualTypeOf<Promise<InfraRunResult>>();
+                },
+                afterStop: ({ trigger }) => {
+                  expectTypeOf(trigger).toEqualTypeOf<InfraStopTrigger>();
+                },
               },
             },
           },
@@ -1489,10 +1706,12 @@ describe('the infra callbacks’ trigger', () => {
       }
     };
     void ({
-      beforeDestroy,
-      afterDestroy: beforeDestroy,
-      beforeStart,
-      afterReady,
+      lifecycle: {
+        beforeDestroy,
+        afterDestroy: beforeDestroy,
+        beforeStart,
+        afterReady,
+      },
     } satisfies DockerComposeServiceInput);
   });
 
@@ -1500,17 +1719,42 @@ describe('the infra callbacks’ trigger', () => {
     const onStart = (_ctx: DockerComposeStartContext) => {};
     const onDestroy = (_ctx: DockerComposeDestroyContext) => {};
     const onReady = (_ctx: DockerComposeReadyContext) => {};
+    const onStop = (_ctx: DockerComposeStopContext) => {};
     void ({
-      // @ts-expect-error -- a start callback can't be handed a destroy's trigger
-      beforeDestroy: onStart,
+      lifecycle: {
+        // @ts-expect-error -- a start callback can't be handed a stop's trigger
+        beforeStop: onStart,
+      },
     } satisfies DockerComposeServiceInput);
     void ({
-      // @ts-expect-error -- a destroy callback can't be handed a start's trigger
-      beforeStart: onDestroy,
+      lifecycle: {
+        // @ts-expect-error -- a stop callback can't be handed a start's trigger
+        beforeStart: onStop,
+      },
     } satisfies DockerComposeServiceInput);
     void ({
-      // @ts-expect-error -- before the start there is nothing to be fresh yet
-      beforeStart: onReady,
+      lifecycle: {
+        // @ts-expect-error -- a start callback can't be handed a destroy's trigger
+        beforeDestroy: onStart,
+      },
+    } satisfies DockerComposeServiceInput);
+    void ({
+      lifecycle: {
+        // @ts-expect-error -- a destroy callback can't be handed a start's trigger
+        beforeStart: onDestroy,
+      },
+    } satisfies DockerComposeServiceInput);
+    void ({
+      lifecycle: {
+        // @ts-expect-error -- before the start there is nothing to be fresh yet
+        beforeStart: onReady,
+      },
+    } satisfies DockerComposeServiceInput);
+    void ({
+      lifecycle: {
+        // @ts-expect-error -- afterStart runs before the service is ready: it gets no `fresh`
+        afterStart: onReady,
+      },
     } satisfies DockerComposeServiceInput);
   });
 
@@ -1519,10 +1763,15 @@ describe('the infra callbacks’ trigger', () => {
       log(trigger);
     };
     void ({
-      beforeDestroy: logEvery,
-      afterDestroy: logEvery,
-      beforeStart: logEvery,
-      afterReady: logEvery,
+      lifecycle: {
+        beforeDestroy: logEvery,
+        afterDestroy: logEvery,
+        beforeStart: logEvery,
+        afterStart: logEvery,
+        afterReady: logEvery,
+        beforeStop: logEvery,
+        afterStop: logEvery,
+      },
     } satisfies DockerComposeServiceInput);
   });
 });
@@ -1604,9 +1853,11 @@ describe('config split across files', () => {
   type Names = 'api' | 'worker';
 
   const queue = {
-    afterReady: async (ctx) => {
-      expectTypeOf(ctx).toEqualTypeOf<DockerComposeReadyContext<typeof tokens>>();
-      expectTypeOf(ctx.tokens.region).toEqualTypeOf<'local'>();
+    lifecycle: {
+      afterReady: async (ctx) => {
+        expectTypeOf(ctx).toEqualTypeOf<DockerComposeReadyContext<typeof tokens>>();
+        expectTypeOf(ctx.tokens.region).toEqualTypeOf<'local'>();
+      },
     },
   } satisfies DockerComposeServiceInput<typeof tokens>;
   const infraServices = {

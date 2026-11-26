@@ -4,7 +4,9 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import type { AnyServiceConfig } from '../config';
 import type { ControlClient, SessionStatus } from '../control-client';
+import { localTime } from '../event-log';
 import type { FoundSession } from '../find-session';
+import { sessionEventsPath, sessionLogPath } from '../session-files';
 import { type WaitContext, runWaitCommand } from './wait';
 
 let dir: string;
@@ -126,5 +128,50 @@ describe('runWaitCommand', () => {
     });
     expect(await runWaitCommand({ timeout: 60 }, ctx)).toBe(1);
     expect(err).toEqual(['stackctl: api stopped while starting; see /s/logs.txt']);
+  });
+
+  describe('a session whose start failed, once it is gone', () => {
+    /** A workspace whose latest session ended at `at` with a failed start. */
+    function failedSession(at: number): { root: string; log: string } {
+      const root = fs.mkdtempSync(path.join(dir, 'ws-'));
+      const events = sessionEventsPath(root, 'development', '1700000000000');
+      fs.mkdirSync(path.dirname(events), { recursive: true });
+      const end = { type: 'session-end', cause: 'error', error: 'session beforeStart failed: boom', durationMs: 40, time: localTime(new Date(at)), profile: 'development', sessionId: '1700000000000', pid: 4242 }; // oxfmt-ignore
+      fs.writeFileSync(events, `${JSON.stringify(end)}\n`);
+      return { root, log: sessionLogPath(root, 'development', '1700000000000') };
+    }
+
+    test('one that failed since the wait began fails the wait at once, with its reason and its log', async () => {
+      const { root, log } = failedSession(Date.now());
+      const { ctx, err, asked } = context([NONE], { root, since: Date.now() - 1000 });
+      expect(await runWaitCommand({ timeout: 60 }, ctx)).toBe(1);
+      expect(asked()).toBe(1);
+      expect(err).toEqual([`stackctl: the development session failed to start: session beforeStart failed: boom. See ${log}`]); // oxfmt-ignore
+    });
+
+    test('one seen starting, then gone, fails the wait with its reason', async () => {
+      const { root, log } = failedSession(Date.now());
+      const { ctx, err } = context([running(null), NONE], { root, since: Date.now() + 60_000 });
+      expect(await runWaitCommand({ timeout: 60 }, ctx)).toBe(1);
+      expect(err).toEqual([`stackctl: the development session failed to start: session beforeStart failed: boom. See ${log}`]); // oxfmt-ignore
+    });
+
+    test('one that failed before the wait began may be an older one: the wait goes on, and names it if no session comes', async () => {
+      const at = new Date(2026, 10, 11, 11, 41, 53).getTime();
+      const { root, log } = failedSession(at);
+      const { ctx, err } = context([NONE], { root, since: at + 1000 });
+      expect(await runWaitCommand({ timeout: 0.05 }, ctx)).toBe(1);
+      expect(err).toEqual([
+        `stackctl: no development session started within 0.05s; the last one failed to start (2026-11-11 11:41:53): session beforeStart failed: boom. See ${log}`,
+      ]);
+    });
+
+    test('without waitForStart, no session running says why the last one failed to start', async () => {
+      const { root, log } = failedSession(Date.now());
+      const { ctx, err } = context([NONE], { root });
+      expect(await runWaitCommand({ timeout: 60, waitForStart: false }, ctx)).toBe(1);
+      expect(err[0]).toMatch(/^No development stackctl session is running .* The last one failed to start \(today \d\d:\d\d:\d\d\): session beforeStart failed: boom\. See /); // oxfmt-ignore
+      expect(err[0]!.endsWith(log)).toBe(true);
+    });
   });
 });

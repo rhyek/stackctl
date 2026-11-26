@@ -54,10 +54,16 @@ export type {
   DockerComposeInfraInput,
   DockerComposeCallbackContext,
   DockerComposeDestroyContext,
+  DockerComposeProjectCallbacks,
+  DockerComposeProjectDestroyContext,
+  DockerComposeProjectStartContext,
+  DockerComposeProjectStopContext,
   DockerComposeReadyContext,
   DockerComposeServiceInput,
   DockerComposeServicesInput,
   DockerComposeStartContext,
+  DockerComposeStopContext,
+  DockerComposeTool,
   InfraServiceInput,
   InfraServicesInput,
   InfraServiceCallbacks,
@@ -69,13 +75,31 @@ export type {
   InfraReadyContext,
   InfraStartContext,
   InfraStartTrigger,
+  InfraStopContext,
+  InfraStopTrigger,
   InfraTrigger,
+  InfraRunContext,
   InfraRunOptions,
   InfraRunResult,
   ResolvedInfra,
   ResolvedDockerComposeInfra,
   ResolvedInfraService,
 } from './infra/types';
+export type { LifecycleContext } from './lifecycle/hooks';
+export type {
+  ServiceCallbacks,
+  ServiceHookContext,
+  ServiceStartContext,
+  ServiceStartTrigger,
+  ServiceStopContext,
+  ServiceStopTrigger,
+} from './lifecycle/service-types';
+export type {
+  SessionCallbacks,
+  SessionMode,
+  SessionStartContext,
+  SessionStopContext,
+} from './session-lifecycle';
 // A test suite's stack: a detached headless session, started or reused, waited on until healthy.
 export { startStack, stackEnvironment } from './stack';
 export type { StartStackOptions, Stack } from './stack';
@@ -122,9 +146,11 @@ export type {
 // What an infra callback's `control` is: a client for the running session's control API.
 export type {
   ControlClient,
+  ServiceRequestOptions,
   SessionEvent,
   SessionStatus,
   SessionServiceStatus,
+  SessionStartHooks,
 } from './control-client';
 export type { EventBy, EventEntry, EventEnvelope, EventLine } from './event-log';
 export type { ServiceAction } from './control-server';

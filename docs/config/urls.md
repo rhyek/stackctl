@@ -107,7 +107,8 @@ services: {
 
 ## `buildAddress`
 
-`urls` and `healthcheck` callbacks, and infra callbacks, get `buildAddress`. It builds a URL
+`urls` and `healthcheck` callbacks, a service's own [lifecycle hooks](./lifecycle.md), and
+infra callbacks, get `buildAddress`. It builds a URL
 starting from the service's public origin, replacing the parts you pass:
 
 ```ts

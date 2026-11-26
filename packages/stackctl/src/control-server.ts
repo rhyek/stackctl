@@ -4,6 +4,7 @@ import {
   EVENTS_HEARTBEAT_MS,
   type SessionEvent,
   type SessionServiceStatus,
+  type SessionStartHooks,
 } from './control-client';
 import type { DevReverseProxyServer } from './dev-reverse-proxy';
 import { currentProfile, currentProfileSource } from './env-base';
@@ -14,6 +15,7 @@ import {
   type InfraRunOutcome,
   type InfraStatus,
 } from './infra/control';
+import type { ServiceCallbacks } from './lifecycle/service-types';
 import { sessionId } from './running';
 
 /** What `POST /command/service/<action>/<name>` can do to an application service. */
@@ -42,11 +44,11 @@ function listenOn(server: http.Server, port: number): Promise<void> {
 const REQUEST_URL_BASE = 'http://localhost';
 
 /**
- * How a service action went: `done` (a start or stop, finished), `accepted` (a restart,
- * under way), `unknown` (no such service in the session), `busy` (a restart is under way),
- * `waiting` (a start or restart of a service waiting for its deps), `unavailable` (a start with
- * no dev command),
- * `closing` (a start of a service not in the session, while the session is shutting down).
+ * How a service action went: `done` (a start or stop, finished), `accepted` (a restart, under
+ * way), `unknown` (no such service in the session), `busy` (a start while a restart is under
+ * way), `waiting` (a start or restart of a service waiting for its deps), `unavailable` (a start
+ * with no dev command), `closing` (a start of a service not in the session, while the session is
+ * shutting down).
  */
 export type ServiceRunOutcome =
   | 'done'
@@ -59,15 +61,42 @@ export type ServiceRunOutcome =
 
 export interface ControlManager {
   serviceStatuses(): unknown;
-  /** Whether each service is running and passing its healthcheck (see `/query/status` `ready`). */
+  /**
+   * Whether each service is ready: running, passing its healthcheck, and its `afterStart` and
+   * `afterReady` finished without failing (see `/query/status` `ready`).
+   */
   getAllReadiness(): Record<string, boolean>;
+  /**
+   * Why a service can't get ready because a start hook failed: the hook's error, for one its
+   * `afterStart` or `afterReady` failed (`failed`) or its `beforeStart` (`stopped`), or a
+   * `waiting` one's failed dependency and its error (see `/query/status` `errors`). Only those
+   * services are keys.
+   */
+  serviceErrors(): Record<string, string>;
+  /**
+   * The `lifecycle` hook each service runs now: a start hook, or the stop hook a stop still
+   * runs, which a stop asked for now abandons (see `/query/status` `serviceHooks`). Only those
+   * services are keys.
+   */
+  serviceHooks(): Record<string, keyof ServiceCallbacks>;
+  /**
+   * Where the session's own `afterStart` and `afterReady` are: the session is ready only once they
+   * are `none` or `done` (see `/query/status` `sessionStartHooks`).
+   */
+  sessionStartHooks(): SessionStartHooks;
+  /**
+   * Why the session's start failed after its services were started: its `afterStart` or
+   * `afterReady` threw (`session afterReady failed: <message>`), or another step of its start
+   * failed after that; otherwise `null` (see `/query/status` `sessionError`).
+   */
+  sessionError(): string | null;
   /** The whole resolved config (defaults applied), included in `/query/status` once attached. */
   getConfig(): unknown;
   /** Absolute path to the logfile currently being written (rotation-aware). */
   getLogFile(): string;
   /**
    * Runs an action on an application service, for `by`; a `stop` resolves once its process has
-   * exited.
+   * exited and its stop hooks, which have no time limit, have finished.
    */
   runPackage(pkg: string, action: ServiceAction, by: EventBy): Promise<ServiceRunOutcome>;
   /** Every infra service's status, or `null` for a session without infra. */
@@ -171,8 +200,12 @@ export async function startControlServer(opts: {
   const liveState = (): LiveState => {
     const services = manager ? (manager.serviceStatuses() as Record<string, string>) : null;
     const ready = manager ? manager.getAllReadiness() : null;
+    const errors = manager ? manager.serviceErrors() : null;
     const infra = manager ? manager.getInfraStatuses() : null;
-    return { services, ready, infra, sessionReady: isSessionReady(services, ready, infra) };
+    const sessionStartHooks = manager ? manager.sessionStartHooks() : 'none';
+    const hooksSettled = sessionStartHooks === 'none' || sessionStartHooks === 'done';
+    const sessionReady = manager !== null && hooksSettled && everythingReady(services, ready, infra); // oxfmt-ignore
+    return { services, ready, errors, infra, sessionReady, sessionError: manager ? manager.sessionError() : null, sessionStartHooks }; // oxfmt-ignore
   };
   const statusBody = () => ({
     pid: process.pid,
@@ -183,6 +216,7 @@ export async function startControlServer(opts: {
     startedByAgent: startedByAgent(),
     logFile: manager ? manager.getLogFile() : (opts.logFile ?? null),
     ...liveState(),
+    serviceHooks: manager ? manager.serviceHooks() : null,
     config: manager ? manager.getConfig() : null,
     reverseProxy: opts.reverseProxy
       ? {
@@ -309,7 +343,7 @@ export async function startControlServer(opts: {
 
     // `/command/service/<action>/<name>`: a restart is accepted at once and runs on;
     // a start or stop answers once it's done, so a caller that stops a service knows its process
-    // has exited.
+    // has exited and its stop hooks have run.
     if (parts[0] === 'command' && parts[1] === 'service' && parts[2] && parts[3]) {
       const action = parts[2] as ServiceAction;
       const name = parts[3];
@@ -426,15 +460,20 @@ export async function startControlServer(opts: {
 interface LiveState {
   services: Record<string, string> | null;
   ready: Record<string, boolean> | null;
+  errors: Record<string, string> | null;
   infra: Record<string, InfraStatus> | null;
+  /** Ready as a whole: {@link everythingReady}, and the session's own start hooks settled. */
   sessionReady: boolean;
+  sessionError: string | null;
+  sessionStartHooks: SessionStartHooks;
 }
 
 /**
- * Whether a session is ready as a whole: attached, every infra service running, and every service
- * that isn't stopped ready.
+ * Whether everything a session runs is ready: attached, every infra service running, and every
+ * service that isn't stopped ready. A `failed` service is never ready, so a session with one isn't.
+ * The session's `afterReady` runs once this first holds; the session is ready once it has finished.
  */
-function isSessionReady(
+export function everythingReady(
   services: Record<string, string> | null,
   ready: Record<string, boolean> | null,
   infra: Record<string, InfraStatus> | null,
@@ -452,16 +491,19 @@ function isSessionReady(
 
 /**
  * The state lines that take the event log from `prev` (`null`: nothing written yet) to `next`, each
- * with what it was. The first call writes every service and infra service as it is.
+ * with what it was. The first call writes every service and infra service as it is. A session
+ * error that is new comes first: it is why the services' lines that follow it (a shutdown's
+ * `stopped`) changed.
  */
 function stateChanges(prev: LiveState | null, next: LiveState): StateEntry[] {
   const entries: StateEntry[] = [];
   for (const [service, status] of Object.entries(next.services ?? {})) {
     const ready = next.ready?.[service] === true;
+    const error = next.errors?.[service];
     const previousStatus = (prev?.services?.[service] ?? null) as SessionServiceStatus | null;
     const previousReady = prev?.services?.[service] === undefined ? null : prev.ready?.[service] === true; // oxfmt-ignore
-    if (previousStatus !== status || previousReady !== ready) {
-      entries.push({ type: 'service-state', service, status: status as SessionServiceStatus, ready, previousStatus, previousReady }); // oxfmt-ignore
+    if (previousStatus !== status || previousReady !== ready || prev?.errors?.[service] !== error) {
+      entries.push({ type: 'service-state', service, status: status as SessionServiceStatus, ready, ...(error === undefined ? {} : { error }), previousStatus, previousReady }); // oxfmt-ignore
     }
   }
   for (const [service, status] of Object.entries(next.infra ?? {})) {
@@ -470,8 +512,15 @@ function stateChanges(prev: LiveState | null, next: LiveState): StateEntry[] {
       entries.push({ type: 'infra-state', service, status, previousStatus });
     }
   }
-  if ((prev?.sessionReady ?? false) !== next.sessionReady) {
-    entries.push({ type: 'session-state', ready: next.sessionReady });
+  const newError = (prev?.sessionError ?? null) !== next.sessionError;
+  const hooksChanged = (prev?.sessionStartHooks ?? 'none') !== next.sessionStartHooks;
+  if ((prev?.sessionReady ?? false) !== next.sessionReady || newError || hooksChanged) {
+    const entry: StateEntry = { type: 'session-state', ready: next.sessionReady, hooks: next.sessionStartHooks, ...(next.sessionError === null ? {} : { error: next.sessionError }) }; // oxfmt-ignore
+    if (newError) {
+      entries.unshift(entry);
+    } else {
+      entries.push(entry);
+    }
   }
   return entries;
 }

@@ -64,7 +64,8 @@ function startStack(options): Promise<Stack>;
 ```
 
 Starts a headless session as a child of the calling process and resolves once the infra and
-every service asked for are healthy. See [Tests and CI](../guide/testing.md).
+every service asked for are healthy, and the session's own `afterStart` and `afterReady`
+[hooks](../config/lifecycle.md) have finished. See [Tests and CI](../guide/testing.md).
 
 ```ts
 const stack = await startStack({ profile: 'test', services: ['api'] });
@@ -105,12 +106,15 @@ It resolves with:
 
 - **The session ends with the calling process**, however that ends.
 - **Healthy** means running and passing its healthcheck. A service with no healthcheck must
-  stay up for a second.
+  stay up for a second. A service with [lifecycle hooks](../config/lifecycle.md) is healthy once
+  its `afterStart` and `afterReady` have finished too.
 - **A service with `autostart: false` stays stopped** and isn't waited on. Start it with
   `stack.control.command.service.start(name)`.
 - **It rejects** when a session of the profile is already running (unless `killOthers`), when
-  the session exits or a service stops while starting, or when `waitTimeout` passes
-  (`not healthy after 300s: worker`). The session is stopped first, and the error has the
+  the session exits or a service stops while starting, at once when a
+  [start hook failed](../config/lifecycle.md) a service or the session's start
+  fails, with the hook's error, or when `waitTimeout` passes
+  (`not ready after 300s: worker`). The session is stopped first, and the error has the
   log's path.
 
 ### `stackEnvironment`
@@ -155,7 +159,7 @@ await stack.service.restart({ services: ['api'] });
 | `timeout`      | `300`                  | `wait` only: seconds to wait for it to start and be ready.        |
 
 - **`attach` needs the session running now.** It rejects at once without one, or when the one
-  recorded doesn't answer, and otherwise waits until it is ready.
+  recorded doesn't answer, and otherwise waits until it is ready, as `startStack()` does.
 - **`wait` waits for the session to start too**, as [`stackctl wait`](./cli.md#stackctl-wait)
   does.
 - **An attached session doesn't end with this process.** Its `stop()` quits it.
@@ -249,6 +253,10 @@ const { stdout } = await infra.compose(['ps'], { stdio: 'pipe' });
 - **It takes `profile` and `workspaceDir`** too.
 - **Each result** is `{ service, status, error? }`, with `status` `'ready'`, `'stopped'`,
   `'destroyed'` or `'failed'`.
+- **A result can have a status other than `failed` and an `error`**: the service reached that
+  state, but a [lifecycle hook](../config/lifecycle.md) around the step failed
+  (a `beforeStop` that threw, the service stopped all the same). `ok` is then `false`. A reset
+  stopped by an `afterDestroy` leaves every service `destroyed`, with why it wasn't started.
 - **It rejects** for what the CLI refuses before anything runs: an unknown service or tag, a
   disabled service named, and what [`reset`](../config/infra.md#reset) and `destroy` can't
   remove. An empty `services` or `tags` rejects too: leave it out to act on every enabled one.
@@ -422,10 +430,10 @@ logging.nodejs.winston.formatter(config?);
 
 The types used by the config are exported for
 [splitting it across files](../config/config-file.md#splitting-the-config-across-files):
-`ServiceInput`, `DockerComposeServiceInput`, `DockerComposeServicesInput`,
-`DockerComposeDestroyContext`, `DockerComposeStartContext`, `DockerComposeReadyContext`,
-`DockerComposeCallbackContext`, `ReverseProxyRoute`, `ReverseProxyInput` and
-`DockerComposeInfraInput`. With
+`ServiceInput`, `DockerComposeServiceInput`, `DockerComposeServicesInput`, `ReverseProxyRoute`,
+`ReverseProxyInput`, `DockerComposeInfraInput`, and the context of every
+[lifecycle hook](../config/lifecycle.md), from `LifecycleContext` to `ServiceStartContext` and
+`DockerComposeReadyContext`. With
 [typed service names](../config/config-file.md#typed-service-names), `ServiceName`,
 `InfraServiceName` and `ServiceConfig` are your own. `ControlClient`, `SessionStatus` and
 `SessionEvent` describe the [control API client](./control-api.md#the-client), and `EventLine`,

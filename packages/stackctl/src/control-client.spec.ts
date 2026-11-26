@@ -37,8 +37,12 @@ const SNAPSHOT = {
   logFile: '/ws/node_modules/.stackctl/profiles/test/logs/171.log',
   services: { web: 'running' },
   ready: { web: true },
+  errors: {},
+  serviceHooks: {},
   infra: { db: 'running' },
-  sessionReady: true,
+  sessionReady: false,
+  sessionError: 'session afterReady failed: boom',
+  sessionStartHooks: 'failed',
   config: { packages: [] },
   reverseProxy: {
     port: 21050,
@@ -147,6 +151,15 @@ describe('createControlClient', () => {
     ]);
   });
 
+  test.each(['errors', 'serviceHooks'] as const)(
+    "query.status() reads a missing %s as none: an older instance's",
+    async (field) => {
+      const { [field]: _omitted, ...without } = SNAPSHOT;
+      const port = await startServer((_req, res) => res.end(JSON.stringify(without)));
+      expect(await createControlClient(port).query.status()).toEqual({ ...without, [field]: {} });
+    },
+  );
+
   test('query.status() reads a missing infra as null', async () => {
     const { infra: _omitted, ...noInfra } = SNAPSHOT;
     const port = await startServer((_req, res) => res.end(JSON.stringify(noInfra)));
@@ -159,6 +172,29 @@ describe('createControlClient', () => {
     expect(await createControlClient(port).query.status()).toEqual({
       ...noProxy,
       reverseProxy: null,
+    });
+  });
+
+  test.each([
+    ['missing', undefined],
+    ['unknown', 'later'],
+  ])(
+    'query.status() reads a %s sessionStartHooks as none: nothing to wait for',
+    async (_kind, value) => {
+      const port = await startServer((_req, res) => res.end(JSON.stringify({ ...SNAPSHOT, sessionStartHooks: value }))); // oxfmt-ignore
+      expect(await createControlClient(port).query.status()).toEqual({
+        ...SNAPSHOT,
+        sessionStartHooks: 'none',
+      });
+    },
+  );
+
+  test("query.status() reads a missing sessionError as none: an older instance's", async () => {
+    const { sessionError: _omitted, ...noError } = SNAPSHOT;
+    const port = await startServer((_req, res) => res.end(JSON.stringify(noError)));
+    expect(await createControlClient(port).query.status()).toEqual({
+      ...noError,
+      sessionError: null,
     });
   });
 

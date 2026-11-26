@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { buildForTests } from '../cli-spec/build';
+import { withCliEnv } from '../cli-spec/env';
 import { INJECTED_ENV_VAR } from '../env-base';
 import { runCommand } from '../spawn';
 
@@ -62,6 +63,9 @@ function oneOffEvents(): OneOffEvent[] {
     .map((line) => JSON.parse(line) as OneOffEvent & { type: string })
     .filter((line) => line.type === 'one-off-command');
 }
+
+// The SDK's functions start the CLI with this process's environment.
+withCliEnv();
 
 beforeAll(async () => {
   await buildForTests(buildDir);

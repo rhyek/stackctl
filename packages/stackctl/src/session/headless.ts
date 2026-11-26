@@ -80,7 +80,8 @@ function drain(stream: Output): Promise<void> {
 /**
  * Runs a session headless: starts it, prints its log as it goes and infra's progress lines, and
  * exits when it has shut down — 0 after a graceful shutdown, 1 after a second request or a failed
- * startup, which it prints and then shuts the session down for.
+ * startup, which it prints and then shuts the session down for: a failure while it starts, or one
+ * of the session's `afterStart` or `afterReady` once its services run.
  */
 export async function runHeadless(
   session: Session,
@@ -107,12 +108,15 @@ export async function runHeadless(
       reporter.onEvent(progress);
     }
   });
-  void session.start().then(() => {
+  // A failed startup, whenever it fails: a step of the start, or a hook once the services run.
+  const unsubscribeFailure = session.subscribe(() => {
     if (session.getSnapshot().phase === 'failed') {
       void session.shutdown('startup-failed');
     }
   });
+  void session.start();
   const code = await session.closed;
+  unsubscribeFailure();
   unsubscribe();
   printer.dispose();
   await drain(stdout);

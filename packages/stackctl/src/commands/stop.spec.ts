@@ -6,24 +6,28 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import { buildForTests } from '../cli-spec/build';
+import { cliEnv, withCliEnv } from '../cli-spec/env';
 import { HANDOFF_FORCE_KILL_MS } from '../shutdown-timing';
 import { type Running, runCommand } from '../spawn';
 import { deleteProfileState, runReset, runStop, stopSession, stoppedLine } from './stop';
 
 /**
- * Starts `command` as these specs run one: this process's environment under `env`, and its output
- * without the newline it printed last, to compare whole.
+ * Starts `command` as these specs run one: a person's environment (`cliEnv`) under `env`, and
+ * its output without the newline it printed last, to compare whole.
  */
 function start(
   command: string,
   args: string[],
   opts: { cwd?: string; env?: Record<string, string>; timeout?: number } = {},
 ): Running {
-  const child = runCommand(command, args, { ...opts, env: { ...process.env, ...opts.env } });
+  const child = runCommand(command, args, { ...opts, env: cliEnv(opts.env) });
   const trim = (text: string) => text.replace(/\r?\n$/, '');
   const done = child.done.then((end) => ({ ...end, stdout: trim(end.stdout), stderr: trim(end.stderr) })); // oxfmt-ignore
   return Object.assign(child, { done });
 }
+
+// `runStop` and `stopSession`, called in this process, read its own environment.
+withCliEnv();
 
 /**
  * `stackctl stop` and `stackctl reset`, against real sessions of the CLI compiled from the current

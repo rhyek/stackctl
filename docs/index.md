@@ -20,7 +20,7 @@ hero:
       link: https://github.com/rhyek/stackctl
 
 demo:
-  src: /casts/demo-1794688440.cast
+  src: /casts/demo-1795714237.cast
   alt: stackctl's terminal UI running the example monorepo
 
 config:
@@ -54,9 +54,13 @@ features:
     title: One typed config
     details: Describe every service once in stackctl.config.ts. Pick one and the services it needs come with it, started in order.
     link: /config/config-file
+  - icon: 🪝
+    title: Lifecycle hooks
+    details: Run your own steps when things start and stop. Generate code before a service starts, register a webhook once it is ready and remove it before it stops, or migrate the database as soon as it is up.
+    link: /config/lifecycle
   - icon: 🖥️
     title: A terminal UI you'll keep open
-    details: "One combined, filterable log, JSON logs formatted for reading, and each service's state and memory in the footer. Drive it with the keyboard or the mouse: click a service, a key hint or a script, and drag to copy."
+    details: "Every service's output in one log you can filter. Structured logs are made readable: a JSON line from pino or Go's slog shows as its level, its message and its fields, with no pretty-printer in your code."
     link: /guide/terminal-ui
   - icon: 🤖
     title: Built for coding agents
@@ -75,13 +79,9 @@ features:
     details: An optional dev reverse proxy gives each service its own host, over TLS too, with a status page while it starts.
     link: /config/reverse-proxy
   - icon: 🧪
-    title: The same stack in tests and CI
-    details: startStack() hands an e2e suite a healthy stack that ends with it. stackctl start --detach does the same for a CI job.
+    title: The same stack in tests, CI and scripts
+    details: startStack() hands an e2e suite a healthy stack that ends with it, and stackctl start --detach does the same for a CI job. exec(), run() and resolveEnv() give your own scripts what the CLI gives a shell, typed and with the same environment.
     link: /guide/testing
-  - icon: 📦
-    title: An SDK for scripts and tests
-    details: startStack(), exec(), run() and resolveEnv() give your own scripts and test suites what the CLI gives a shell, typed and with the same environment.
-    link: /reference/sdk
   - icon: 🛠️
     title: Any language
     details: A service is a dev script in package.json or a Makefile target, so Node, Go and Rust services run side by side.

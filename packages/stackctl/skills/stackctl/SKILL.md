@@ -1,6 +1,6 @@
 ---
 name: stackctl
-description: stackctl runs this repo's local dev stack - its dev services, their Docker Compose infrastructure (database, cache, mail catcher), `.env` loading, logs and test sessions. Use it before you start, stop, restart or check a dev server, app or service here ("is the backend up?", "the app is down"), find the URL or port a service is served at, run tests that call the services, read a service's logs or find out what restarted it, run a command or script with a service's environment, start, restart, reset or inspect the database or run `docker compose`, add or configure a service, or write a CI job that starts the stack.
+description: stackctl runs this repo's local dev stack - its dev services, their Docker Compose infrastructure (database, cache, mail catcher), `.env` loading, logs and test sessions. Use it before you start, stop, restart or check a dev server, app or service here ("is the backend up?", "the app is down"), find the URL or port a service is served at, run tests that call the services, read a service's logs or find out what restarted it, run a command or script with a service's environment, start, restart, reset or inspect the database or run `docker compose`, add or configure a service, add a step that runs when a service or the stack starts or stops (codegen, a migration, a webhook), or write a CI job that starts the stack.
 ---
 
 # stackctl

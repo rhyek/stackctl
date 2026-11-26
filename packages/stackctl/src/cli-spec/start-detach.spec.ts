@@ -169,7 +169,7 @@ describe('start --detach', () => {
   test('--wait-timeout 1 against a service never healthy: exit 1, and nothing left', async () => {
     const result = await detach(['-s', 'slow', '--wait-timeout', '1']);
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toMatch(/start --detach failed: .*(not healthy after 1s: slow|didn't come up within 1s)/); // oxfmt-ignore
+    expect(result.stderr).toMatch(/start --detach failed: .*(not ready after 1s: slow|didn't come up within 1s)/); // oxfmt-ignore
     expect(fs.existsSync(recordOf('development'))).toBe(false);
     expect((await stackctl(['--profile', 'development', 'stop'])).stdout).toBe('No development stackctl session is running.'); // oxfmt-ignore
   }, 90_000);

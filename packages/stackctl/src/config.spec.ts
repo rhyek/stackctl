@@ -350,6 +350,32 @@ describe('meta defaults', () => {
   });
 });
 
+describe('service lifecycle hooks', () => {
+  const config = (service: unknown) => () =>
+    defineConfig({ serviceRootDir: 'packages', services: { api: service } } as never);
+
+  test("keeps a service's lifecycle callbacks by identity", () => {
+    const beforeStart = async () => {};
+    const afterStop = () => {};
+    const resolved = defineConfig({
+      serviceRootDir: 'packages',
+      services: { api: { lifecycle: { beforeStart, afterStop } } },
+    });
+    expect(resolved.services.api.lifecycle?.beforeStart).toBe(beforeStart);
+    expect(resolved.services.api.lifecycle?.afterStop).toBe(afterStop);
+  });
+
+  test('rejects a service callback that is not a function', () => {
+    expect(config({ lifecycle: { beforeStart: 'x' } })).toThrow(
+      'services.api.lifecycle.beforeStart: Invalid type: Expected Function but received "x"',
+    );
+  });
+
+  test('rejects a service callback outside lifecycle', () => {
+    expect(config({ beforeStart: async () => {} })).toThrow(/services\.api.*beforeStart/);
+  });
+});
+
 describe('logs (per-package)', () => {
   test('passes a logs.formatter through unchanged (not a validating wrapper)', () => {
     const fmt = (line: string): string => `[fmt] ${line}`;
@@ -3101,10 +3127,34 @@ describe('infra', () => {
 
   test('rejects a callback that is not a function', () => {
     expect(() =>
-      withInfra({ 'docker-compose': { services: { db: { afterReady: 'migrate' } } } }),
+      withInfra({
+        'docker-compose': { services: { db: { lifecycle: { afterReady: 'migrate' } } } },
+      }),
     ).toThrow(
-      'infra.docker-compose.services.db.afterReady: Invalid type: Expected Function but received "migrate"',
+      'infra.docker-compose.services.db.lifecycle.afterReady: Invalid type: Expected Function but received "migrate"',
     );
+  });
+
+  test('rejects a callback outside `lifecycle`, or one the provider has no slot for', () => {
+    expect(() =>
+      withInfra({ 'docker-compose': { services: { db: { afterReady: async () => {} } } } }),
+    ).toThrow(/infra\.docker-compose\.services\.db.*afterReady/);
+    expect(() =>
+      withInfra({ 'docker-compose': { lifecycle: { onReady: async () => {} } } }),
+    ).toThrow(/infra\.docker-compose\.lifecycle.*onReady/);
+  });
+
+  test('rejects a session callback that is not a function, or one it has no slot for', () => {
+    const config = (session: unknown) => () =>
+      defineConfig({ workspaceDir: ws, serviceRootDir: 'packages', services: { web: {} }, session } as never); // oxfmt-ignore
+    expect(config({ lifecycle: { beforeStart: 'tidy' } })).toThrow(
+      'session.lifecycle.beforeStart: Invalid type: Expected Function but received "tidy"',
+    );
+    expect(config({ lifecycle: { beforeDestroy: async () => {} } })).toThrow(
+      /session\.lifecycle.*beforeDestroy/,
+    );
+    // Its start hooks have slots.
+    expect(config({ lifecycle: { afterStart: () => {}, afterReady: async () => {} } })).not.toThrow(); // oxfmt-ignore
   });
 
   test('rejects a non-positive readyTimeout', () => {
@@ -3126,12 +3176,26 @@ describe('infra', () => {
     );
   });
 
+  test("takes the project name from the configured compose file's `name:`", () => {
+    fs.mkdirSync(path.join(ws, 'infra'));
+    fs.writeFileSync(path.join(ws, 'infra', 'stack.yaml'), 'name: shop\nservices: {}\n');
+    const cfg = withInfra({ 'docker-compose': { file: 'infra/stack.yaml' } });
+    expect(cfg.infra?.['docker-compose']?.projectName).toBe('shop');
+  });
+
   test('keeps the callbacks by identity, and JSON drops them', () => {
     const afterReady = async () => {};
-    const cfg = withInfra({ 'docker-compose': { services: { db: { afterReady } } } });
-    expect(cfg.infra?.['docker-compose']?.services.db?.afterReady).toBe(afterReady);
+    const beforeStart = async () => {};
+    const cfg = withInfra({
+      'docker-compose': {
+        lifecycle: { beforeStart },
+        services: { db: { lifecycle: { afterReady } } },
+      },
+    });
+    expect(cfg.infra?.['docker-compose']?.services.db?.lifecycle?.afterReady).toBe(afterReady);
+    expect(cfg.infra?.['docker-compose']?.lifecycle?.beforeStart).toBe(beforeStart);
     expect(JSON.parse(JSON.stringify(cfg)).infra['docker-compose'].services).toEqual({
-      db: { enabled: true, tags: [] },
+      db: { lifecycle: {}, enabled: true, tags: [] },
     });
   });
 
@@ -4440,5 +4504,26 @@ describe('tags', () => {
         infra: { 'docker-compose': { services: { db: { tags: [''] } } } },
       }),
     ).toThrow(/infra\.docker-compose\.services\.db\.tags/);
+  });
+});
+
+describe('the resolved config', () => {
+  let ws: string;
+  beforeEach(() => {
+    ws = fs.mkdtempSync(path.join(os.tmpdir(), 'stackctl-resolved-'));
+  });
+  afterEach(() => fs.rmSync(ws, { recursive: true, force: true }));
+
+  test('carries the workspace root, absolute, and the session callbacks as written', () => {
+    const beforeStart = async () => {};
+    const config = defineConfig({
+      workspaceDir: ws,
+      serviceRootDir: 'packages',
+      services: { web: {} },
+      session: { lifecycle: { beforeStart } },
+    });
+    expect(config.workspaceDir).toBe(path.resolve(ws));
+    expect(config.session?.lifecycle?.beforeStart).toBe(beforeStart);
+    expect(JSON.parse(JSON.stringify(config)).workspaceDir).toBe(path.resolve(ws));
   });
 });

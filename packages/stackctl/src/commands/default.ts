@@ -47,11 +47,12 @@ export function resolveSelectedNamesOrExit(
 
 /**
  * Starts the session the options ask for; a session ends by exiting the process. A relative `-s`
- * path resolves against `where.targetBase`.
+ * path resolves against `where.targetBase`; `where.detached` says this is the session
+ * `start --detach` forked.
  */
 export async function runDefaultAction(
   opts: StartOptions,
-  where: { targetBase: string },
+  where: { targetBase: string; detached: boolean },
 ): Promise<void> {
   await loadConfigOrExit();
   // A config may declare none, to set the environment of `exec` and `run` alone.
@@ -97,5 +98,5 @@ export async function runDefaultAction(
 
   // Only now: the checks above have no use for what a session loads.
   const { runDevSession } = await import('./session');
-  await runDevSession(opts);
+  await runDevSession(opts, { detached: where.detached });
 }

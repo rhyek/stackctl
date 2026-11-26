@@ -124,10 +124,12 @@ describe.skipIf(!dockerAvailable())(
         checked: {
           enabled: true,
           tags: [],
-          afterReady: async ({ compose }) => {
-            // Only true if afterReady really waited for the healthcheck to pass.
-            await compose(['exec', '-T', 'checked', 'test', '-f', '/tmp/ready']);
-            sawReadyFile = true;
+          lifecycle: {
+            afterReady: async ({ compose }) => {
+              // Only true if afterReady really waited for the healthcheck to pass.
+              await compose(['exec', '-T', 'checked', 'test', '-f', '/tmp/ready']);
+              sawReadyFile = true;
+            },
           },
         },
       });
@@ -200,8 +202,10 @@ describe.skipIf(!dockerAvailable())(
       const note = {
         enabled: true,
         tags: [],
-        afterReady: (ctx: { service: { name: string }; fresh: boolean }) => {
-          (seen[ctx.service.name] ??= []).push(ctx.fresh);
+        lifecycle: {
+          afterReady: (ctx: { service: { name: string }; fresh: boolean }) => {
+            (seen[ctx.service.name] ??= []).push(ctx.fresh);
+          },
         },
       };
       return { seen, note };
@@ -362,6 +366,37 @@ describe.skipIf(!dockerAvailable())(
       expect((await infra.down({})).ok).toBe(true);
       expect(await containers(project)).toEqual([]);
       expect(await volumes(project)).toEqual([`${project}_checked-data`, `${project}_plain-data`]);
+    });
+
+    test("a service's stop and destroy hooks run around the real stop and removal", async () => {
+      const seen: string[] = [];
+      let project = '';
+      const state = async () => (await containers(project)).filter((c) => c.startsWith('plain=')).join() || 'no container'; // oxfmt-ignore
+      const volume = async () => ((await volumes(project)).includes(`${project}_plain-data`) ? 'volume' : 'no volume'); // oxfmt-ignore
+      const made = provider({
+        plain: {
+          enabled: true,
+          tags: [],
+          lifecycle: {
+            beforeStop: async ({ trigger }) =>
+              void seen.push(`beforeStop:${trigger} ${await state()}`),
+            afterStop: async ({ trigger }) =>
+              void seen.push(`afterStop:${trigger} ${await state()}`),
+            beforeDestroy: async ({ trigger }) => void seen.push(`beforeDestroy:${trigger} ${await volume()}`), // oxfmt-ignore
+            afterDestroy: async ({ trigger }) => void seen.push(`afterDestroy:${trigger} ${await volume()}`), // oxfmt-ignore
+          },
+        },
+      });
+      project = made.project;
+      const infra = made.provider;
+      expect((await infra.up({ services: ['plain'] })).ok).toBe(true);
+      expect((await infra.down({ services: ['plain'] })).ok).toBe(true);
+      // The hook before the stop sees the container up; the one after it, stopped or gone.
+      expect(seen[0]).toBe('beforeStop:stop plain=running');
+      expect(seen[1]).toMatch(/^afterStop:stop (plain=exited|no container)$/);
+      expect((await infra.up({ services: ['plain'] })).ok).toBe(true);
+      expect((await infra.destroy({ services: ['plain'] })).ok).toBe(true);
+      expect(seen.slice(2)).toEqual(['beforeDestroy:destroy volume', 'afterDestroy:destroy no volume']); // oxfmt-ignore
     });
 
     test('two project names — two profiles — run side by side from the same compose file', async () => {

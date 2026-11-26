@@ -599,6 +599,19 @@ describe('service actions', () => {
     );
   });
 
+  test('s on a service whose stop hook still runs stops it again, which abandons the hook; its hint reads stop', () => {
+    const ctx = context({
+      entries: ENTRIES.map((e) =>
+        e.name === 'api' ? ({ ...e, state: 'stopped', stopping: true } as Entry) : e,
+      ),
+    });
+    expect(run(focusOn('api'), [{ key: { type: 'stop-start' } }], { ctx }).effects).toEqual([
+      { type: 'stop', entry: { kind: 'app', name: 'api' } },
+    ]);
+    const s = hintsFor(keyContext(focusOn('api'), ctx)).find((h) => h.key === 's')!;
+    expect(s.label).toBe('stop');
+  });
+
   test('a dimmed hint dispatches its action, which does nothing', () => {
     const ctx = withState('api', 'stopped');
     const restart = hintsFor(keyContext(focusOn('api'), ctx)).find((h) => h.key === 'r')!;

@@ -30,15 +30,22 @@ export interface InfraStartOptions extends InfraSelection {
 
 /** What an `infra` function did. */
 export interface InfraResult {
-  /** Every service reached the state the command names. */
+  /** Every service reached the state the command names, and no lifecycle hook failed. */
   ok: boolean;
   /** One per service the command acted on. */
   results: Array<{
     /** The infra service's name. */
     service: string;
-    /** `ready` (start, restart, reset), `stopped`, `destroyed`, or `failed`. */
+    /**
+     * `ready` (start, restart, reset), `stopped`, `destroyed`, or `failed`. A reset that removed
+     * the service and stopped there, because an `afterDestroy` failed, leaves it `destroyed`.
+     */
     status: 'ready' | 'stopped' | 'destroyed' | 'failed';
-    /** Why it failed. */
+    /**
+     * Why it failed; with a status other than `failed`, the lifecycle hook that failed around a
+     * step that went ahead (a `beforeStop` that threw, the service stopped all the same), or why a
+     * reset destroyed the service and didn't start it.
+     */
     error?: string;
   }>;
 }

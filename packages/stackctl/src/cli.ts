@@ -375,7 +375,7 @@ program
       await (await import('./config-typecheck')).checkConfigTypes();
     }
     const { runDefaultAction } = await import('./commands/default');
-    await runDefaultAction(opts, { targetBase: targetBase() });
+    await runDefaultAction(opts, { targetBase: targetBase(), detached: detachedSession });
   });
 
 program

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import type { AnyServiceConfig } from '../config';
 import type { ControlClient, SessionStatus } from '../control-client';
 import type { FoundSession } from '../find-session';
@@ -11,6 +11,11 @@ import {
   runServiceCommand,
   serviceRefusal,
 } from './service';
+
+// Its spies are put back after each test, whatever config the suite runs under.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 /** The workspace root: each service in `apps/<name>`, with a dev script. */
 let dir: string;
@@ -80,20 +85,28 @@ describe('serviceRefusal', () => {
 function runningSession(
   services: SessionStatus['services'],
   refuse: string[] = [],
-): { found: FoundSession; calls: string[] } {
+  errors: SessionStatus['errors'] = {},
+  serviceHooks: SessionStatus['serviceHooks'] = {},
+  /** What the session reports once the command has acted; what it reported before unless given. */
+  after?: Partial<SessionStatus>,
+): { found: FoundSession & { kind: 'running' }; calls: string[] } {
   const calls: string[] = [];
   const act = (action: ServiceCommand) => async (name: string) => {
     calls.push(`${action} ${name}`);
     return !refuse.includes(name);
   };
+  const status = { services, errors, serviceHooks, logFile: '/logs/a.log' } as unknown as SessionStatus; // oxfmt-ignore
   const client = {
     command: { service: { start: act('start'), stop: act('stop'), restart: act('restart') } },
+    query: { status: async () => ({ ...status, ...after }) },
   } as unknown as ControlClient;
-  const status = { services, logFile: '/logs/a.log' } as SessionStatus;
   return { found: { kind: 'running', client, status, record: null }, calls };
 }
 
 type Wait = NonNullable<ServiceCommandContext['wait']>;
+
+const ADVICE =
+  'Run stackctl service restart -s api once it is fixed; a change to stackctl.config.ts needs a new session';
 
 function context(found: FoundSession, wait = vi.fn<Wait>(async () => undefined)) {
   const out: string[] = [];
@@ -148,7 +161,12 @@ describe('runServiceCommand', () => {
     expect(wait).toHaveBeenCalledWith(
       expect.anything(),
       ['web', 'api'],
-      expect.objectContaining({ timeoutMs: 5000, infra: false, logFile: '/logs/a.log' }),
+      expect.objectContaining({
+        timeoutMs: 5000,
+        infra: false,
+        session: false,
+        logFile: '/logs/a.log',
+      }),
     );
   });
 
@@ -183,6 +201,111 @@ describe('runServiceCommand', () => {
     expect(wait).toHaveBeenCalledWith(expect.anything(), ['web'], expect.anything());
   });
 
+  test.each([
+    { state: 'stopped', hook: 'beforeStop' },
+    { state: 'stopped', hook: 'afterStop' },
+    { state: 'restarting', hook: 'beforeStop' },
+  ] as const)(
+    'a stop of a $state service whose $hook still runs says it abandoned that hook and stopped it',
+    async ({ state, hook }) => {
+      const { found, calls } = runningSession({ api: state }, [], {}, { api: hook });
+      const { ctx, out } = context(found);
+      expect(await runServiceCommand('stop', { services: ['api'], tags: [] }, ctx)).toBe(0);
+      expect(calls).toEqual(['stop api']);
+      expect(out).toEqual([`stopped api: its ${hook} was still running, and was abandoned`]);
+    },
+  );
+
+  test('a stop the session gives no answer to says it stopped answering', async () => {
+    const { found } = runningSession({ api: 'running' }, ['api']);
+    const { ctx, out } = context(found);
+    expect(await runServiceCommand('stop', { services: ['api'], tags: [] }, ctx)).toBe(1);
+    expect(out).toEqual([
+      "error: couldn't stop api: the session stopped answering; it may be shutting down",
+    ]);
+  });
+
+  test('a stop whose hook is slow keeps waiting, names the hook and how to abandon it once, and succeeds when the stop is done', async () => {
+    const { found } = runningSession({ api: 'running' }, [], {}, {}, { serviceHooks: { api: 'beforeStop' } }); // oxfmt-ignore
+    let finish!: (ok: boolean) => void;
+    found.client.command.service.stop = () => new Promise<boolean>((resolve) => (finish = resolve));
+    const { ctx, out } = context(found);
+    const running = runServiceCommand('stop', { services: ['api'], tags: [] }, { ...ctx, pollMs: 2 }); // oxfmt-ignore
+    const told =
+      "api's beforeStop is still running: the stop goes on once it has finished. " +
+      'To abandon the hook, stop the service again: stackctl service stop -s api';
+    await vi.waitFor(() => expect(out).toEqual([told]));
+    // Several more polls: said once.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    finish(true);
+    expect(await running).toBe(0);
+    expect(out).toEqual([told, 'stopped api']);
+  });
+
+  test('a stop is given up on only once the session has stopped answering its status too', async () => {
+    const { found } = runningSession({ api: 'running' });
+    found.client.command.service.stop = (_name, opts) =>
+      new Promise<boolean>((resolve) => opts!.signal!.addEventListener('abort', () => resolve(false))); // oxfmt-ignore
+    let asked = 0;
+    found.client.query.status = async () => (asked++, null);
+    const { ctx, out } = context(found);
+    expect(await runServiceCommand('stop', { services: ['api'], tags: [] }, { ...ctx, pollMs: 1 })).toBe(1); // oxfmt-ignore
+    expect(asked).toBe(5);
+    expect(out).toEqual([
+      "error: couldn't stop api: the session stopped answering; it may be shutting down",
+    ]);
+  });
+
+  test("a start whose beforeStart failed says it failed to start, with the hook's error, and is not waited on", async () => {
+    const { found } = runningSession(
+      { api: 'stopped' },
+      [],
+      {},
+      {},
+      {
+        services: { api: 'stopped' },
+        errors: { api: 'beforeStart failed: boom' },
+      },
+    );
+    let results: unknown;
+    const { ctx, out, wait } = context(found);
+    ctx.onResults = (r) => (results = r);
+    expect(await runServiceCommand('start', { services: ['api'], tags: [] }, ctx)).toBe(1);
+    const why = `api failed to start: beforeStart failed: boom. ${ADVICE}.`;
+    expect(out).toEqual([`error: ${why}`]);
+    expect(wait).not.toHaveBeenCalled();
+    expect(results).toEqual([{ service: 'api', status: 'failed', error: why }]);
+  });
+
+  test('--wait-timeout bounds the whole command: a start still queued when it is up fails then, naming the hook it waits for', async () => {
+    const { found } = runningSession({ api: 'stopped' }, [], {}, { api: 'beforeStop' });
+    // Queued behind the stop hook: no answer until the caller stops waiting.
+    found.client.command.service.start = (_name, opts) =>
+      new Promise<boolean>((resolve) => opts!.signal!.addEventListener('abort', () => resolve(false))); // oxfmt-ignore
+    let results: unknown;
+    const { ctx, out, wait } = context(found);
+    ctx.onResults = (r) => (results = r);
+    const began = Date.now();
+    expect(await runServiceCommand('start', { services: ['api'], tags: [], waitTimeout: 0.05 }, ctx)).toBe(1); // oxfmt-ignore
+    expect(Date.now() - began).toBeLessThan(1_000);
+    const why = 'not ready after 0.05s: api (its beforeStop is still running)';
+    expect(out).toEqual(["waiting for api's beforeStop to finish", `error: stackctl: ${why}`]);
+    // The result carries the reason as a wait's does: without the command's own prefix.
+    expect(results).toEqual([{ service: 'api', status: 'failed', error: why }]);
+    expect(wait).not.toHaveBeenCalled();
+  });
+
+  test('the wait for ready gets what is left of --wait-timeout once the start has answered, not the whole of it again', async () => {
+    const { found } = runningSession({ api: 'stopped' });
+    found.client.command.service.start = () =>
+      new Promise<boolean>((resolve) => setTimeout(resolve, 300, true));
+    const { ctx, wait } = context(found);
+    const began = Date.now();
+    expect(await runServiceCommand('start', { services: ['api'], tags: [], waitTimeout: 5 }, ctx)).toBe(0); // oxfmt-ignore
+    // The deadline was set when the command began, not once the start had answered.
+    expect(wait.mock.calls[0]![2].deadline).toBeLessThanOrEqual(began + 5_000 + 150);
+  });
+
   test('a start or restart of a service waiting for its deps fails with that reason', async () => {
     for (const action of ['start', 'restart'] as const) {
       const { found } = runningSession({ api: 'running', web: 'waiting' }, ['web']);
@@ -198,10 +321,79 @@ describe('runServiceCommand', () => {
     const { found } = runningSession({ api: 'stopped' });
     const { ctx, out } = context(
       found,
-      vi.fn<Wait>(async () => 'not healthy after 5s: api'),
+      vi.fn<Wait>(async () => 'not ready after 5s: api'),
     );
     expect(await runServiceCommand('start', { services: ['api'], tags: [] }, ctx)).toBe(1);
-    expect(out.at(-1)).toBe('error: stackctl: not healthy after 5s: api');
+    expect(out.at(-1)).toBe('error: stackctl: not ready after 5s: api');
+  });
+
+  test("service start of a service failed by its hook fails at once, with the hook's message", async () => {
+    const { found, calls } = runningSession({ api: 'failed' }, [], {
+      api: 'afterReady failed: boom',
+    });
+    let results: unknown;
+    const { ctx, out, wait } = context(found);
+    ctx.onResults = (r) => (results = r);
+    expect(await runServiceCommand('start', { services: ['api'], tags: [] }, ctx)).toBe(1);
+    expect(out).toEqual([
+      'error: api is running, but failed: afterReady failed: boom. Run stackctl service restart -s api once it is fixed; a change to stackctl.config.ts needs a new session.',
+    ]);
+    expect(calls).toEqual([]);
+    expect(wait).not.toHaveBeenCalled();
+    expect(results).toEqual([
+      {
+        service: 'api',
+        status: 'failed',
+        error:
+          'api is running, but failed: afterReady failed: boom. Run stackctl service restart -s api once it is fixed; a change to stackctl.config.ts needs a new session.',
+      },
+    ]);
+  });
+
+  /** A session whose `/events` sends `snapshot`, then nothing until the waiter lets go. */
+  const eventsSending = (snapshot: Record<string, unknown>) =>
+    async function* (opts: { signal?: AbortSignal } = {}) {
+      yield { type: 'snapshot', infra: null, ...snapshot };
+      await new Promise<void>((resolve) =>
+        opts.signal?.addEventListener('abort', () => resolve(), { once: true }),
+      );
+    };
+
+  test('service start of a service that waits for one failed by its hook fails at once, naming both', async () => {
+    // `web` isn't in the session yet: the start adds it, and it waits for `api`, which failed.
+    const { found, calls } = runningSession({ api: 'failed' }, [], {
+      api: 'afterReady failed: boom',
+    });
+    const blocked = 'waiting for api, which failed: afterReady failed: boom. Run stackctl service restart -s api once it is fixed; a change to stackctl.config.ts needs a new session'; // oxfmt-ignore
+    if (found.kind === 'running') {
+      Object.assign(found.client, {
+        events: eventsSending({
+          services: { api: 'failed', web: 'waiting' },
+          ready: { api: false, web: false },
+          errors: { api: 'afterReady failed: boom', web: blocked },
+        }),
+        query: { status: async () => ({ ready: { api: false, web: false } }) },
+      });
+    }
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ctx, out } = context(found);
+    ctx.wait = undefined;
+    const started = Date.now();
+    expect(await runServiceCommand('start', { services: ['web'], tags: [] }, ctx)).toBe(1);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(calls).toEqual(['start web']);
+    expect(out).toEqual(['started web', `error: stackctl: web is ${blocked}. See /logs/a.log`]);
+  });
+
+  test('service start of a service already waiting for one failed by its hook says so', async () => {
+    const blocked = 'waiting for api, which failed: afterReady failed: boom. Run stackctl service restart -s api once it is fixed; a change to stackctl.config.ts needs a new session'; // oxfmt-ignore
+    const { found } = runningSession({ api: 'failed', web: 'waiting' }, ['web'], {
+      api: 'afterReady failed: boom',
+      web: blocked,
+    });
+    const { ctx, out } = context(found);
+    expect(await runServiceCommand('start', { services: ['web'], tags: [] }, ctx)).toBe(1);
+    expect(out).toEqual([`error: couldn't start web: it is ${blocked}`]);
   });
 
   test('a verdict fails only the services that are not ready', async () => {
@@ -214,7 +406,7 @@ describe('runServiceCommand', () => {
     let results: unknown;
     const { ctx } = context(
       found,
-      vi.fn<Wait>(async () => 'not healthy after 5s: worker'),
+      vi.fn<Wait>(async () => 'not ready after 5s: worker'),
     );
     ctx.onResults = (r) => (results = r);
     expect(await runServiceCommand('start', { services: ['api', 'worker'], tags: [] }, ctx)).toBe(
@@ -222,7 +414,7 @@ describe('runServiceCommand', () => {
     );
     expect(results).toEqual([
       { service: 'api', status: 'running' },
-      { service: 'worker', status: 'failed', error: 'not healthy after 5s: worker' },
+      { service: 'worker', status: 'failed', error: 'not ready after 5s: worker' },
     ]);
   });
 

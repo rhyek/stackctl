@@ -3,11 +3,17 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, afterEach, test, vi } from 'vitest';
-import { createControlClient, type SessionEvent } from './control-client';
+import { createControlClient, type SessionEvent, type SessionStartHooks } from './control-client';
 import { startControlServer as startServer, type ControlManager } from './control-server';
 import { EventLog, type InfraCommandEntry, cliEventLog } from './event-log';
 import { sessionId } from './running';
 import { sessionEventsPath } from './session-files';
+import { waitUntilHealthy } from './stack';
+
+// Its spies are put back after each test, whatever config the suite runs under.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 let server: Awaited<ReturnType<typeof startServer>> | null = null;
 let root: string | null = null;
@@ -51,6 +57,10 @@ function fakeManager(overrides: Partial<ControlManager> = {}): ControlManager {
   return {
     serviceStatuses: () => ({}),
     getAllReadiness: () => ({}),
+    serviceErrors: () => ({}),
+    serviceHooks: () => ({}),
+    sessionStartHooks: () => 'none',
+    sessionError: () => null,
     getConfig: () => null,
     getLogFile: () => '/manager/current.log',
     runPackage: () => Promise.resolve('accepted'),
@@ -142,8 +152,12 @@ describe('control-server', () => {
       logFile: '/ws/logs/1.log',
       services: null,
       ready: null,
+      errors: null,
+      serviceHooks: null,
       infra: null,
       sessionReady: false,
+      sessionError: null,
+      sessionStartHooks: 'none',
       config: null,
       reverseProxy: null,
     });
@@ -210,11 +224,211 @@ describe('control-server', () => {
       logFile: '/ws/logs/2-rotated.log',
       services: { web: 'running' },
       ready: { web: true },
+      errors: {},
+      serviceHooks: {},
       infra: null,
       sessionReady: true,
+      sessionError: null,
+      sessionStartHooks: 'none',
       config: { packages: [] },
       reverseProxy: null,
     });
+  });
+
+  test('the status says which stop hook a stop of a service still runs', async () => {
+    server = await startControlServer({ quitHandler: () => {}, port: 0, configPath: '/ws/c.ts' });
+    server.bindSession(
+      fakeManager({
+        serviceStatuses: () => ({ api: 'stopped', web: 'running' }),
+        serviceHooks: () => ({ api: 'beforeStop' }),
+      }),
+    );
+    await settled();
+    const status = (await createControlClient(server.port).query.status())!;
+    expect(status.serviceHooks).toEqual({ api: 'beforeStop' });
+  });
+
+  test('a failed service is reported as failed, never ready, and the session is not ready', async () => {
+    server = await startControlServer({ quitHandler: () => {}, port: 0, configPath: '/ws/c.ts' });
+    const listeners = new Set<() => void>();
+    let statuses: Record<string, string> = { web: 'running', api: 'running' };
+    let errors: Record<string, string> = {};
+    server.bindSession(
+      fakeManager({
+        serviceStatuses: () => statuses,
+        // `api`'s healthcheck passes; what makes it unready is its failed hook, as the session's
+        // readiness reports it.
+        getAllReadiness: () => ({ web: true, api: statuses.api === 'running' }),
+        serviceErrors: () => errors,
+        subscribeState: (fn) => {
+          listeners.add(fn);
+          return () => listeners.delete(fn);
+        },
+      }),
+    );
+    await settled();
+    const client = createControlClient(server.port);
+    expect((await client.query.status())!.sessionReady).toBe(true);
+
+    statuses = { web: 'running', api: 'failed' };
+    errors = { api: 'afterReady failed: boom' };
+    for (const listener of listeners) {
+      listener();
+    }
+    await settled();
+    const status = (await client.query.status())!;
+    expect(status.services).toEqual({ web: 'running', api: 'failed' });
+    expect(status.ready).toEqual({ web: true, api: false });
+    expect(status.errors).toEqual({ api: 'afterReady failed: boom' });
+    expect(status.sessionReady).toBe(false);
+    expect(eventLines().slice(-2)).toMatchObject([
+      { type: 'service-state', service: 'api', status: 'failed', ready: false, error: 'afterReady failed: boom', previousStatus: 'running', previousReady: true }, // oxfmt-ignore
+      { type: 'session-state', ready: false },
+    ]);
+    // The snapshot a new client starts from says why, too.
+    const events = client.events();
+    const { value: snapshot } = await events.next();
+    expect(snapshot).toMatchObject({
+      type: 'snapshot',
+      errors: { api: 'afterReady failed: boom' },
+    });
+    await events.return(undefined);
+  });
+
+  test("a waiting service's line is written when only its reason changes, and a wait already following it fails at once with that reason", async () => {
+    server = await startControlServer({ quitHandler: () => {}, port: 0, configPath: '/ws/c.ts' });
+    const listeners = new Set<() => void>();
+    let statuses: Record<string, string> = { api: 'running', web: 'waiting' };
+    let errors: Record<string, string> = {};
+    server.bindSession(
+      fakeManager({
+        serviceStatuses: () => statuses,
+        getAllReadiness: () => ({ api: false, web: false }),
+        serviceErrors: () => errors,
+        subscribeState: (fn) => {
+          listeners.add(fn);
+          return () => listeners.delete(fn);
+        },
+      }),
+    );
+    await settled();
+    // A wait on `web` alone, begun while `api`, which it waits for, has not failed yet.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const waiting = waitUntilHealthy(createControlClient(server.port), ['web'], { deadline: Date.now() + 60_000, timeoutMs: 60_000, logFile: '/s/logs.txt', infra: false, session: false }); // oxfmt-ignore
+    let verdict: string | undefined | null = null;
+    void waiting.then((v) => (verdict = v));
+    await vi.waitFor(() => expect(eventLines().some((l) => l.service === 'web')).toBe(true));
+    const before = eventLines().length;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(verdict).toBeNull();
+
+    // `api`'s hook fails: `web` stays `waiting` and unready, and only its reason is new.
+    const blocked = 'waiting for api, which failed: afterReady failed: boom. Run stackctl service restart -s api once it is fixed; a change to stackctl.config.ts needs a new session'; // oxfmt-ignore
+    statuses = { api: 'failed', web: 'waiting' };
+    errors = { api: 'afterReady failed: boom', web: blocked };
+    listeners.forEach((listener) => listener());
+    await settled();
+    expect(eventLines().slice(before)).toMatchObject([
+      { type: 'service-state', service: 'api', status: 'failed', error: 'afterReady failed: boom', previousStatus: 'running' }, // oxfmt-ignore
+      { type: 'service-state', service: 'web', status: 'waiting', ready: false, error: blocked, previousStatus: 'waiting', previousReady: false }, // oxfmt-ignore
+    ]);
+    expect(await waiting).toBe(`web is ${blocked}. See /s/logs.txt`);
+  });
+
+  /** A bound session whose every service is ready, its own start hooks as `hooks` says. */
+  async function sessionWithHooks(hooks: { state: SessionStartHooks; error: string | null }) {
+    server = await startControlServer({ quitHandler: () => {}, port: 0, configPath: '/ws/c.ts' });
+    const listeners = new Set<() => void>();
+    server.bindSession(
+      fakeManager({
+        serviceStatuses: () => ({ api: 'running' }),
+        getAllReadiness: () => ({ api: true }),
+        sessionStartHooks: () => hooks.state,
+        sessionError: () => hooks.error,
+        subscribeState: (fn) => {
+          listeners.add(fn);
+          return () => listeners.delete(fn);
+        },
+      }),
+    );
+    await settled();
+    return {
+      client: createControlClient(server.port),
+      change: async () => {
+        listeners.forEach((listener) => listener());
+        await settled();
+      },
+    };
+  }
+
+  test("the session is ready only once its own start hooks are done, every service's readiness aside", async () => {
+    const hooks = { state: 'afterReady' as SessionStartHooks, error: null };
+    const { client, change } = await sessionWithHooks(hooks);
+    expect(await client.query.status()).toMatchObject({ sessionReady: false, sessionStartHooks: 'afterReady' }); // oxfmt-ignore
+    hooks.state = 'done';
+    await change();
+    expect(await client.query.status()).toMatchObject({ sessionReady: true, sessionStartHooks: 'done', sessionError: null }); // oxfmt-ignore
+    expect(eventLines().at(-1)).toMatchObject({
+      type: 'session-state',
+      ready: true,
+      hooks: 'done',
+    });
+    expect(eventLines().at(-1)).not.toHaveProperty('error');
+  });
+
+  test('a session with no start hook is ready as soon as everything it runs is', async () => {
+    const { client } = await sessionWithHooks({ state: 'none', error: null });
+    expect(await client.query.status()).toMatchObject({ sessionReady: true, sessionStartHooks: 'none' }); // oxfmt-ignore
+  });
+
+  test("the session's start hooks moving on are written on a session-state line, though ready stays false", async () => {
+    const hooks = { state: 'afterStart' as SessionStartHooks, error: null };
+    const { change } = await sessionWithHooks(hooks);
+    hooks.state = 'afterReady';
+    await change();
+    expect(eventLines().at(-1)).toEqual(expect.objectContaining({ type: 'session-state', ready: false, hooks: 'afterReady' })); // oxfmt-ignore
+  });
+
+  test("a session hook's failure is in the status and on a session-state line, though the session was never ready", async () => {
+    const hooks = { state: 'afterReady' as SessionStartHooks, error: null as string | null };
+    const { client, change } = await sessionWithHooks(hooks);
+    hooks.state = 'failed';
+    hooks.error = 'session afterReady failed: boom';
+    await change();
+    expect(await client.query.status()).toMatchObject({ sessionReady: false, sessionStartHooks: 'failed', sessionError: 'session afterReady failed: boom' }); // oxfmt-ignore
+    expect(eventLines().at(-1)).toMatchObject({ type: 'session-state', ready: false, hooks: 'failed', error: 'session afterReady failed: boom' }); // oxfmt-ignore
+    // A client that starts after it reads it in the snapshot.
+    const events = client.events();
+    expect((await events.next()).value).toMatchObject({ type: 'snapshot', sessionStartHooks: 'failed', sessionError: 'session afterReady failed: boom' }); // oxfmt-ignore
+    await events.return(undefined);
+  });
+
+  test("a session hook's failure is written before the services' lines that change with it, as a shutdown stops them", async () => {
+    server = await startControlServer({ quitHandler: () => {}, port: 0, configPath: '/ws/c.ts' });
+    const listeners = new Set<() => void>();
+    let status = 'running';
+    let sessionError: string | null = null;
+    server.bindSession(
+      fakeManager({
+        serviceStatuses: () => ({ api: status }),
+        getAllReadiness: () => ({ api: status === 'running' }),
+        sessionStartHooks: () => 'afterReady',
+        sessionError: () => sessionError,
+        subscribeState: (fn) => {
+          listeners.add(fn);
+          return () => listeners.delete(fn);
+        },
+      }),
+    );
+    await settled();
+    sessionError = 'session afterReady failed: boom';
+    status = 'stopped';
+    listeners.forEach((listener) => listener());
+    await settled();
+    expect(eventLines().slice(-2)).toMatchObject([
+      { type: 'session-state', ready: false, error: 'session afterReady failed: boom' },
+      { type: 'service-state', service: 'api', status: 'stopped' },
+    ]);
   });
 
   test('trailing slash on /query/status still resolves', async () => {

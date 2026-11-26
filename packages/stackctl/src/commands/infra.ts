@@ -17,6 +17,7 @@ import {
   InfraError,
   type InfraRunAction,
   type InfraRunSummary,
+  type InfraServiceResult,
 } from '../infra/types';
 import { writeSdkResult } from '../sdk-result';
 import type { InfraResult } from '../sdk/infra';
@@ -71,8 +72,11 @@ export type InfraCommandManager = Pick<InfraManager, 'up' | 'down' | 'destroy'>;
 /**
  * Runs a lifecycle command on `services` (none: every enabled one; for `destroy`, the whole
  * project) and resolves with its exit code: `0` when every service reached the state the command
- * names, else `1`. `restart` is `stop` then `start`: the containers are recreated, picking up a
- * changed compose file, and their named volumes kept. A failed stop starts nothing.
+ * names and no hook failed, else `1`. `restart` is `stop` then `start`, one run whose hooks share
+ * one `data` and see the trigger `restart`: the containers are recreated, picking up a changed
+ * compose file, and their named volumes kept. A stop that failed starts nothing; a stop whose
+ * hook failed (the services stopped all the same) goes on to the start, and the command exits 1
+ * at the end with the hook's error in each service's result.
  * `opts.waitTimeoutS` is how long `start`, `restart` and `reset` wait for the services to be ready.
  */
 export async function runInfraCommand(
@@ -82,10 +86,13 @@ export async function runInfraCommand(
   reporter: InfraReporter,
   opts: { waitTimeoutS?: number } = {},
 ): Promise<number> {
-  const run = { services, onEvent: reporter.onEvent };
+  // One `data` for the whole command: a restart's stop and start share it.
+  const run = { services, onEvent: reporter.onEvent, data: {} };
+  let stopped: InfraRunSummary | undefined;
   if (command === 'stop' || command === 'restart') {
-    const stopped = await manager.down(run);
-    if (command === 'stop' || !stopped.ok) {
+    stopped = await manager.down({ ...run, trigger: command });
+    const stopFailed = stopped.services.some((s) => !s.ok && !s.hookFailed);
+    if (command === 'stop' || stopFailed) {
       reporter.finish(stopped, 'down');
       return stopped.ok ? 0 : 1;
     }
@@ -95,13 +102,34 @@ export async function runInfraCommand(
     reporter.finish(summary, 'destroy');
     return summary.ok ? 0 : 1;
   }
-  const summary = await manager.up({
+  const started = await manager.up({
     ...run,
     trigger: command,
     ...(opts.waitTimeoutS === undefined ? {} : { readyTimeoutMs: opts.waitTimeoutS * 1000 }),
   });
+  const summary = stopped ? withStopHookErrors(started, stopped) : started;
   reporter.finish(summary, 'up');
   return summary.ok ? 0 : 1;
+}
+
+/**
+ * A restart's start, with what failed in its stop's hooks: a service that came up is still
+ * `hookFailed` with the stop hook's error; one that didn't gets that error after its own.
+ */
+function withStopHookErrors(started: InfraRunSummary, stopped: InfraRunSummary): InfraRunSummary {
+  const hookErrors = new Map(
+    stopped.services.filter((s) => s.hookFailed).map((s) => [s.service, s.error ?? '']),
+  );
+  const services = started.services.map((result) => {
+    const hookError = hookErrors.get(result.service);
+    if (hookError === undefined) {
+      return result;
+    }
+    return result.ok
+      ? { service: result.service, ok: false, error: hookError, hookFailed: true as const }
+      : { ...result, error: [result.error, hookError].filter(Boolean).join('\n') };
+  });
+  return { ok: services.every((s) => s.ok), services };
 }
 
 /**
@@ -137,7 +165,9 @@ export function infraSelection(
 
 /**
  * What a run did to each service, as the SDK's `infra.*` resolves it: a service that made it is in
- * the state the run's action names. For a restart whose stop failed, that run is the stop.
+ * the state the run's action names, and so is one that made it but whose hook failed, with the
+ * hook's error. One the run left elsewhere is in that state (`destroyed`, for a reset that stopped
+ * after its destroy), with why. For a restart whose stop failed, that run is the stop.
  */
 export function infraResults(
   summary: InfraRunSummary,
@@ -145,9 +175,35 @@ export function infraResults(
 ): InfraResult['results'] {
   return summary.services.map((s) => ({
     service: s.service,
-    status: s.ok ? INFRA_DONE_STATUS[action] : 'failed',
+    status: s.reached ?? (s.ok || s.hookFailed ? INFRA_DONE_STATUS[action] : 'failed'),
     ...(s.error === undefined ? {} : { error: s.error }),
   }));
+}
+
+/**
+ * The results an `infra-command` line ends with, from the run's summary: each service's state;
+ * for one whose own hook failed around a step that went ahead (`hookFailed`), the hook's error,
+ * in `hookErrors`; and for one a reset left destroyed and didn't start because another service's
+ * `afterDestroy` failed, why, in `notStarted`.
+ */
+export function infraEntryResults(
+  summary: InfraRunSummary,
+  action: InfraRunAction,
+): Pick<
+  Extract<InfraCommandEntry, { phase: 'end' }>,
+  'services' | 'results' | 'hookErrors' | 'notStarted'
+> {
+  const results = infraResults(summary, action);
+  const errorsOf = (keep: (s: InfraServiceResult) => boolean) =>
+    Object.fromEntries(summary.services.filter(keep).map((s) => [s.service, s.error ?? '']));
+  const hookErrors = errorsOf((s) => s.hookFailed === true);
+  const notStarted = errorsOf((s) => s.reached !== undefined && !s.hookFailed);
+  return {
+    services: results.map((r) => r.service),
+    results: Object.fromEntries(results.map((r) => [r.service, r.status])),
+    ...(Object.keys(hookErrors).length > 0 ? { hookErrors } : {}),
+    ...(Object.keys(notStarted).length > 0 ? { notStarted } : {}),
+  };
 }
 
 /**
@@ -192,11 +248,13 @@ export async function runInfra(
   const plain = createInfraReporter({ profile });
   // A refusal ran nothing, and has no results.
   let results: InfraResult['results'] | undefined;
+  let entryResults: ReturnType<typeof infraEntryResults> | undefined;
   let error: string | undefined;
   const reporter: InfraReporter = {
     ...plain,
     finish: (summary, action) => {
       results = infraResults(summary, action);
+      entryResults = infraEntryResults(summary, action);
       plain.finish(summary, action);
     },
   };
@@ -206,12 +264,7 @@ export async function runInfra(
   );
   entry.end({
     ok: code === 0,
-    ...(results
-      ? {
-          services: results.map((r) => r.service),
-          results: Object.fromEntries(results.map((r) => [r.service, r.status])),
-        }
-      : {}),
+    ...entryResults,
     ...(command === 'destroy' && services.length === 0 ? { everything: true } : {}),
     ...(error !== undefined ? { error } : code !== 0 && !results ? { error: `exited with code ${String(code)}` } : {}), // oxfmt-ignore
   });

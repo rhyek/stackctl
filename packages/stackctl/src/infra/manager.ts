@@ -6,6 +6,7 @@ import {
   envCandidatePaths,
   EnvFileSnapshot,
   envKeysFile,
+  type Envs,
   workspaceEnvLayer,
 } from '../env';
 import { connectSessionControl } from '../find-session';
@@ -18,7 +19,13 @@ import {
   type SpawnInherit,
   type Stream,
 } from '../spawn';
-import type { InfraProvider, InfraRunRequest, InfraWatch, ProviderRuntime } from './provider';
+import type {
+  InfraProvider,
+  InfraRunRequest,
+  InfraStopRequest,
+  InfraWatch,
+  ProviderRuntime,
+} from './provider';
 import { DockerComposeProvider } from './providers/docker-compose';
 import {
   InfraError,
@@ -34,6 +41,41 @@ export interface InfraManagerDeps {
   stream?: Stream;
   /** Finds the running session for a callback's `control`; defaults to {@link connectSessionControl}. */
   connectControl?: () => Promise<ControlClient | undefined>;
+  /** Kills every command the callbacks are running once it aborts: a session's hard kill. */
+  signal?: AbortSignal;
+  /**
+   * Asks every command the callbacks are running to end once it aborts (SIGTERM, then a kill if
+   * one still runs a moment later): a session's shutdown beginning.
+   */
+  abandon?: AbortSignal;
+}
+
+/**
+ * The environment a `lifecycle` callback gets as `envs`: what a config callback at the workspace
+ * root sees — the config's own variables and the profile's `.env` files, and the ambient
+ * environment, which wins over both except where `env.override` says. Reads the files off this
+ * thread (see {@link EnvFileSnapshot} for why).
+ */
+export async function workspaceCallbackEnvs(
+  config: Config<string>,
+  workspaceDir: string,
+): Promise<Envs> {
+  const envFiles = new EnvFileSnapshot();
+  await envFiles.refresh([
+    ...envCandidatePaths({ resolvedWorkspaceDir: workspaceDir, files: config.envFiles }),
+    ...(config.envDecrypt ? [envKeysFile(workspaceDir)] : []),
+  ]);
+  return Object.assign(
+    baseEnvs(workspaceDir),
+    workspaceEnvLayer({
+      resolvedWorkspaceDir: workspaceDir,
+      files: config.envFiles,
+      override: config.envOverride,
+      decrypt: config.envDecrypt,
+      vars: config.envVars,
+      read: envFiles.read,
+    }),
+  );
 }
 
 /**
@@ -56,33 +98,17 @@ export class InfraManager {
       return null;
     }
     const workspaceDir = getWorkspaceDir();
-    const envFiles = new EnvFileSnapshot();
-    await envFiles.refresh([
-      ...envCandidatePaths({ resolvedWorkspaceDir: workspaceDir, files: config.envFiles }),
-      ...(config.envDecrypt ? [envKeysFile(workspaceDir)] : []),
-    ]);
     const runtime: ProviderRuntime = {
       workspaceDir,
       profile: config.profile,
       config,
-      // The same environment a config callback at the workspace root sees: the config's own variables
-      // and the profile's `.env` files, and the ambient environment, which wins over both except
-      // where `env.override` says.
-      envs: Object.assign(
-        baseEnvs(workspaceDir),
-        workspaceEnvLayer({
-          resolvedWorkspaceDir: workspaceDir,
-          files: config.envFiles,
-          override: config.envOverride,
-          decrypt: config.envDecrypt,
-          vars: config.envVars,
-          read: envFiles.read,
-        }),
-      ),
+      envs: await workspaceCallbackEnvs(config, workspaceDir),
       tokens: getConfigTokens(),
       exec: deps.exec ?? execLines,
       spawnInherit: deps.spawnInherit ?? spawnInherit,
       stream: deps.stream ?? streamLines,
+      signal: deps.signal,
+      abandon: deps.abandon,
       // The session a callback's `control` drives: this config's, in this profile — the same
       // config file a session started here records, wherever the command was run from.
       connectControl:
@@ -118,8 +144,11 @@ export class InfraManager {
     );
   }
 
-  /** Stops services, keeping their named volumes. See {@link InfraProvider.down}. */
-  async down(req: Omit<InfraRunRequest, 'trigger'> = {}): Promise<InfraRunSummary> {
+  /**
+   * Stops services, keeping their named volumes, with their stop hooks around it. See
+   * {@link InfraProvider.down}.
+   */
+  async down(req: InfraStopRequest = {}): Promise<InfraRunSummary> {
     return this.acrossProviders(req.services, (provider, services) =>
       provider.down({ ...req, services }),
     );

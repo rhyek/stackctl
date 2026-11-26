@@ -7,7 +7,7 @@ during development. You describe your services once, in a small typed config fil
 starts the ones you pick and the services they need, brings up their infrastructure, loads
 their environment, and shows it all in one place.
 
-![stackctl's terminal UI running the example monorepo](https://raw.githubusercontent.com/rhyek/stackctl/main/docs/public/demo-1794688431.gif)
+![stackctl's terminal UI running the example monorepo](https://raw.githubusercontent.com/rhyek/stackctl/main/docs/public/demo-1795714228.gif)
 
 **Documentation: [stackctl.dev](https://stackctl.dev)**
 
@@ -15,6 +15,9 @@ their environment, and shows it all in one place.
 
 - **One typed config.** `stackctl.config.ts` describes every service. Pick one and the
   services it needs come with it, started in order and held until they are healthy.
+- **Lifecycle hooks.** Steps of your own before a service starts, once it is ready and before it
+  stops, with the same hooks on the session, each service and the infra: codegen, migrations, a
+  webhook to register and remove.
 - **A terminal UI.** One combined, filterable log, with each service's state and memory in
   the footer. Drive it with the keyboard or the mouse.
 - **Readable JSON logs.** Log JSON in every environment: each line is shown as a colored
@@ -79,6 +82,7 @@ pnpm stackctl infra start     # start the infra, then exit
 
 - [Getting started](https://stackctl.dev/guide/getting-started)
 - [The config file](https://stackctl.dev/config/config-file)
+- [Lifecycle hooks](https://stackctl.dev/config/lifecycle)
 - [CLI](https://stackctl.dev/reference/cli)
 - [Control API](https://stackctl.dev/reference/control-api)
 - [SDK](https://stackctl.dev/reference/sdk)

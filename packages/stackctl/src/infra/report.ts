@@ -49,8 +49,13 @@ export function createInfraReporter(opts: {
       if (event.type === 'output') {
         if (event.service === undefined) {
           // The provider's own progress (containers created, images pulled): there for when
-          // something is slow or goes wrong, and dimmed so it reads as background.
-          write(chalk.dim(`[infra] ${event.line}`));
+          // something is slow or goes wrong, and dimmed so it reads as background. An error of
+          // its own (a hook of the provider's that failed) is the run's headline: red.
+          write(
+            event.isError
+              ? `${chalk.dim('[infra]')} ${chalk.red(event.line)}`
+              : chalk.dim(`[infra] ${event.line}`),
+          );
           return;
         }
         const prefix = chalk.dim(`[${event.service}]`);
@@ -60,6 +65,13 @@ export function createInfraReporter(opts: {
       const name = event.service.padEnd(width);
       if (event.status === 'ready') {
         write(`  ${name}  ${chalk.green('ready')} ${chalk.dim(`(${elapsed()})`)}`);
+      } else if ((event.status === 'destroyed' || event.status === 'stopped') && event.detail) {
+        // It got there, but a hook around the step failed (or, in a reset, it went no further).
+        const [first = '', ...rest] = event.detail.split('\n');
+        write(`  ${name}  ${chalk.green(event.status)}${chalk.red(`, but ${first}`)}`);
+        for (const line of rest) {
+          write(`      ${line}`);
+        }
       } else if (event.status === 'destroyed' || event.status === 'stopped') {
         write(`  ${name}  ${chalk.green(event.status)}`);
       } else if (event.status === 'failed') {
@@ -75,8 +87,21 @@ export function createInfraReporter(opts: {
         write(chalk.green(`✔ infra ${INFRA_DONE_STATUS[action]}`) + chalk.dim(` (${elapsed()})`));
         return;
       }
-      const failed = summary.services.filter((s) => !s.ok).map((s) => s.service);
-      write(chalk.red(`✖ infra failed: ${failed.join(', ')}`));
+      const failed = summary.services
+        .filter((s) => !s.ok && !s.hookFailed && s.reached === undefined)
+        .map((s) => s.service);
+      const hooks = summary.services.filter((s) => s.hookFailed).map((s) => s.service);
+      // A reset that stopped after its destroy: the services are destroyed, and none started.
+      const reached = summary.services.find((s) => s.reached !== undefined)?.reached;
+      write(
+        chalk.red(
+          failed.length > 0
+            ? `✖ infra failed: ${failed.join(', ')}${hooks.length > 0 ? `; a hook failed: ${hooks.join(', ')}` : ''}`
+            : reached !== undefined
+              ? `✖ infra ${reached}, but a hook failed: ${hooks.join(', ')}; nothing was started`
+              : `✖ infra ${INFRA_DONE_STATUS[action]}, but a hook failed: ${hooks.join(', ')}`,
+        ),
+      );
     },
   };
 }

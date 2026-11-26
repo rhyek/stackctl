@@ -342,7 +342,9 @@ function apply(d: Draft, action: Action, at: number, ctx: UiContext): void {
         if (focused.kind === 'app') {
           // A service waiting for its deps starts once they're ready, never before.
           if (focused.state !== 'waiting') {
-            d.effects.push({ type: isActive(focused.state) ? 'stop' : 'start', entry: key });
+            // A stop whose hook still runs is stopped again: that abandons the hook.
+            const stops = isActive(focused.state) || focused.stopping === true;
+            d.effects.push({ type: stops ? 'stop' : 'start', entry: key });
           }
         } else if (!isInfraBusy(focused.state)) {
           d.effects.push({ type: isInfraUp(focused.state) ? 'stop' : 'start', entry: key });

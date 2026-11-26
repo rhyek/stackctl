@@ -98,7 +98,7 @@ function whatOf(line: EventLine): string {
     case 'session-start':
       return `${line.services.join(', ')}${line.headless ? ', headless' : ''}`;
     case 'session-end':
-      return `${line.cause}, after ${duration(line.durationMs)}`;
+      return `${line.cause}, after ${duration(line.durationMs)}${line.error === undefined ? '' : `: ${line.error}`}`;
     case 'service-exit':
       return `${line.service} exited ${line.signal ? `on ${line.signal}` : `with code ${String(line.exitCode)}`}`;
     case 'env-change':
@@ -112,10 +112,17 @@ function outcomeOf(line: Extract<EventLine, { phase: 'end' }>): string {
   const base = `${line.ok ? 'ok' : 'failed'}, ${duration(line.durationMs)}`;
   switch (line.type) {
     case 'service-command':
+      // A restart a stop (or the shutdown) came before: asked for, then called off, not a failure.
+      if (line.outcome === 'cancelled') {
+        return `cancelled, ${duration(line.durationMs)}`;
+      }
       return line.outcome === 'done' ? base : `${base} (${line.outcome})`;
     case 'infra-command': {
       const failed = Object.entries(line.results ?? {}).filter(([, r]) => r === 'failed').map(([s]) => s); // oxfmt-ignore
-      return failed.length > 0 ? `${base} (${failed.join(', ')} failed)` : base;
+      const hooks = Object.keys(line.hookErrors ?? {}).map((s) => `${s} ${String(line.results?.[s])}, but a hook failed`); // oxfmt-ignore
+      const notStarted = Object.entries(line.notStarted ?? {}).map(([s, why]) => `${s} ${String(line.results?.[s])}, ${why}`); // oxfmt-ignore
+      const notes = [...(failed.length > 0 ? [`${failed.join(', ')} failed`] : []), ...hooks, ...notStarted]; // oxfmt-ignore
+      return notes.length > 0 ? `${base} (${notes.join('; ')})` : base;
     }
     case 'compose-command':
     case 'one-off-command':
@@ -174,22 +181,38 @@ export function formatRows(rows: EventRow[], now = new Date()): string[] {
   );
 }
 
-/** The session part of `status`, from `GET /query/status`. */
-function sessionLines(
+/**
+ * The session part of `status`, from `GET /query/status`: a service that can't get ready because
+ * a start hook failed (its own, or one it waits for) shows why, one that still runs a hook of
+ * its own shows which, and so does a session whose own `afterStart` or `afterReady` failed or is
+ * still to finish.
+ */
+export function sessionLines(
   profile: string,
   status: SessionStatus,
   port: number,
   startedAt: number | undefined,
 ): string[] {
-  const since = startedAt ? ` since ${when(localTime(new Date(startedAt)))}` : '';
+  const at = startedAt ? when(localTime(new Date(startedAt))) : null;
+  const ids = `pid ${String(status.pid)}, control port ${String(port)}`;
+  const by = `started by ${status.startedByAgent ? 'an agent' : 'a person'}`;
+  const pending = status.sessionStartHooks === 'afterStart' || status.sessionStartHooks === 'afterReady'; // oxfmt-ignore
+  // A session whose start failed once it was up still runs, until it is quit.
   const lines = [
-    `${profile} session: running${since} (pid ${String(status.pid)}, control port ${String(port)}), started by ${status.startedByAgent ? 'an agent' : 'a person'}`, // oxfmt-ignore
+    status.sessionError
+      ? `${profile} session: failed to start: ${status.sessionError} (${ids}${at ? `, up since ${at}` : ''}), ${by}` // oxfmt-ignore
+      : `${profile} session: running${at ? ` since ${at}` : ''}${pending ? `, its ${status.sessionStartHooks} still to finish` : ''} (${ids}), ${by}`, // oxfmt-ignore
   ];
   const services = Object.entries(status.services ?? {});
   const name = Math.max(0, ...services.map(([s]) => s.length), ...Object.keys(status.infra ?? {}).map((s) => s.length)); // oxfmt-ignore
   services.forEach(([service, state], i) => {
     const ready = status.ready?.[service] ? 'ready' : 'not ready';
-    lines.push(`${i === 0 ? 'services' : ''.padEnd(8)}  ${service.padEnd(name)}  ${String(state)}${state === 'stopped' ? '' : `, ${ready}`}`); // oxfmt-ignore
+    const error = status.errors?.[service];
+    const hook = status.serviceHooks?.[service];
+    // Stopped already, as the session has it, but its process runs until its `beforeStop` is done.
+    const word = state === 'stopped' && hook === 'beforeStop' ? 'stopping' : String(state);
+    const why = error !== undefined ? `: ${error}` : hook !== undefined ? `: its ${hook} is still running` : ''; // oxfmt-ignore
+    lines.push(`${i === 0 ? 'services' : ''.padEnd(8)}  ${service.padEnd(name)}  ${word}${state === 'stopped' ? '' : `, ${ready}`}${why}`); // oxfmt-ignore
   });
   Object.entries(status.infra ?? {}).forEach(([service, state], i) => {
     lines.push(`${i === 0 ? 'infra   ' : ''.padEnd(8)}  ${service.padEnd(name)}  ${state}`);
@@ -198,6 +221,28 @@ function sessionLines(
     lines.push(`log       ${path.relative(process.cwd(), status.logFile)}`);
   }
   return lines;
+}
+
+/** Why the session `lines` are the event log of failed to start, if that is how it ended. */
+function failedStart(lines: EventLine[]): Extract<EventLine, { type: 'session-end' }> | null {
+  const end = lines.findLast((line) => line.type === 'session-end');
+  return end?.type === 'session-end' && end.cause === 'error' ? end : null;
+}
+
+/**
+ * What `status` says with no session running, from the latest session's event log (`lines`): that
+ * none runs, and, when the latest one's start failed, why and when.
+ */
+export function noSessionLines(profile: string, lines: EventLine[], now = new Date()): string[] {
+  const failed = failedStart(lines);
+  return [
+    `No ${profile} session is running.`,
+    ...(failed
+      ? [
+          `The last one failed to start (${when(failed.time, now)}): ${failed.error ?? 'see its log'}`,
+        ]
+      : []),
+  ];
 }
 
 /** What `stackctl status --json` prints, and the SDK's `status()` resolves with. */
@@ -212,6 +257,11 @@ export interface StatusReport {
   unresponsive: { pid: number; reason: 'hung' | 'mismatch' } | null;
   /** What the running session reports, or `null`. */
   status: SessionStatus | null;
+  /**
+   * Why the latest session's start failed, when none is running and that is how it ended; else
+   * `null`.
+   */
+  lastSessionError: string | null;
   /** The event log's path, relative to the workspace, or `null` before any session ran. */
   eventsFile: string | null;
   /** The last commands and lifecycle entries of the event log. */
@@ -234,6 +284,7 @@ export async function runStatus(opts: { json?: boolean }): Promise<never> {
     port: found.kind === 'running' ? found.client.port : null,
     unresponsive: found.kind === 'unresponsive' ? { pid: found.pid, reason: found.reason } : null,
     status: found.kind === 'running' ? found.status : null,
+    lastSessionError: found.kind === 'none' ? (failedStart(lines)?.error ?? null) : null,
     eventsFile: file === null ? null : path.relative(root, file),
     recent: lines.filter((l) => !['service-state', 'infra-state', 'session-state'].includes(l.type)).slice(-RECENT * 2), // oxfmt-ignore
   };
@@ -251,7 +302,7 @@ export async function runStatus(opts: { json?: boolean }): Promise<never> {
   } else if (found.kind === 'unresponsive') {
     out.push(`${profile} session: pid ${String(found.pid)} is recorded but doesn't answer (${found.reason})`); // oxfmt-ignore
   } else {
-    out.push(`No ${profile} session is running.`);
+    out.push(...noSessionLines(profile, lines));
   }
   out.push(file === null ? 'events    none yet' : `events    ${path.relative(root, file)}${lines.length === 0 ? ' (empty)' : ''}`); // oxfmt-ignore
   const rows = recentRows(lines);

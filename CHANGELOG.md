@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.12.0
+
+### Features
+
+- **Application services take lifecycle hooks: `beforeStart`, `afterStart`, `afterReady`,
+  `beforeStop` and `afterStop`.** See [docs/config/lifecycle.md](docs/config/lifecycle.md).
+- **The session takes the same hooks under `session.lifecycle`**, from a `beforeStart` before its
+  infra to an `afterStop` as it quits. See [docs/config/lifecycle.md](docs/config/lifecycle.md#the-session).
+- **The Compose project takes the same hooks, and `beforeDestroy` and `afterDestroy`, under
+  `infra['docker-compose'].lifecycle`**, around every service's. See
+  [docs/config/lifecycle.md](docs/config/lifecycle.md#the-compose-project).
+- **Infra services take `afterStart`, `beforeStop` and `afterStop` too.** See
+  [docs/config/lifecycle.md](docs/config/lifecycle.md#an-infra-service).
+- **A service one of its start hooks failed says why in `stackctl status`, the control API and
+  the proxy's page**: `failed` after `afterStart` or `afterReady`, `stopped` after `beforeStart`.
+  See [docs/reference/control-api.md](docs/reference/control-api.md#get-querystatus).
+- **`stackctl status` names the hook a service still runs**, and `GET /query/status` has it as
+  `serviceHooks`. See [docs/reference/control-api.md](docs/reference/control-api.md#get-querystatus).
+- **`stackctl status`, `stackctl wait` and `start --detach` say why a session failed to start**,
+  `status` and `wait` also once it is gone.
+- **JSON logs that keep their message under `message`, as NestJS's do, show it in the
+  `[LEVEL] message` header.** See [docs/guide/logs.md](docs/guide/logs.md#json-logs-are-formatted-for-you).
+
+### Fixes
+
+- **`--wait-timeout` bounds the whole of `stackctl service start`**, the time it waits for a
+  service still stopping included.
+- **A command an infra hook runs ends with `stackctl infra`**, and with everything it started,
+  when the command is interrupted or killed too.
+
+### Breaking changes
+
+- **An infra service's callbacks live under `lifecycle`.** Wrap `beforeDestroy`, `afterDestroy`,
+  `beforeStart` and `afterReady` in `lifecycle: { … }`.
+- **A compose file's top-level `name:` names the Compose project as it is, with no profile
+  added.** To keep the containers and data stackctl made under `<directory>-<profile>`, set
+  `COMPOSE_PROJECT_NAME=<directory>-<profile>` in each `.env.<profile>`. See
+  [docs/config/infra.md](docs/config/infra.md#profiles).
+- **Every hook of one operation shares one `data`, across services.** Where two services' hooks
+  use the same key, put each under its service's name: `data.db = { … }`. See
+  [docs/config/lifecycle.md](docs/config/lifecycle.md#sharing-data).
+- **A service's status can be `failed`** in `GET /query/status`, `/events`, the event log and
+  `stackctl status --json`: handle it wherever you read the status.
+- **A stop during a restart stops the service**, through `stackctl service stop` or
+  `POST /command/service/stop`, where it was refused: drop any retry of a stop on `409`.
+- **An infra service whose `afterDestroy` failed is reported `destroyed`, with the error**, not
+  `failed`: check `ok` or `error` in scripts.
+- **A restart a stop cancels ends `ok: false` with `outcome: 'cancelled'`** in the event log,
+  not `done`: read `outcome` where you read a restart's end.
+- **A wait that runs out of time says `not ready after <n>s`**, not `not healthy after`: update
+  a script that matches the message.
+
 ## 0.11.2
 
 ### Fixes

@@ -17,13 +17,21 @@ export const systemClock: Clock = {
 };
 
 /**
- * What {@link Readiness} emits, each with the service's name, only when its readiness flips. A
- * listener that throws is skipped over: the others still hear the event, and probing goes on.
+ * What {@link Readiness} emits, each with the service's name, only when what it reports flips:
+ * `ready` and `unready` for {@link Readiness.isReady}, `healthy` for {@link Readiness.isHealthy}.
+ * A listener that throws is skipped over: the others still hear the event, and probing goes on.
  */
 export type ReadinessEvents = {
   ready: [name: string];
   unready: [name: string];
+  healthy: [name: string, healthy: boolean];
 };
+
+/**
+ * What a start hook holds a service's ready at: nothing, until its hooks have run (`held`), or
+ * never, since one of them failed (`failed`). An exit of its process clears either.
+ */
+type Hold = 'none' | 'held' | 'failed';
 
 /**
  * One healthcheck probe: a GET of its URL, aborted after its `timeout`, the body read to the end.
@@ -75,6 +83,10 @@ interface Tracked {
   running: boolean;
   /** How many pending {@link Readiness.whenReady} calls wait on it. */
   waiters: number;
+  /** Its last probe passed, or, tracked without a healthcheck, it runs. */
+  healthy: boolean;
+  hold: Hold;
+  /** Healthy and not held: what was last reported, so only a flip is emitted. */
   ready: boolean;
   /** The probe loop while it is probed; a probe whose loop is no longer this one is discarded. */
   loop: Loop | null;
@@ -83,8 +95,10 @@ interface Tracked {
 }
 
 /**
- * Which services are ready. A service with a healthcheck is ready while its last probe passed; one
- * tracked without one is ready while it runs; one never tracked is never ready. A service is probed while it runs and while anything waits on it
+ * Which services are healthy, and which are ready. A service with a healthcheck is healthy while
+ * its last probe passed; one tracked without one is healthy while it runs; one never tracked is
+ * never healthy. It is ready while it is healthy and no start hook holds it
+ * ({@link Readiness.holdReady}). A service is probed while it runs and while anything waits on it
  * (running or not), by one loop however many wait. Each start begins a fresh loop: the first probe
  * `startMs` after it, then each one twice as long after the one before started, up to `capMs`
  * (100, 200, 400, 800, 1600, 2000, 2000, … ms by default: {@link DEFAULT_PROBE_START_MS},
@@ -122,46 +136,80 @@ export class Readiness extends EventEmitter<ReadinessEvents> {
     tracked.healthcheck = healthcheck;
     if (!healthcheck) {
       this.stopLoop(tracked);
-      this.setReady(name, tracked, tracked.running);
+      this.setHealthy(name, tracked, tracked.running);
       return;
     }
     this.stopLoop(tracked);
-    this.setReady(name, tracked, false);
+    this.setHealthy(name, tracked, false);
     if (this.probed(tracked)) {
       this.startLoop(name, tracked);
     }
   }
 
   /**
-   * The service's process started: it is probed from a fresh loop, or, tracked without a
-   * healthcheck, ready at once. One never tracked waits for `track` to say which.
+   * The service's process started: it is unhealthy until a probe from a fresh loop passes (what
+   * probes passed while nothing ran was something else answering), or, tracked without a
+   * healthcheck, healthy at once. One never tracked waits for `track` to say which. A hold put on
+   * it before stays.
    */
   processStarted(name: string): void {
     const tracked = this.entry(name);
     tracked.running = true;
     if (tracked.healthcheck) {
+      this.setHealthy(name, tracked, false);
       this.startLoop(name, tracked);
     } else if (tracked.tracked) {
-      this.setReady(name, tracked, true);
+      this.setHealthy(name, tracked, true);
     }
   }
 
   /**
-   * The service's process exited: it is unready at once. It stays probed, from a fresh loop, only
-   * while something waits on it.
+   * The service's process exited: it is unhealthy and unready at once, and any hold on it is
+   * cleared. It stays probed, from a fresh loop, only while something waits on it.
    */
   processExited(name: string): void {
     const tracked = this.entry(name);
     tracked.running = false;
+    tracked.hold = 'none';
     this.stopLoop(tracked);
-    this.setReady(name, tracked, false);
+    this.setHealthy(name, tracked, false);
     if (this.probed(tracked)) {
       this.startLoop(name, tracked);
     }
   }
 
+  /**
+   * Whether the service can be reached: its last probe passed, or, tracked without a healthcheck,
+   * its process runs. A hold doesn't change it.
+   */
+  isHealthy(name: string): boolean {
+    return this.services.get(name)?.healthy ?? false;
+  }
+
+  /** Whether the service is ready: healthy, and not held by a start hook. */
   isReady(name: string): boolean {
     return this.services.get(name)?.ready ?? false;
+  }
+
+  /**
+   * Holds the service's ready while its start hooks run: it may be healthy, but it isn't ready
+   * until {@link releaseReady}. Put on before its process starts; an exit of the process clears
+   * it.
+   */
+  holdReady(name: string): void {
+    const tracked = this.entry(name);
+    tracked.hold = 'held';
+    this.update(name, tracked);
+  }
+
+  /**
+   * Its start hooks have run: with `ok`, it is ready whenever it is healthy from now on; without,
+   * one of them failed and it is never ready until its process exits and starts again.
+   */
+  releaseReady(name: string, ok: boolean): void {
+    const tracked = this.entry(name);
+    tracked.hold = ok ? 'none' : 'failed';
+    this.update(name, tracked);
   }
 
   /**
@@ -214,6 +262,8 @@ export class Readiness extends EventEmitter<ReadinessEvents> {
         healthcheck: undefined,
         running: false,
         waiters: 0,
+        healthy: false,
+        hold: 'none',
         ready: false,
         loop: null,
         inFlight: null,
@@ -227,27 +277,42 @@ export class Readiness extends EventEmitter<ReadinessEvents> {
     return tracked.healthcheck !== undefined && (tracked.running || tracked.waiters > 0);
   }
 
-  /** One fewer waiter; when nothing probes it any more, it stops, unready. */
+  /** One fewer waiter; when nothing probes it any more, it stops, unhealthy. */
   private release(name: string): void {
     const tracked = this.entry(name);
     tracked.waiters--;
     if (tracked.loop && !this.probed(tracked)) {
       this.stopLoop(tracked);
-      this.setReady(name, tracked, false);
+      this.setHealthy(name, tracked, false);
     }
   }
 
-  private setReady(name: string, tracked: Tracked, ready: boolean): void {
+  /** Its health is now `healthy`: `healthy` is emitted on a flip, then its ready follows. */
+  private setHealthy(name: string, tracked: Tracked, healthy: boolean): void {
+    if (tracked.healthy !== healthy) {
+      tracked.healthy = healthy;
+      callEach(
+        this.rawListeners('healthy') as ((name: string, healthy: boolean) => void)[],
+        this,
+        name,
+        healthy,
+      );
+    }
+    this.update(name, tracked);
+  }
+
+  /** Its ready is its health with no hold on it: `ready` or `unready` is emitted on a flip. */
+  private update(name: string, tracked: Tracked): void {
+    const ready = tracked.healthy && tracked.hold === 'none';
     if (tracked.ready === ready) {
       return;
     }
     tracked.ready = ready;
-    this.notify(ready ? 'ready' : 'unready', name);
-  }
-
-  /** Emits to each listener in turn; one that throws doesn't keep the event from the rest. */
-  private notify(event: keyof ReadinessEvents, name: string): void {
-    callEach(this.rawListeners(event) as ((name: string) => void)[], this, name);
+    callEach(
+      this.rawListeners(ready ? 'ready' : 'unready') as ((name: string) => void)[],
+      this,
+      name,
+    );
   }
 
   private stopLoop(tracked: Tracked): void {
@@ -293,7 +358,7 @@ export class Readiness extends EventEmitter<ReadinessEvents> {
       if (tracked.loop !== loop) {
         return;
       }
-      this.setReady(name, tracked, ok);
+      this.setHealthy(name, tracked, ok);
       if (tracked.loop !== loop) {
         return;
       }

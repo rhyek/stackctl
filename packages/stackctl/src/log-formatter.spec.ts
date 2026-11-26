@@ -66,6 +66,33 @@ describe('createFormatter', () => {
     });
   });
 
+  describe('the `message` key when a log has no `msg`', () => {
+    const f = fmt();
+
+    test('reads the message from `message`, as NestJS and winston write it', () => {
+      // NestJS's ConsoleLogger with `json: true`, structured params attached.
+      const nest =
+        '{"level":"log","pid":7437,"timestamp":1795653709428,"message":"User created",' +
+        '"context":"UserService","params":{"userId":1,"email":"foo@bar.com"}}';
+      expect(f(nest)).toBe(
+        '[INFO] User created\n  pid: 7437\n  timestamp: 1795653709428\n  context: UserService\n' +
+          '  params:\n    userId: 1\n    email: foo@bar.com',
+      );
+      expect(f('{"level":"verbose","message":"tick"}')).toBe('[TRACE] tick');
+      expect(f('{"message":"hi","x":1}')).toBe('hi\n  x: 1');
+    });
+
+    test('prefers `msg`, listing a `message` field beside it', () => {
+      expect(f('{"level":"info","msg":"hi","message":"other"}')).toBe('[INFO] hi\n  message: other'); // oxfmt-ignore
+    });
+
+    test('is not read when `fields.message` names the key', () => {
+      expect(fmt({ fields: { message: 'text' } })('{"level":"info","message":"m"}')).toBe(
+        '[INFO]\n  message: m',
+      );
+    });
+  });
+
   describe('level matching (case-insensitive, aliases → canonical)', () => {
     const f = fmt();
 

@@ -42,8 +42,14 @@ async function forkedSessionRefusal(
   return undefined;
 }
 
-/** Starts the session the options ask for. It ends by exiting the process. */
-export async function runDevSession(opts: StartOptions): Promise<void> {
+/**
+ * Starts the session the options ask for. It ends by exiting the process. `detached`: this is the
+ * session `start --detach` forked.
+ */
+export async function runDevSession(
+  opts: StartOptions,
+  { detached }: { detached: boolean },
+): Promise<void> {
   const logFile = sessionLogPath(process.cwd(), currentProfile(), sessionId());
   const configPath =
     findConfigPath(process.cwd()) ?? path.join(process.cwd(), 'stackctl.config.ts');
@@ -84,6 +90,7 @@ export async function runDevSession(opts: StartOptions): Promise<void> {
       configPath,
       logFile,
       forked,
+      detached,
     });
     // A forked session's output is in its log; its parent has no screen to stream it to.
     await runHeadless(session, { echo: !forked });

@@ -267,9 +267,13 @@ describe('runMany', () => {
   });
 
   test('lines from two commands arriving interleaved each reach onLine whole', async () => {
-    // Each line goes out in two writes a tick apart, so the other command's land in between.
+    // Each line goes out in two writes a moment apart, so the other command's land in between.
+    // Both start printing at one agreed instant and take a few hundred ms over it, so they
+    // overlap however unevenly their processes come up: on a busy machine one used to finish
+    // before the other had begun.
+    const at = Date.now() + 400;
     const printer = (name: string) =>
-      node(`let i=0;const next=()=>{if(i===200)return;process.stdout.write('${name} ');setImmediate(()=>{process.stdout.write(String(i++)+'\\n');setImmediate(next)})};next()`); // oxfmt-ignore
+      node(`let i=0;const next=()=>{if(i===200)return;process.stdout.write('${name} ');setTimeout(()=>{process.stdout.write(String(i++)+'\\n');setTimeout(next,1)},1)};setTimeout(next,Math.max(0,${String(at)}-Date.now()))`); // oxfmt-ignore
     const lines: [string, string][] = [];
     const run = await runMany([target('a', printer('a')), target('b', printer('b'))], {
       ...opts(),

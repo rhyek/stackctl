@@ -25,7 +25,7 @@ describe('hookExec', () => {
   test('runs in the base directory with the base environment, its output to onLine', async () => {
     const { exec, calls, lines } = recorded();
     expect(await exec('pnpm', ['migrate'])).toEqual({ exitCode: 0, stdout: 'out\n', stderr: '' });
-    expect(calls).toEqual([
+    expect(calls).toMatchObject([
       {
         command: 'pnpm',
         args: ['migrate'],
@@ -33,6 +33,13 @@ describe('hookExec', () => {
       },
     ]);
     expect(lines).toEqual([['out', false]]);
+  });
+
+  test('its command can always be ended: with no signal of the caller, it still gets one, so it leads a group that ends with stackctl', async () => {
+    const { exec, calls } = recorded();
+    await exec('pnpm', ['migrate']);
+    expect(calls[0]!.opts.signal).toBeInstanceOf(AbortSignal);
+    expect(calls[0]!.opts.signal!.aborted).toBe(false);
   });
 
   test('a relative cwd resolves against the base directory, an absolute one stands', async () => {
@@ -46,6 +53,26 @@ describe('hookExec', () => {
     const { exec, calls } = recorded();
     await exec('seed', [], { env: { SHARED: 'call', ONLY: 'call' } });
     expect(calls[0]!.opts.env).toEqual({ BASE: 'base', SHARED: 'call', ONLY: 'call' });
+  });
+
+  test('the base signals are the ones the runner gets', async () => {
+    const calls: ExecOptions[] = [];
+    const signal = new AbortController().signal;
+    const abandon = new AbortController().signal;
+    const exec = hookExec({
+      dir: '/ws',
+      env: {},
+      onLine: () => {},
+      run: async (_command, _args, opts) => {
+        calls.push(opts);
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+      signal,
+      abandon,
+    });
+    await exec('seed');
+    expect(calls[0]!.signal).toBe(signal);
+    expect(calls[0]!.abandon).toBe(abandon);
   });
 
   test('args default to none', async () => {

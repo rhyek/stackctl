@@ -46,13 +46,15 @@ export default defineConfig({
           // when it was already running, so this has to be idempotent. `exec` executes a command
           // with the profile's environment (DATABASE_URI among it) and sends its output to
           // stackctl.
-          afterReady: async ({ exec, fresh }) => {
-            await exec('node', ['src/migrate.ts'], { cwd: 'libs/db' });
-            // `fresh`: this run created the database's volume — the very first start, or the
-            // first after `stackctl infra destroy` / `infra reset`. Start from sample rows.
-            if (fresh) {
-              await exec('node', ['src/seed.ts'], { cwd: 'libs/db' });
-            }
+          lifecycle: {
+            afterReady: async ({ exec, fresh }) => {
+              await exec('node', ['src/migrate.ts'], { cwd: 'libs/db' });
+              // `fresh`: this run created the database's volume — the very first start, or the
+              // first after `stackctl infra destroy` / `infra reset`. Start from sample rows.
+              if (fresh) {
+                await exec('node', ['src/seed.ts'], { cwd: 'libs/db' });
+              }
+            },
           },
         },
         // Mailpit's web UI, routed at http://mail.localhost:21050 like an application service.
@@ -74,6 +76,15 @@ export default defineConfig({
       tags: ['backend'],
       port: ({ envs }) => Number(envs.BACKEND_PORT),
       healthcheck: '/health', // a path: probed at http://localhost:<port>/health
+      // Hooks the session runs around the dev process (each may be async). `afterReady` runs once
+      // per start, when the healthcheck first passes; the backend counts as ready (and the
+      // frontend, which waits for it, starts) once it has finished. `buildAddress` builds on its
+      // public origin, as its `urls` would: here http://api.localhost:21050/todos.
+      lifecycle: {
+        afterReady: ({ buildAddress, log }) => {
+          log(`todos API at ${buildAddress({ path: '/todos' })}`);
+        },
+      },
     },
     worker: {
       tags: ['backend'],
