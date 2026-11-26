@@ -434,7 +434,8 @@ export async function launchSession<P extends string = ServiceName>(opts: {
     const reason = sessionSaid
       ? error
       : ended?.cause === 'error' && ended.error !== undefined
-        ? ended.error
+        ? // Worded as the wait words the same failure when the session's events say it first.
+          `${ended.error}. See ${started.logFile}`
         : gone()
           ? `the session ${describeExit()} while starting`
           : error;
